@@ -1,0 +1,669 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Social Monitor · 全域观察窗</title>
+  <meta name="description" content="多平台社媒监控数据大屏面板">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link
+    href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Outfit:wght@400;600;800&display=swap"
+    rel="stylesheet">
+  <style>
+    :root {
+      --bg: #e0e5ec;
+      --bg-gradient: linear-gradient(145deg, #f0f5fd, #caccd4);
+      --t: #2d3748;
+      --t2: #4a5568;
+      --t3: #718096;
+      --red: #fc8181;
+      --wa-green: #25D366;
+      --tg-blue: #0088cc;
+      --p: #6b46c1;
+      /* Modern deep purple */
+      --p-light: #9f7aea;
+      --shadow-light: #ffffff;
+      --shadow-dark: #a3b1c6;
+
+      --r: 24px;
+      --rs: 14px;
+
+      --out-shadow: 9px 9px 16px var(--shadow-dark), -9px -9px 16px var(--shadow-light);
+      --out-shadow-hover: 12px 12px 20px var(--shadow-dark), -12px -12px 20px var(--shadow-light);
+      --in-shadow: inset 6px 6px 12px var(--shadow-dark), inset -6px -6px 12px var(--shadow-light);
+      --in-shadow-active: inset 4px 4px 8px var(--shadow-dark), inset -4px -4px 8px var(--shadow-light);
+    }
+
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    html {
+      scrollbar-width: thin;
+      scrollbar-color: var(--t3) transparent;
+    }
+
+    body {
+      font-family: 'Inter', sans-serif;
+      background: var(--bg);
+      color: var(--t);
+      min-height: 100vh;
+      overflow-x: hidden;
+      font-size: 15px;
+      line-height: 1.6;
+    }
+
+    h1,
+    h2,
+    h3,
+    .stat-val {
+      font-family: 'Outfit', sans-serif;
+    }
+
+    /* ── 布局骨架 ── */
+    .app {
+      display: flex;
+      min-height: 100vh;
+      position: relative;
+    }
+
+    .sidebar {
+      width: 280px;
+      min-height: 100vh;
+      background: var(--bg-gradient);
+      box-shadow: 9px 0 16px rgba(163, 177, 198, 0.4);
+      display: flex;
+      flex-direction: column;
+      position: fixed;
+      top: 0;
+      left: 0;
+      bottom: 0;
+      z-index: 200;
+    }
+
+    .brand {
+      padding: 40px 32px 32px;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+
+    .logo-icon {
+      width: 56px;
+      height: 56px;
+      border-radius: 18px;
+      background: var(--bg);
+      box-shadow: var(--out-shadow);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 28px;
+      flex-shrink: 0;
+      background: linear-gradient(145deg, #f0f5fd, #caccd4);
+    }
+
+    .brand h1 {
+      font-size: 20px;
+      font-weight: 800;
+      letter-spacing: -0.5px;
+      color: var(--p);
+      display: flex;
+      flex-direction: column;
+      line-height: 1.2;
+    }
+
+    .brand h1 span {
+      font-size: 13px;
+      font-family: 'Inter', sans-serif;
+      color: var(--t3);
+      font-weight: 600;
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+      margin-top: 2px;
+    }
+
+    .nav {
+      padding: 12px 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      flex: 1;
+    }
+
+    .nav-item {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      padding: 16px 20px;
+      border-radius: var(--rs);
+      cursor: pointer;
+      color: var(--t2);
+      font-size: 15px;
+      font-weight: 700;
+      transition: all .4s cubic-bezier(0.4, 0, 0.2, 1);
+      user-select: none;
+    }
+
+    .nav-item:hover {
+      color: var(--p);
+      transform: translateY(-2px);
+      box-shadow: var(--out-shadow);
+    }
+
+    .nav-item.active {
+      color: var(--p);
+      background: var(--bg);
+      box-shadow: var(--in-shadow-active);
+      transform: translateY(1px);
+    }
+
+    .main {
+      margin-left: 280px;
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .header {
+      padding: 32px 48px;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: rgba(224, 229, 236, 0.85);
+      backdrop-filter: blur(12px);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .header-title {
+      font-size: 28px;
+      font-weight: 800;
+      letter-spacing: -0.5px;
+      color: var(--t);
+    }
+
+    .status-pill {
+      font-size: 14px;
+      font-weight: 700;
+      color: var(--t2);
+      background: var(--bg);
+      padding: 12px 24px;
+      border-radius: 30px;
+      box-shadow: var(--in-shadow);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .pulse {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: var(--wa-green);
+      box-shadow: 0 0 12px var(--wa-green);
+      animation: pulse 2s infinite;
+    }
+
+    @keyframes pulse {
+      0% {
+        box-shadow: 0 0 0 0 rgba(37, 211, 102, 0.7);
+      }
+
+      70% {
+        box-shadow: 0 0 0 10px rgba(37, 211, 102, 0);
+      }
+
+      100% {
+        box-shadow: 0 0 0 0 rgba(37, 211, 102, 0);
+      }
+    }
+
+    .content {
+      padding: 0 48px 48px;
+      flex: 1;
+      position: relative;
+    }
+
+    .view {
+      display: none;
+      opacity: 0;
+      transform: translateY(15px);
+      transition: all .5s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    .view.active {
+      display: block;
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    /* ── 组件：卡片面板 ── */
+    .panel {
+      background: var(--bg);
+      border-radius: var(--r);
+      box-shadow: var(--out-shadow);
+      padding: 36px;
+      transition: all .4s ease;
+      margin-bottom: 32px;
+    }
+
+    .panel:hover {
+      box-shadow: var(--out-shadow-hover);
+    }
+
+    .panel-title {
+      font-size: 18px;
+      font-weight: 800;
+      color: var(--t2);
+      text-transform: uppercase;
+      letter-spacing: 1.5px;
+      margin-bottom: 28px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    /* ── 仪表盘网格 ── */
+    .grid-4 {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 32px;
+    }
+
+    .stat-card {
+      border-radius: var(--r);
+      background: var(--bg-gradient);
+      box-shadow: var(--out-shadow);
+      padding: 32px 24px;
+      text-align: center;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .stat-card::before {
+      content: '';
+      position: absolute;
+      inset: 8px;
+      border-radius: 16px;
+      box-shadow: var(--in-shadow);
+      pointer-events: none;
+    }
+
+    .stat-lbl {
+      font-size: 14px;
+      color: var(--t2);
+      font-weight: 700;
+      margin-bottom: 12px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      position: relative;
+      z-index: 2;
+    }
+
+    .stat-val {
+      font-size: 48px;
+      font-weight: 800;
+      letter-spacing: -2px;
+      color: var(--t);
+      position: relative;
+      z-index: 2;
+      line-height: 1.1;
+    }
+
+    .color-p .stat-val {
+      color: var(--p);
+    }
+
+    .color-wa .stat-val {
+      color: var(--wa-green);
+    }
+
+    .color-tg .stat-val {
+      color: var(--tg-blue);
+    }
+
+    .color-m .stat-val {
+      color: var(--t3);
+    }
+
+    /* ── 过滤器 ── */
+    .filters {
+      display: flex;
+      gap: 16px;
+      margin-bottom: 24px;
+      padding: 8px;
+      border-radius: 28px;
+      background: var(--bg);
+      box-shadow: var(--in-shadow-active);
+      width: max-content;
+    }
+
+    .f-btn {
+      padding: 12px 28px;
+      border-radius: 20px;
+      font-size: 14px;
+      font-weight: 700;
+      cursor: pointer;
+      border: none;
+      background: transparent;
+      color: var(--t2);
+      transition: all .3s ease;
+      font-family: inherit;
+    }
+
+    .f-btn.active {
+      background: var(--bg);
+      color: var(--p);
+      box-shadow: var(--out-shadow);
+    }
+
+    /* ── 消息瀑布流/表格 ── */
+    .feed-container {
+      border-radius: var(--r);
+      box-shadow: var(--in-shadow);
+      padding: 16px;
+      background: var(--bg);
+      min-height: 400px;
+    }
+
+    .msg-item {
+      display: flex;
+      gap: 20px;
+      padding: 24px;
+      border-radius: 16px;
+      margin-bottom: 16px;
+      background: var(--bg);
+      box-shadow: var(--out-shadow);
+      transition: transform .3s ease;
+    }
+
+    .msg-item:hover {
+      transform: translateY(-2px);
+    }
+
+    .msg-item:last-child {
+      margin-bottom: 0;
+    }
+
+    .m-plat {
+      font-size: 24px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 52px;
+      height: 52px;
+      border-radius: 14px;
+      box-shadow: var(--in-shadow-active);
+      flex-shrink: 0;
+      background: var(--bg);
+    }
+
+    .m-body {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .m-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 8px;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+
+    .m-group {
+      font-size: 16px;
+      font-weight: 800;
+      color: var(--t);
+    }
+
+    .m-sender {
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--p);
+      background: rgba(107, 70, 193, 0.1);
+      padding: 4px 12px;
+      border-radius: 12px;
+    }
+
+    .m-time {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--t3);
+    }
+
+    .m-text {
+      font-size: 15px;
+      color: var(--t2);
+      line-height: 1.6;
+      word-break: break-word;
+      white-space: pre-wrap;
+    }
+
+    /* 图片附录展示 */
+    .m-media {
+      margin-top: 16px;
+      border-radius: 12px;
+      overflow: hidden;
+      box-shadow: var(--in-shadow);
+      display: inline-block;
+      max-width: 100%;
+      border: 6px solid var(--bg);
+    }
+
+    .m-media img {
+      display: block;
+      max-width: 300px;
+      max-height: 300px;
+      object-fit: cover;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: opacity .3s;
+    }
+
+    .m-media img:hover {
+      opacity: 0.8;
+    }
+
+    /* 占位与动画 */
+    .empty-state {
+      text-align: center;
+      padding: 80px 20px;
+      color: var(--t3);
+      font-weight: 700;
+      font-size: 16px;
+    }
+
+    .loading-pulse {
+      animation: fl 1.5s infinite;
+      opacity: 0.5;
+    }
+
+    @keyframes fl {
+
+      0%,
+      100% {
+        opacity: 0.3;
+      }
+
+      50% {
+        opacity: 0.7;
+      }
+    }
+  </style>
+</head>
+
+<body>
+  <div class="app">
+
+    <!-- 侧边栏 -->
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="logo-icon">🔮</div>
+        <h1>Social Monitor<span>Data Pipeline</span></h1>
+      </div>
+      <nav class="nav">
+        <div class="nav-item active" onclick="switchView('dashboard')">📊 全盘态势 (Dashboard)</div>
+        <div class="nav-item" onclick="switchView('feed')">💬 原始数据流 (Raw Feed)</div>
+      </nav>
+    </aside>
+
+    <!-- 主内容区 -->
+    <main class="main">
+      <header class="header">
+        <div class="header-title" id="page-title">全盘态势 Dashboard</div>
+        <div class="status-pill">
+          <div class="pulse"></div> API Server 在线守护
+        </div>
+      </header>
+
+      <div class="content">
+
+        <!-- 视图 1: Dashboard -->
+        <div id="view-dashboard" class="view active">
+          <div class="panel">
+            <div class="panel-title">📡 数据采集吞吐量</div>
+            <div class="grid-4" id="stats-grid">
+              <div class="stat-card color-p">
+                <div class="stat-lbl">实时总入库数</div>
+                <div class="stat-val loading-pulse" id="st-total">--</div>
+              </div>
+              <div class="stat-card color-wa">
+                <div class="stat-lbl">WhatsApp 规模</div>
+                <div class="stat-val loading-pulse" id="st-wa">--</div>
+              </div>
+              <div class="stat-card color-tg">
+                <div class="stat-lbl">Telegram 规模</div>
+                <div class="stat-val loading-pulse" id="st-tg">--</div>
+              </div>
+              <div class="stat-card color-m">
+                <div class="stat-lbl">含媒体附件数</div>
+                <div class="stat-val loading-pulse" id="st-media">--</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 视图 2: Raw Feed -->
+        <div id="view-feed" class="view">
+          <div class="filters">
+            <button class="f-btn active" onclick="setFilter('all')">🌈 全渠道</button>
+            <button class="f-btn" onclick="setFilter('whatsapp')">🟢 WhatsApp</button>
+            <button class="f-btn" onclick="setFilter('telegram')">🔵 Telegram</button>
+          </div>
+
+          <div class="feed-container" id="feed-box">
+            <div class="empty-state loading-pulse">正在穿梭底层数据网络...</div>
+          </div>
+        </div>
+
+      </div>
+    </main>
+
+  </div>
+
+  <script>
+    // UI 路由逻辑
+    function switchView(viewName) {
+      document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
+      event.currentTarget.classList.add('active');
+
+      document.querySelectorAll('.view').forEach(el => el.classList.remove('active'));
+      document.getElementById('view-' + viewName).classList.add('active');
+
+      document.getElementById('page-title').innerText = viewName === 'dashboard' ? '全盘态势 Dashboard' : '原始数据流 Raw Feed';
+    }
+
+    // 核心数据拉取
+    const API_BASE = window.location.origin + '/api';
+
+    async function fetchStats() {
+      try {
+        const res = await fetch(API_BASE + '/stats');
+        const data = await res.json();
+        if (data.success) {
+          document.getElementById('st-total').innerText = data.total;
+          document.getElementById('st-total').classList.remove('loading-pulse');
+          document.getElementById('st-wa').innerText = data.platforms.whatsapp || 0;
+          document.getElementById('st-wa').classList.remove('loading-pulse');
+          document.getElementById('st-tg').innerText = data.platforms.telegram || 0;
+          document.getElementById('st-tg').classList.remove('loading-pulse');
+          document.getElementById('st-media').innerText = data.withMedia || 0;
+          document.getElementById('st-media').classList.remove('loading-pulse');
+        }
+      } catch (e) { console.error('Stats block error', e); }
+    }
+
+    let currentFilter = 'all';
+
+    function setFilter(pf) {
+      currentFilter = pf;
+      document.querySelectorAll('.f-btn').forEach(b => b.classList.remove('active'));
+      event.currentTarget.classList.add('active');
+      fetchFeed();
+    }
+
+    async function fetchFeed() {
+      const box = document.getElementById('feed-box');
+      try {
+        const res = await fetch(API_BASE + '/messages?limit=25&platform=' + currentFilter);
+        const data = await res.json();
+
+        if (!data.success || data.data.length === 0) {
+          box.innerHTML = `<div class="empty-state">📦 暂未捕获到对应的数据记录</div>`;
+          return;
+        }
+
+        let html = '';
+        data.data.forEach(m => {
+          const isWa = m.platform === 'whatsapp';
+          const icon = isWa ? '🟢' : '🔵';
+          const timeStr = new Date(m.timestamp).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' });
+
+          let mediaHtml = '';
+          if (m.has_media && m.media_path) {
+            mediaHtml = `
+          <div class="m-media">
+             <img src="/${m.media_path}" alt="attachment" onclick="window.open(this.src)" />
+          </div>
+        `;
+          }
+
+          html += `
+        <div class="msg-item">
+          <div class="m-plat">${icon}</div>
+          <div class="m-body">
+            <div class="m-head">
+              <div style="display:flex;align-items:center;gap:12px">
+                <span class="m-group">${m.group_name || '未知群组'}</span>
+                <span class="m-sender">${m.sender_name || 'Unknown'}</span>
+              </div>
+              <div class="m-time">${timeStr}</div>
+            </div>
+            <div class="m-text">${m.content}</div>
+            ${mediaHtml}
+          </div>
+        </div>
+      `;
+        });
+        box.innerHTML = html;
+      } catch (e) {
+        box.innerHTML = `<div class="empty-state">⚠️ 接口通信受阻</div>`;
+      }
+    }
+
+    // 启动循环心跳
+    fetchStats();
+    fetchFeed();
+    setInterval(fetchStats, 5000);
+    setInterval(fetchFeed, 5000);
+
+  </script>
+</body>
+
+</html>
