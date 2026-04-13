@@ -619,9 +619,9 @@
         <h1>Social Monitor<span>Data Pipeline</span></h1>
       </div>
       <nav class="nav">
-        <div class="nav-item active" onclick="switchView('dashboard')">📊 全盘态势 (Dashboard)</div>
-        <div class="nav-item" onclick="switchView('feed')">💬 原始数据流 (Raw Feed)</div>
-        <div class="nav-item" onclick="switchView('accounts')">👥 帐号管理 (Accounts)</div>
+        <div class="nav-item active" onclick="switchView('dashboard', this)">📊 全盘态势 (Dashboard)</div>
+        <div class="nav-item" onclick="switchView('feed', this)">💬 原始数据流 (Raw Feed)</div>
+        <div class="nav-item" onclick="switchView('accounts', this)">👥 帐号管理 (Accounts)</div>
       </nav>
     </aside>
 
@@ -664,9 +664,9 @@
         <!-- 视图 2: Raw Feed -->
         <div id="view-feed" class="view">
           <div class="filters">
-            <button class="f-btn active" onclick="setFilter('all')">🌈 全渠道</button>
-            <button class="f-btn" onclick="setFilter('whatsapp')">🟢 WhatsApp</button>
-            <button class="f-btn" onclick="setFilter('telegram')">🔵 Telegram</button>
+            <button class="f-btn active" onclick="setFilter('all', this)">🌈 全渠道</button>
+            <button class="f-btn" onclick="setFilter('whatsapp', this)">🟢 WhatsApp</button>
+            <button class="f-btn" onclick="setFilter('telegram', this)">🔵 Telegram</button>
           </div>
 
           <div class="feed-container" id="feed-box">
@@ -693,12 +693,23 @@
   </div>
 
   <script>
-    // UI 路由逻辑
-    function switchView(viewName) {
-      document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
-      event.currentTarget.classList.add('active');
+    // XSS 防护：转义 HTML 特殊字符
+    function escapeHtml(str) {
+      if (!str) return '';
+      return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
 
-      document.querySelectorAll('.view').forEach(el => el.classList.remove('active'));
+    // UI 路由逻辑
+    function switchView(viewName, el) {
+      document.querySelectorAll('.nav-item').forEach(e => e.classList.remove('active'));
+      el.classList.add('active');
+
+      document.querySelectorAll('.view').forEach(e => e.classList.remove('active'));
       document.getElementById('view-' + viewName).classList.add('active');
 
       const titles = {
@@ -732,10 +743,10 @@
 
     let currentFilter = 'all';
 
-    function setFilter(pf) {
+    function setFilter(pf, el) {
       currentFilter = pf;
       document.querySelectorAll('.f-btn').forEach(b => b.classList.remove('active'));
-      event.currentTarget.classList.add('active');
+      el.classList.add('active');
       fetchFeed();
     }
 
@@ -771,12 +782,12 @@
           <div class="m-body">
             <div class="m-head">
               <div style="display:flex;align-items:center;gap:12px">
-                <span class="m-group">${m.group_name || '未知群组'}</span>
-                <span class="m-sender">${m.sender_name || 'Unknown'}</span>
+                <span class="m-group">${escapeHtml(m.group_name) || '未知群组'}</span>
+                <span class="m-sender">${escapeHtml(m.sender_name) || 'Unknown'}</span>
               </div>
               <div class="m-time">${timeStr}</div>
             </div>
-            <div class="m-text">${m.content}</div>
+            <div class="m-text">${escapeHtml(m.content)}</div>
             ${mediaHtml}
           </div>
         </div>

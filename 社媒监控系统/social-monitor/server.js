@@ -109,7 +109,7 @@ app.post('/api/accounts/logout', (req, res) => {
             
             // To properly log out, we can restart the PM2 worker to pick up the cleared session
             const { exec } = require('child_process');
-            exec(`npx pm2 restart worker-wa-${accName} || npx pm2 restart worker-wa-1`, (error) => {
+            exec(`npx pm2 restart worker-wa-${accName}`, (error) => {
                 if(error) console.log('Notice: Could not restart PM2 via API.', error.message);
             });
         }
@@ -126,20 +126,22 @@ app.post('/api/accounts/create', (req, res) => {
     if (!platform || !id) return res.status(400).json({ success: false, error: 'Missing platform or id' });
     if (platform === 'telegram' && !token) return res.status(400).json({ success: false, error: 'Missing Bot Token for Telegram' });
     if (!/^[a-zA-Z0-9_-]+$/.test(id)) return res.status(400).json({ success: false, error: 'ID must be alphanumeric' });
+    // Token 只允许 Telegram bot token 合法字符，防止命令注入
+    if (token && !/^[a-zA-Z0-9_:.-]+$/.test(token)) return res.status(400).json({ success: false, error: 'Invalid token format' });
 
     try {
-        const { exec } = require('child_process');
-        
-        let workerName, scriptPath, envVars;
+        const { spawn, exec } = require('child_process');
+
+        let workerName, scriptPath, spawnEnv;
         if (platform === 'whatsapp') {
             workerName = `worker-wa-${id}`;
             scriptPath = './workers/worker-wa.js';
-            envVars = `ACCOUNT_NAME="${id}"`;
+            spawnEnv = { ...process.env, ACCOUNT_NAME: id };
             db.prepare(`INSERT OR REPLACE INTO accounts (id, platform, status) VALUES (?, 'whatsapp', 'initializing')`).run('wa-' + id);
         } else {
             workerName = `worker-tg-${id}`;
             scriptPath = './workers/worker-tg.js';
-            envVars = `TG_ACCOUNT_NAME="${id}" TG_BOT_TOKEN="${token}"`;
+            spawnEnv = { ...process.env, TG_ACCOUNT_NAME: id, TG_BOT_TOKEN: token };
             db.prepare(`INSERT OR REPLACE INTO accounts (id, platform, status) VALUES (?, 'telegram', 'initializing')`).run('tg-' + id);
         }
 
@@ -174,11 +176,13 @@ app.post('/api/accounts/create', (req, res) => {
             }
         }
 
-        exec(`export ${envVars} && npx pm2 start ${scriptPath} --name "${workerName}"`, (err, stdout, stderr) => {
-            if (err) {
-                console.error('Failed to start PM2 process:', err);
-            }
-            // Save state
+        // 使用 spawn 参数数组启动，避免 shell 命令注入
+        const pm2 = spawn('npx', ['pm2', 'start', scriptPath, '--name', workerName], {
+            env: spawnEnv,
+            stdio: 'inherit'
+        });
+        pm2.on('close', (code) => {
+            if (code !== 0) console.error(`Failed to start PM2 process, exit code: ${code}`);
             exec('npx pm2 save');
         });
 

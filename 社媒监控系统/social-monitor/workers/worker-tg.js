@@ -11,6 +11,7 @@ if (!token || token === 'your_telegram_bot_token_here') {
     console.warn('⚠️ [Telegram] TG_BOT_TOKEN not configured. Skipping startup.');
     setTimeout(() => {}, 100000000); // keep process alive for pm2
     return;
+}
 const bot = new TelegramBot(token, { polling: true });
 
 bot.getMe().then((me) => {
