@@ -15,10 +15,11 @@ fi
 # 检查依赖包
 if [ ! -d "node_modules" ]; then
     echo "初次运行，正在为您安装相关依赖..."
-    # 使用预设跳过浏览器下载（已配置使用本地 Chrome）
-    export PUPPETEER_SKIP_DOWNLOAD=true
     npm install
 fi
+
+# 确保安装了 puppeteer browser
+npx puppeteer browsers install chrome
 
 # 检查并安装 PM2 (如果本地可用 npx 则不需要全局，但稳妥起见提供 npx 执行)
 echo "正在为您启动采集守护进程..."
@@ -36,4 +37,4 @@ echo "=========================================="
 sleep 3
 
 # 直接查看 WhatsApp 进程的日志用于展示二维码
-npx pm2 logs worker-wa
+npx pm2 logs worker-wa-1

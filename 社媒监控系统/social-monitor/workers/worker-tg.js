@@ -2,17 +2,25 @@ const path = require('path');
 require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
 const TelegramBot = require('node-telegram-bot-api');
 const fs = require('fs');
-const { saveMessage } = require('../db/database');
+const { saveMessage, updateAccountStatus } = require('../db/database');
 
+const accountName = process.env.TG_ACCOUNT_NAME || 'default';
 const token = process.env.TG_BOT_TOKEN;
+
 if (!token || token === 'your_telegram_bot_token_here') {
     console.warn('⚠️ [Telegram] TG_BOT_TOKEN not configured. Skipping startup.');
     setTimeout(() => {}, 100000000); // keep process alive for pm2
     return;
-}
-
 const bot = new TelegramBot(token, { polling: true });
-console.log('✅ [Telegram] Bot started polling...');
+
+bot.getMe().then((me) => {
+    const botName = me.first_name + (me.username ? ` (@${me.username})` : '');
+    console.log(`✅ [Telegram] Bot started polling as: ${botName}`);
+    if (updateAccountStatus) updateAccountStatus(`tg-${accountName}`, 'telegram', 'authenticated', botName, null);
+}).catch(err => {
+    console.log('✅ [Telegram] Bot started polling...');
+    if (updateAccountStatus) updateAccountStatus(`tg-${accountName}`, 'telegram', 'authenticated', `TG Bot`, null);
+});
 
 bot.on('message', async (msg) => {
     try {
@@ -52,6 +60,7 @@ bot.on('message', async (msg) => {
 
         saveMessage({
             platform: 'telegram',
+            receiver_account: `tg-${accountName}`,
             message_id: msg.message_id.toString(),
             group_id: msg.chat.id.toString(),
             group_name: groupName,
