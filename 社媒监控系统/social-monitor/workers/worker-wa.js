@@ -2,20 +2,18 @@ const { Client, LocalAuth } = require('whatsapp-web.js');
 const qrcode = require('qrcode-terminal');
 const fs = require('fs');
 const path = require('path');
-const { db, saveMessage } = require('../db/database');
+const { db, saveMessage, updateAccountStatus } = require('../db/database');
 
-const chromePaths = [
-    '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
-    '/usr/bin/google-chrome',
-    '/usr/bin/google-chrome-stable'
-];
-const executablePath = chromePaths.find(p => fs.existsSync(p)) || undefined;
+const accountName = process.env.ACCOUNT_NAME || 'default';
+const sessionPath = path.join(__dirname, '..', `whatsapp-session-${accountName}`);
+
+// Mark as initializing
+if (updateAccountStatus) updateAccountStatus(`wa-${accountName}`, 'whatsapp', 'initializing');
 
 const client = new Client({
-    authStrategy: new LocalAuth({ dataPath: path.join(__dirname, '..', 'whatsapp-session') }),
+    authStrategy: new LocalAuth({ dataPath: sessionPath }),
     puppeteer: {
         headless: true,
-        executablePath: executablePath,
         args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu']
     }
 });
@@ -23,10 +21,18 @@ const client = new Client({
 client.on('qr', (qr) => {
     console.log('\n📌 [WhatsApp] Please scan QR code to login:');
     qrcode.generate(qr, { small: true });
+    if (updateAccountStatus) updateAccountStatus(`wa-${accountName}`, 'whatsapp', 'qr', null, qr);
 });
 
 client.on('ready', () => {
-    console.log(`✅ [WhatsApp] Logged in as: ${client.info?.pushname || client.info?.wid?.user}`);
+    const pushname = client.info?.pushname || client.info?.wid?.user || accountName;
+    console.log(`✅ [WhatsApp] Logged in as: ${pushname}`);
+    if (updateAccountStatus) updateAccountStatus(`wa-${accountName}`, 'whatsapp', 'authenticated', pushname, null);
+});
+
+client.on('disconnected', (reason) => {
+    console.log('🔴 [WhatsApp] Client was logged out', reason);
+    if (updateAccountStatus) updateAccountStatus(`wa-${accountName}`, 'whatsapp', 'disconnected');
 });
 
 client.on('message_create', async (message) => {
@@ -79,6 +85,7 @@ client.on('message_create', async (message) => {
 
         saveMessage({
             platform: 'whatsapp',
+            receiver_account: `wa-${accountName}`,
             message_id: message.id._serialized,
             group_id: chat.id._serialized,
             group_name: groupName,

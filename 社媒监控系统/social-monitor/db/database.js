@@ -21,6 +21,7 @@ function initSchema() {
         CREATE TABLE IF NOT EXISTS messages (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             platform TEXT NOT NULL, -- 'whatsapp', 'telegram'
+            receiver_account TEXT, -- 负责采集该条消息的系统内账号ID
             message_id TEXT NOT NULL,
             group_id TEXT,
             group_name TEXT,
@@ -34,6 +35,15 @@ function initSchema() {
             created_at DATETIME DEFAULT (datetime('now', 'localtime')),
             UNIQUE(platform, message_id)
         );
+
+        CREATE TABLE IF NOT EXISTS accounts (
+            id TEXT PRIMARY KEY,
+            platform TEXT NOT NULL,
+            status TEXT NOT NULL,
+            pushname TEXT,
+            qr_code TEXT,
+            updated_at DATETIME DEFAULT (datetime('now', 'localtime'))
+        );
     `);
 }
 
@@ -44,22 +54,40 @@ function saveMessage(data) {
     try {
         const stmt = db.prepare(`
             INSERT INTO messages (
-                platform, message_id, group_id, group_name, sender_id, sender_name,
+                platform, receiver_account, message_id, group_id, group_name, sender_id, sender_name,
                 content, has_media, media_path, timestamp, raw_data, created_at
             ) VALUES (
-                @platform, @message_id, @group_id, @group_name, @sender_id, @sender_name,
+                @platform, @receiver_account, @message_id, @group_id, @group_name, @sender_id, @sender_name,
                 @content, @has_media, @media_path, @timestamp, @raw_data, datetime('now', 'localtime')
             )
             ON CONFLICT(platform, message_id) DO NOTHING
         `);
-        return stmt.run(data);
+        return stmt.run({ receiver_account: 'default', ...data });
     } catch (err) {
         console.error('Error saving message:', err.message);
         return null;
     }
 }
 
+function updateAccountStatus(id, platform, status, pushname = null, qrCode = null) {
+    try {
+        const stmt = db.prepare(`
+            INSERT INTO accounts (id, platform, status, pushname, qr_code, updated_at) 
+            VALUES (@id, @platform, @status, @pushname, @qr_code, datetime('now', 'localtime'))
+            ON CONFLICT(id) DO UPDATE SET 
+              status=excluded.status, 
+              pushname=COALESCE(excluded.pushname, pushname), 
+              qr_code=excluded.qr_code, 
+              updated_at=datetime('now', 'localtime')
+        `);
+        stmt.run({ id, platform, status, pushname, qr_code: qrCode });
+    } catch (err) {
+        console.error('Error saving account status:', err.message);
+    }
+}
+
 module.exports = {
     db,
-    saveMessage
+    saveMessage,
+    updateAccountStatus
 };

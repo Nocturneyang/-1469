@@ -80,6 +80,119 @@ app.get('/api/messages', (req, res) => {
     }
 });
 
+// API: Get Accounts
+app.get('/api/accounts', (req, res) => {
+    try {
+        const accounts = db.prepare(`SELECT * FROM accounts ORDER BY updated_at DESC`).all();
+        res.json({ success: true, data: accounts });
+    } catch (err) {
+        console.error('Accounts DB Error:', err);
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// API: Logout/Delete Account
+app.post('/api/accounts/logout', (req, res) => {
+    const { id } = req.body;
+    if (!id) return res.status(400).json({ success: false, error: 'Missing account id' });
+    
+    try {
+        if (id.startsWith('wa-')) {
+            const accName = id.replace('wa-', '');
+            // update status
+            db.prepare(`UPDATE accounts SET status = 'disconnected', qr_code = NULL WHERE id = ?`).run(id);
+            // clear session folder if needed, pm2 handles restart mapping
+            const sessionPath = path.join(__dirname, `whatsapp-session-${accName}`);
+            if (fs.existsSync(sessionPath)) {
+                fs.rmSync(sessionPath, { recursive: true, force: true });
+            }
+            
+            // To properly log out, we can restart the PM2 worker to pick up the cleared session
+            const { exec } = require('child_process');
+            exec(`npx pm2 restart worker-wa-${accName}`, (error) => {
+                if(error) console.log('Notice: Could not restart PM2 via API.', error.message);
+            });
+        }
+        res.json({ success: true, message: 'Logged out. Account is resetting.' });
+    } catch (err) {
+        console.error('Logout Error:', err);
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// API: Create Account
+app.post('/api/accounts/create', (req, res) => {
+    const { platform, id, token } = req.body;
+    if (!platform || !id) return res.status(400).json({ success: false, error: 'Missing platform or id' });
+    if (platform === 'telegram' && !token) return res.status(400).json({ success: false, error: 'Missing Bot Token for Telegram' });
+    if (!/^[a-zA-Z0-9_-]+$/.test(id)) return res.status(400).json({ success: false, error: 'ID must be alphanumeric' });
+    // Token 只允许 Telegram bot token 合法字符，防止命令注入
+    if (token && !/^[a-zA-Z0-9_:.-]+$/.test(token)) return res.status(400).json({ success: false, error: 'Invalid token format' });
+
+    try {
+        const { spawn, exec } = require('child_process');
+
+        let workerName, scriptPath, spawnEnv;
+        if (platform === 'whatsapp') {
+            workerName = `worker-wa-${id}`;
+            scriptPath = './workers/worker-wa.js';
+            spawnEnv = { ...process.env, ACCOUNT_NAME: id };
+            db.prepare(`INSERT OR REPLACE INTO accounts (id, platform, status) VALUES (?, 'whatsapp', 'initializing')`).run('wa-' + id);
+        } else {
+            workerName = `worker-tg-${id}`;
+            scriptPath = './workers/worker-tg.js';
+            spawnEnv = { ...process.env, TG_ACCOUNT_NAME: id, TG_BOT_TOKEN: token };
+            db.prepare(`INSERT OR REPLACE INTO accounts (id, platform, status) VALUES (?, 'telegram', 'initializing')`).run('tg-' + id);
+        }
+
+        // Dynamically add to ecosystem.config.js
+        const ecoPath = path.join(__dirname, 'ecosystem.config.js');
+        if (fs.existsSync(ecoPath)) {
+            let eco = fs.readFileSync(ecoPath, 'utf8');
+            let insertStr = '';
+            if (platform === 'whatsapp') {
+                insertStr = `    {
+      name: "${workerName}",
+      script: "${scriptPath}",
+      max_memory_restart: '1G',
+      instances: 1,
+      autorestart: true,
+      watch: false,
+      env: { NODE_ENV: "production", ACCOUNT_NAME: "${id}" }
+    },\n    // --- Web UI Server ---`;
+            } else {
+                insertStr = `    {
+      name: "${workerName}",
+      script: "${scriptPath}",
+      instances: 1,
+      autorestart: true,
+      watch: false,
+      env: { NODE_ENV: "production", TG_ACCOUNT_NAME: "${id}", TG_BOT_TOKEN: "${token}" }
+    },\n    // --- Web UI Server ---`;
+            }
+            if (eco.includes('// --- Web UI Server ---') && !eco.includes(workerName)) {
+                eco = eco.replace('// --- Web UI Server ---', insertStr);
+                fs.writeFileSync(ecoPath, eco);
+            }
+        }
+
+        // 使用 spawn 参数数组启动，避免 shell 命令注入
+        const pm2 = spawn('npx', ['pm2', 'start', scriptPath, '--name', workerName], {
+            env: spawnEnv,
+            stdio: 'inherit'
+        });
+        pm2.on('close', (code) => {
+            if (code !== 0) console.error(`Failed to start PM2 process, exit code: ${code}`);
+            exec('npx pm2 save');
+        });
+
+        res.json({ success: true, message: 'Account creation started' });
+    } catch (err) {
+        console.error('Create Error:', err);
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
 // Optional system status stub
 app.get('/api/status', (req, res) => {
     res.json({ success: true, running: true });
