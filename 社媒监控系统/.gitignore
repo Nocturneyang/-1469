@@ -60,3 +60,6 @@ out/
 .wwebjs_cache/
 session/
 whatsapp-session/
+
+# Media files
+social-monitor/media/
