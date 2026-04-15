@@ -32,6 +32,7 @@ function initSchema() {
             media_path TEXT,
             timestamp INTEGER,
             raw_data TEXT,
+            is_synced INTEGER DEFAULT 0, -- 0: 未同步, 1: 已同步
             created_at DATETIME DEFAULT (datetime('now', 'localtime')),
             UNIQUE(platform, message_id)
         );
@@ -45,6 +46,19 @@ function initSchema() {
             updated_at DATETIME DEFAULT (datetime('now', 'localtime'))
         );
     `);
+
+    // Migration: Add is_synced column if it doesn't exist (for existing databases)
+    try {
+        const tableInfo = db.prepare("PRAGMA table_info(messages)").all();
+        const columnExists = tableInfo.some(col => col.name === 'is_synced');
+        if (!columnExists) {
+            db.exec("ALTER TABLE messages ADD COLUMN is_synced INTEGER DEFAULT 0");
+            console.log('Migrated database: added is_synced column and index');
+        }
+        db.exec("CREATE INDEX IF NOT EXISTS idx_messages_is_synced ON messages(is_synced)");
+    } catch (err) {
+        console.error('Migration error:', err.message);
+    }
 }
 
 initSchema();

@@ -6,6 +6,7 @@ module.exports = {
       script: "./workers/worker-wa.js",
       max_memory_restart: '1G',
       instances: 1,
+      exec_mode: "fork",
       autorestart: true,
       watch: false,
       env: {
@@ -20,6 +21,7 @@ module.exports = {
       script: "./workers/worker-wa.js",
       max_memory_restart: '1G',
       instances: 1,
+      exec_mode: "fork",
       autorestart: true,
       watch: false,
       env: {
@@ -34,6 +36,7 @@ module.exports = {
       name: "worker-tg-1",
       script: "./workers/worker-tg.js",
       instances: 1,
+      exec_mode: "fork",
       autorestart: true,
       watch: false,
       env: {
@@ -48,6 +51,7 @@ module.exports = {
       name: "worker-tg-2",
       script: "./workers/worker-tg.js",
       instances: 1,
+      exec_mode: "fork",
       autorestart: true,
       watch: false,
       env: {
@@ -57,11 +61,44 @@ module.exports = {
     },
     */
 
+        {
+      name: "worker-wa-oumei_wa",
+      script: "./workers/worker-wa.js",
+      max_memory_restart: '1G',
+      instances: 1,
+      exec_mode: "fork",
+      autorestart: true,
+      watch: false,
+      env: { NODE_ENV: "production", ACCOUNT_NAME: "oumei_wa" }
+    },
+        {
+      name: "worker-wa-nanya_wa",
+      script: "./workers/worker-wa.js",
+      max_memory_restart: '1G',
+      instances: 1,
+      exec_mode: "fork",
+      autorestart: true,
+      watch: false,
+      env: { NODE_ENV: "production", ACCOUNT_NAME: "nanya_wa" }
+    },
     // --- Web UI Server ---
     {
       name: "ui-server",
       script: "./server.js",
       instances: 1,
+      exec_mode: "fork",
+      autorestart: true,
+      watch: false,
+      env: {
+        NODE_ENV: "production",
+      }
+    },
+    // --- Data Sync Agent ---
+    {
+      name: "sync-agent",
+      script: "./sync-agent.js",
+      instances: 1,
+      exec_mode: "fork",
       autorestart: true,
       watch: false,
       env: {
