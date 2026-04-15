@@ -54,6 +54,8 @@ out/
 *.db
 *.sqlite
 *.sqlite3
+*.sqlite-shm
+*.sqlite-wal
 
 # WhatsApp-web.js authentication session folders
 .wwebjs_auth/
