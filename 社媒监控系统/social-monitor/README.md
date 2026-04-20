@@ -12,6 +12,76 @@
 1. 无需额外配置，您只需确保本机安装了 Google Chrome 浏览器。
 2. 初次启动程序时请查看后台日志，扫描 WhatsApp 返回的二维进行设备登入。(一旦登录成功，数据将持久保存在本地的 `whatsapp-session` 目录中，日后启动无需再扫码)。
 
+## 🖥️ 服务器部署指南
+
+适用于 Linux 服务器（Ubuntu / CentOS）生产环境部署。
+
+### 1. 环境准备
+
+```bash
+# 安装 Node.js 18+（以 Ubuntu 为例）
+curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
+sudo apt-get install -y nodejs
+
+# 安装 PM2
+npm install -g pm2
+
+# 安装 Chromium 依赖（Puppeteer 运行 WhatsApp 所需）
+sudo apt-get install -y chromium-browser \
+  libgbm-dev libxkbcommon-dev libglib2.0-dev \
+  libnss3 libatk-bridge2.0-0 libgtk-3-0
+```
+
+### 2. 克隆并安装依赖
+
+```bash
+git clone <repo-url>
+cd 社媒监控系统/social-monitor
+npm install
+```
+
+### 3. 配置环境变量
+
+```bash
+cp .env.example .env
+vim .env   # 填写以下配置项
+```
+
+| 变量 | 说明 | 是否必填 |
+|------|------|----------|
+| `TG_BOT_TOKEN` | Telegram Bot Token（从 @BotFather 获取） | Telegram 必填 |
+| `SYNC_URL` | 中台数据同步接口地址 | 必填 |
+| `SYNC_TOKEN` | 中台 Bearer Token | 必填 |
+| `MEDIA_BASE_URL` | 本机对外访问地址，如 `http://1.2.3.4:3000` | 必填 |
+| `PORT` | Web 服务端口，默认 3000 | 可选 |
+
+### 4. 启动服务
+
+```bash
+npx pm2 start ecosystem.config.js --env production
+npx pm2 save          # 持久化进程列表
+
+# 设置开机自启（按提示执行输出的命令）
+pm2 startup
+```
+
+### 5. WhatsApp 首次扫码
+
+```bash
+npx pm2 logs worker-wa-1   # 查看日志，等待二维码出现后扫码登录
+```
+
+或访问 `http://your-server-ip:3000` 在大屏上直接扫码。会话保存在 `whatsapp-session-{accountName}/`，重启后无需重新扫码。
+
+### 6. 验证运行状态
+
+```bash
+npx pm2 status           # 所有进程应显示 online
+curl localhost:3000/api/stats   # 返回 JSON 表示 API 正常
+```
+
+---
+
 ## 🚀 启动与使用指南 (Mac 用户专属)
 
 我们已经为您准备好了自动化的“傻瓜式”启动器，不仅能在终端运行，也原生支持鼠标双击执行。
