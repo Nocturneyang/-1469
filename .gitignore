@@ -1,5 +1,15 @@
+# macOS
 .DS_Store
 .DS_Store?
 ._*
 .Spotlight-V100
 .Trashes
+
+# Claude Code
+.claude
+
+# 忽略 social-monitor 以外的所有文件和目录
+/*
+!/社媒监控系统/
+社媒监控系统/*
+!社媒监控系统/social-monitor/
