@@ -49,7 +49,10 @@ vim .env   # 填写以下配置项
 
 | 变量 | 说明 | 是否必填 |
 |------|------|----------|
-| `TG_BOT_TOKEN` | Telegram Bot Token（从 @BotFather 获取） | Telegram 必填 |
+| `TG_BOT_TOKEN` | Telegram Bot Token（从 @BotFather 获取） | Telegram Bot 模式必填 |
+| `TG_API_ID` / `TG_API_HASH` | Telegram MTProto API 配置（从 my.telegram.org 获取） | TG 用户模式必填 |
+| `TG_USER_SESSION_{NAME}` | TG MTProto Session String（在 UI 输入验证码后自动生成） | TG 用户模式内部管理 |
+| `TG_WHITELIST_{NAME}` | TG 监控白名单，指定群聊 ID 逗号分隔（由 UI 配置） | 可选 |
 | `SYNC_URL` | 中台数据同步接口地址 | 必填 |
 | `SYNC_TOKEN` | 中台 Bearer Token | 必填 |
 | `MEDIA_BASE_URL` | 本机对外访问地址，如 `http://1.2.3.4:3000` | 必填 |
@@ -143,14 +146,15 @@ curl localhost:3000/api/stats   # 返回 JSON 表示 API 正常
 本系统正在严格按照《多平台社媒监控_7步开发方案》文档落地。目前整体已平稳推进至 **全量数据采集与中心推流阶段**。
 
 ### ✅ 已达成里程碑 (已清点交付)
-- [x] **极高鲁棒性进程调度基建**：由 PM2 完全接管的多核并发体系，同时支持多节点平行运行（支持在一台主机挂载 N 个独立 WA 及 Telegram 机器人），实现了防死锁与自动拉起。
+- [x] **极高鲁棒性进程调度基建**：由 PM2 完全接管的多核并发体系，同时支持多节点平行运行（支持在一台主机挂载 N 个独立 WA 及 Telegram 节点），实现了防死锁与自动拉起。
 - [x] **全无代码视效版控面板**：完全不需要写代码，直接在一个纯 UI 管理网页上点击 `[+ 新增设备]`，后台便会全自动搭建部署新的 PM2 引擎分配任务。自带数据直观化管理和相册瀑布流展示 (Neumorphism UI)。
 - [x] **坚实的数据拦截底座模型 (全本存储)**：建立基于独立隔离表和带本地时间 (UTC+8) 的 SQLite WAL 数据库系统，确立了绝对核心规则：“不怕撞号并发、自动排重去噪、连同附件分层冷储”。新增了 `receiver_account` 溯源节点追踪。
 - [x] **独立防断血浏览器安全壳**：WhatsApp 端采用独立冷库挂载了 Chromium 服务版，告别传统对 Mac 系统本地谷歌浏览器的占用及互相崩溃问题。
 - [x] **动态画板二维登入**：底层产生的鉴权 Base64 QR 已深度直连前端的网页端渲染引擎，直接面向大屏用手机一扫即登，大幅降低门槛。
-- [x] **异步无损数据穿透 (Data Sync Agent)**：独立建立并挂载了一根防坠毁数据长臂 (`sync-agent`)，每 10 秒自动静默轮询未分发的数据（`is_synced=0`），成功将其封包（带时间戳处理与媒体 URL 拼装）推送至外部 PHP/Laravel 中控服务器，达成闭环。
+- [x] **异步无损数据穿透 (Data Sync Agent)**：建立并挂载了一根防坠毁数据长臂 (`sync-agent`)，成功将封包推送至中控服务器。
+- [x] **AI 智能告警分发矩阵**：依托独立进程 `supplier-analyzer` 接入 OpenAI 兼容层与 Gemini，对全域聊天实施精准内容审核与 P0/P1 分级熔断告警。
+- [x] **Telegram 用户账号 (MTProto) 集成与风控抵抗**：打通用户账号级历史回溯通道，集成断点续传、防 FloodWait 休眠、严格日配额及进程熔断安全机制。
 
 ### ⏳ 下一步即将启动的核心动作 (Pending)
-- [ ] **AI 黑盒核心双拆分研发**：按照路线即将破冰核心架构：开发两套脱离采集端绝对独立的 `supplier-analyzer.js` （处理防崩与告警降噪）与 `client-analyzer.js` （沉淀舆情画像）。
 - [ ] **打通两路闭环系统接驳端口**：准备开启 CRM 相关业务推送探针（企微体系 / 第三方工单）。
 - [ ] **Teams 及 WeCom 攻坚**：打通相关授权鉴权回调，最终合并至四大家族监听矩阵中心。

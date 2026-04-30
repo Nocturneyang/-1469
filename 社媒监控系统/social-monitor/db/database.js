@@ -33,7 +33,7 @@ function initSchema() {
             timestamp INTEGER,
             raw_data TEXT,
             is_synced INTEGER DEFAULT 0, -- 0: 未同步, 1: 已同步
-            created_at DATETIME DEFAULT (datetime('now', 'localtime')),
+            created_at DATETIME DEFAULT (datetime('now')),
             UNIQUE(platform, message_id)
         );
 
@@ -43,7 +43,7 @@ function initSchema() {
             status TEXT NOT NULL,
             pushname TEXT,
             qr_code TEXT,
-            updated_at DATETIME DEFAULT (datetime('now', 'localtime'))
+            updated_at DATETIME DEFAULT (datetime('now'))
         );
     `);
 
@@ -72,7 +72,7 @@ function saveMessage(data) {
                 content, has_media, media_path, timestamp, raw_data, created_at
             ) VALUES (
                 @platform, @receiver_account, @message_id, @group_id, @group_name, @sender_id, @sender_name,
-                @content, @has_media, @media_path, @timestamp, @raw_data, datetime('now', 'localtime')
+                @content, @has_media, @media_path, @timestamp, @raw_data, datetime('now')
             )
             ON CONFLICT(platform, message_id) DO NOTHING
         `);
@@ -86,13 +86,13 @@ function saveMessage(data) {
 function updateAccountStatus(id, platform, status, pushname = null, qrCode = null) {
     try {
         const stmt = db.prepare(`
-            INSERT INTO accounts (id, platform, status, pushname, qr_code, updated_at) 
-            VALUES (@id, @platform, @status, @pushname, @qr_code, datetime('now', 'localtime'))
-            ON CONFLICT(id) DO UPDATE SET 
-              status=excluded.status, 
-              pushname=COALESCE(excluded.pushname, pushname), 
-              qr_code=excluded.qr_code, 
-              updated_at=datetime('now', 'localtime')
+            INSERT INTO accounts (id, platform, status, pushname, qr_code, updated_at)
+            VALUES (@id, @platform, @status, @pushname, @qr_code, datetime('now'))
+            ON CONFLICT(id) DO UPDATE SET
+              status=excluded.status,
+              pushname=COALESCE(excluded.pushname, pushname),
+              qr_code=excluded.qr_code,
+              updated_at=datetime('now')
         `);
         stmt.run({ id, platform, status, pushname, qr_code: qrCode });
     } catch (err) {

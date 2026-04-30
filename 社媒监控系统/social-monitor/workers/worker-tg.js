@@ -59,11 +59,15 @@ bot.on('message', async (msg) => {
             }
         }
 
+        const groupIdStr = msg.chat.id.toString();
+        const normalizedGroupId = groupIdStr.replace(/^-100/, '').replace(/^-/, '');
+        const globalMessageId = `${normalizedGroupId}_${msg.message_id}`;
+
         saveMessage({
             platform: 'telegram',
             receiver_account: `tg-${accountName}`,
-            message_id: msg.message_id.toString(),
-            group_id: msg.chat.id.toString(),
+            message_id: globalMessageId,
+            group_id: groupIdStr,
             group_name: groupName,
             sender_id: msg.from.id.toString(),
             sender_name: senderName,

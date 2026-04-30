@@ -1,0 +1,93 @@
+{
+  "_comment": "WhatsApp/Telegram 采集账号与区域映射配置。新增账号时只需在此添加一条记录，无需修改代码。",
+  "_schema": {
+    "account": "数据库中 receiver_account 字段的值",
+    "region": "中文区域名称（用于日报群名前缀，格式：XX区-群名）",
+    "platform": "wa | tg",
+    "owner": "区域主责运营人员（姓名与 WhatsApp 账号名保持一致）",
+    "owner_dingtalk_id": "钉钉/企微 用户ID，P0告警时 @ 该人",
+    "description": "备注说明"
+  },
+  "accounts": [
+    {
+      "account": "wa-oumei_wa",
+      "region": "欧美区",
+      "platform": "wa",
+      "owner": "Jasmine-001",
+      "owner_dingtalk_id": "",
+      "description": "欧美区主力账号，覆盖巴西/墨西哥/欧洲方向，22个群"
+    },
+    {
+      "account": "wa-nanya_wa",
+      "region": "南亚区",
+      "platform": "wa",
+      "owner": "Jessica",
+      "owner_dingtalk_id": "",
+      "description": "南亚区主力账号，覆盖印度/巴基斯坦/非洲方向，18个群"
+    },
+    {
+      "account": "tg-account1",
+      "region": "Telegram区",
+      "platform": "tg",
+      "owner": "ITNIO~ DJ",
+      "owner_dingtalk_id": "",
+      "description": "Telegram 内部群，4个群，含中文群组"
+    },
+    {
+      "account": "wa-yatai-wa",
+      "region": "亚太区",
+      "platform": "wa",
+      "owner": "",
+      "owner_dingtalk_id": "",
+      "description": "亚太区主要帐户,"
+    },
+    {
+      "account": "wa-yuyin_wa",
+      "region": "语音",
+      "platform": "wa",
+      "owner": "",
+      "owner_dingtalk_id": "",
+      "description": "语音供应商"
+    },
+    {
+      "account": "wa-wa_oumei2",
+      "region": "欧美区",
+      "platform": "wa",
+      "owner": "",
+      "owner_dingtalk_id": "",
+      "description": "欧美区第二个帐户"
+    },
+    {
+      "account": "tgu-mason_text",
+      "region": "tg群聊",
+      "platform": "tgu",
+      "owner": "",
+      "owner_dingtalk_id": "",
+      "description": ""
+    },
+    {
+      "account": "wa-wa_shebi",
+      "region": "设备技术",
+      "platform": "wa",
+      "owner": "",
+      "owner_dingtalk_id": "",
+      "description": "设备技术服务R端"
+    },
+    {
+      "account": "tgu-tgu_supplier",
+      "region": "TG-设备支持",
+      "platform": "tgu",
+      "owner": "",
+      "owner_dingtalk_id": "",
+      "description": "TG设备支持的群聊记录"
+    }
+  ],
+  "_add_new_account_example": {
+    "account": "wa-yatai_wa",
+    "region": "亚太区",
+    "platform": "wa",
+    "owner": "Louis",
+    "owner_dingtalk_id": "",
+    "description": "亚太区新增账号（东南亚方向）"
+  }
+}

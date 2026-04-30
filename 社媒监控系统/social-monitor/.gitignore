@@ -1,0 +1,6 @@
+node_modules/
+.env
+db/*.db
+db/.tgu_status_*.json
+teams-profile-*/
+*.png

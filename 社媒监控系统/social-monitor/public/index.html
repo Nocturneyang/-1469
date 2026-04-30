@@ -13,8 +13,8 @@
   <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.0/build/qrcode.min.js"></script>
   <style>
     :root {
-      --bg: #e0e5ec;
-      --bg-gradient: linear-gradient(145deg, #f0f5fd, #caccd4);
+      --bg: #f4f7f9;
+      --bg-gradient: #ffffff;
       --t: #2d3748;
       --t2: #4a5568;
       --t3: #718096;
@@ -30,10 +30,10 @@
       --r: 24px;
       --rs: 14px;
 
-      --out-shadow: 9px 9px 16px var(--shadow-dark), -9px -9px 16px var(--shadow-light);
-      --out-shadow-hover: 12px 12px 20px var(--shadow-dark), -12px -12px 20px var(--shadow-light);
-      --in-shadow: inset 6px 6px 12px var(--shadow-dark), inset -6px -6px 12px var(--shadow-light);
-      --in-shadow-active: inset 4px 4px 8px var(--shadow-dark), inset -4px -4px 8px var(--shadow-light);
+      --out-shadow: 0 4px 16px rgba(0,0,0,0.06);
+      --out-shadow-hover: 0 8px 24px rgba(0,0,0,0.1);
+      --in-shadow: inset 0 2px 4px rgba(0,0,0,0.04);
+      --in-shadow-active: inset 0 2px 6px rgba(0,0,0,0.08);
     }
 
     * {
@@ -277,8 +277,9 @@
 
     .stat-card {
       border-radius: var(--r);
-      background: var(--bg-gradient);
-      box-shadow: var(--out-shadow);
+      background: #ffffff;
+      border: 1px solid #edf2f7;
+      box-shadow: 0 4px 16px rgba(0,0,0,0.02);
       padding: 32px 24px;
       text-align: center;
       position: relative;
@@ -286,12 +287,7 @@
     }
 
     .stat-card::before {
-      content: '';
-      position: absolute;
-      inset: 8px;
-      border-radius: 16px;
-      box-shadow: var(--in-shadow);
-      pointer-events: none;
+      display: none;
     }
 
     .stat-lbl {
@@ -505,9 +501,10 @@
     }
     
     .acc-card {
-      background: var(--bg);
+      background: #ffffff;
+      border: 1px solid #edf2f7;
       border-radius: var(--r);
-      box-shadow: var(--out-shadow);
+      box-shadow: 0 4px 16px rgba(0,0,0,0.02);
       padding: 28px;
       display: flex;
       flex-direction: column;
@@ -582,33 +579,779 @@
     .btn-primary { width: 100%; padding: 14px; border-radius: 16px; background: var(--p); color: white; border: none; font-weight: 700; font-size: 16px; cursor: pointer; margin-top: 10px; box-shadow: 0 4px 12px rgba(107,70,193,0.3); transition: all .2s; }
     .btn-primary:hover { background: var(--p-light); transform: translateY(-1px); }
     .modal-close { position: absolute; top: 20px; right: 24px; font-size: 24px; cursor: pointer; color: var(--t3); }
+    
+    /* ── 新版配置列表样式 ── */
+    .config-list {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .config-list-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 16px 20px;
+      background: #ffffff;
+      border: 1px solid rgba(0,0,0,0.06);
+      border-radius: 12px;
+      transition: all 0.2s ease;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.02);
+    }
+    .config-list-item:hover {
+      box-shadow: 0 4px 12px rgba(0,0,0,0.05);
+      border-color: rgba(107,70,193,0.2);
+    }
+    .cli-left {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+    .cli-title {
+      font-size: 14px;
+      font-weight: 700;
+      color: var(--t);
+      min-width: 140px;
+    }
+    .cli-preview {
+      font-size: 13px;
+      color: var(--t3);
+      font-family: monospace;
+      background: #f8fafc;
+      padding: 4px 8px;
+      border-radius: 6px;
+      border: 1px solid #edf2f7;
+    }
+    .cli-actions {
+      display: flex;
+      gap: 8px;
+    }
+    .btn-text {
+      background: transparent;
+      border: none;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      padding: 6px 12px;
+      border-radius: 6px;
+      transition: all 0.2s;
+    }
+    .btn-text.edit {
+      color: var(--p);
+    }
+    .btn-text.edit:hover {
+      background: rgba(107,70,193,0.1);
+    }
+    .btn-text.danger {
+      color: var(--red);
+    }
+    .btn-text.danger:hover {
+      background: rgba(252,129,129,0.1);
+    }
+
+    /* ── 配置中心样式 ── */
+    .config-section {
+      margin-bottom: 32px;
+    }
+
+    /* ── Webhook 二级目录折叠样式 ── */
+    .wh-group {
+      border: 1px solid #e8edf5;
+      border-radius: 14px;
+      margin-bottom: 12px;
+      overflow: hidden;
+      transition: box-shadow 0.2s;
+    }
+    .wh-group:hover { box-shadow: 0 4px 12px rgba(0,0,0,0.05); }
+    .wh-group-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 14px 18px;
+      cursor: pointer;
+      background: #f8fafc;
+      user-select: none;
+      transition: background 0.15s;
+    }
+    .wh-group-header:hover { background: #f0f4ff; }
+    .wh-group-header.open { background: #f0f4ff; border-bottom: 1px solid #e2e8f0; }
+    .wh-group-header-left {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-weight: 700;
+      font-size: 14px;
+      color: var(--t);
+    }
+    .wh-group-header-right {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .wh-arrow {
+      font-size: 12px;
+      color: var(--t3);
+      transition: transform 0.2s;
+      display: inline-block;
+    }
+    .wh-group-header.open .wh-arrow { transform: rotate(90deg); }
+    .wh-group-body { display: none; padding: 14px 18px; }
+    .wh-group-body.open { display: block; }
+    .wh-subgroup {
+      margin-bottom: 14px;
+    }
+    .wh-subgroup:last-child { margin-bottom: 0; }
+    .wh-subgroup-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px 12px;
+      background: #f8fafc;
+      border: 1px solid #e8edf5;
+      border-radius: 8px;
+      cursor: pointer;
+      user-select: none;
+      transition: background 0.15s;
+      margin-bottom: 6px;
+    }
+    .wh-subgroup-header:hover { background: #eef2ff; border-color: rgba(107,70,193,0.2); }
+    .wh-subgroup-header.open { background: #eef2ff; border-color: rgba(107,70,193,0.3); }
+    .wh-subgroup-title {
+      font-size: 12px;
+      font-weight: 800;
+      color: var(--t2);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .wh-subgroup-body { display: none; padding: 6px 0 0 0; }
+    .wh-subgroup-body.open { display: block; }
+    .wh-count-badge {
+      font-size: 10px;
+      font-weight: 800;
+      padding: 2px 8px;
+      border-radius: 10px;
+      background: rgba(107,70,193,0.1);
+      color: var(--p);
+    }
+    .wh-tag-p0 { background: rgba(229,62,62,0.1); color: #c53030; }
+    .wh-tag-p1 { background: rgba(237,137,54,0.1); color: #c05621; }
+    .wh-tag-p2 { background: rgba(236,201,75,0.12); color: #b7791f; }
+    .wh-tag-sid { background: rgba(107,70,193,0.1); color: var(--p); }
+    .wh-tag-digest { background: rgba(66,153,225,0.1); color: #2b6cb0; }
+    .wh-tag-weekly { background: rgba(72,187,120,0.1); color: #276749; }
+    .wh-tag-ops { background: rgba(113,128,150,0.1); color: #4a5568; }
+
+    .config-section-title {
+      font-size: 13px;
+      font-weight: 800;
+      color: var(--t3);
+      text-transform: uppercase;
+      letter-spacing: 2px;
+      margin-bottom: 20px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .config-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+      gap: 20px;
+    }
+
+    .config-field {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .config-field label {
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--t2);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .config-field label .badge {
+      font-size: 10px;
+      padding: 2px 8px;
+      border-radius: 8px;
+      font-weight: 800;
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+    }
+
+    .badge-set { background: rgba(37,211,102,0.15); color: #25D366; }
+    .badge-unset { background: rgba(252,129,129,0.15); color: var(--red); }
+    .badge-dim3 { background: rgba(107,70,193,0.12); color: var(--p); }
+
+    .config-input-wrap {
+      display: flex;
+      gap: 10px;
+      align-items: stretch;
+    }
+
+    .config-input {
+      flex: 1;
+      padding: 12px 16px;
+      border-radius: 12px;
+      border: none;
+      background: var(--bg);
+      font-family: 'Inter', sans-serif;
+      font-size: 13px;
+      color: var(--t);
+      box-shadow: var(--in-shadow-active);
+      outline: none;
+      transition: box-shadow .2s;
+    }
+
+    .config-input:focus {
+      box-shadow: inset 4px 4px 8px var(--shadow-dark), inset -4px -4px 8px var(--shadow-light), 0 0 0 2px rgba(107,70,193,0.25);
+    }
+
+    .config-input::placeholder { color: var(--t3); }
+
+    .btn-save {
+      padding: 12px 20px;
+      border-radius: 12px;
+      background: var(--p);
+      color: white;
+      border: none;
+      font-weight: 700;
+      font-size: 13px;
+      cursor: pointer;
+      font-family: inherit;
+      box-shadow: 0 4px 12px rgba(107,70,193,0.3);
+      transition: all .2s;
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+
+    .btn-save:hover { background: var(--p-light); transform: translateY(-1px); }
+    .btn-save:active { transform: translateY(1px); box-shadow: none; }
+
+    .btn-danger {
+      padding: 8px 14px;
+      border-radius: 10px;
+      background: rgba(252,129,129,0.1);
+      color: var(--red);
+      border: none;
+      font-weight: 700;
+      font-size: 12px;
+      cursor: pointer;
+      font-family: inherit;
+      transition: all .2s;
+      flex-shrink: 0;
+    }
+    .btn-danger:hover { background: rgba(252,129,129,0.2); }
+
+    .btn-sm {
+      padding: 8px 16px;
+      border-radius: 10px;
+      background: var(--bg);
+      box-shadow: var(--out-shadow);
+      border: none;
+      font-weight: 700;
+      font-size: 12px;
+      cursor: pointer;
+      font-family: inherit;
+      color: var(--t2);
+      transition: all .2s;
+    }
+    .btn-sm:hover { color: var(--p); box-shadow: var(--out-shadow-hover); }
+
+    .toast {
+      position: fixed;
+      bottom: 32px;
+      right: 32px;
+      padding: 14px 24px;
+      border-radius: 16px;
+      background: var(--t);
+      color: white;
+      font-weight: 700;
+      font-size: 14px;
+      z-index: 9999;
+      transform: translateY(80px);
+      opacity: 0;
+      transition: all .4s cubic-bezier(0.16, 1, 0.3, 1);
+      box-shadow: 0 8px 32px rgba(0,0,0,0.25);
+    }
+    .toast.show { transform: translateY(0); opacity: 1; }
+    .toast.success { background: #276749; }
+    .toast.error { background: #c53030; }
+
+    /* 区域分析摘要卡片 */
+    .analytics-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      gap: 20px;
+      margin-top: 4px;
+    }
+
+    .analytics-card {
+      border-radius: 12px;
+      background: #ffffff;
+      border: 1px solid #edf2f7;
+      box-shadow: 0 4px 16px rgba(0,0,0,0.02);
+      padding: 24px 16px;
+      text-align: center;
+    }
+
+    .analytics-val {
+      font-family: 'Outfit', sans-serif;
+      font-size: 40px;
+      font-weight: 800;
+      letter-spacing: -2px;
+      line-height: 1;
+      margin-bottom: 8px;
+    }
+
+    .analytics-lbl {
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--t3);
+      text-transform: uppercase;
+      letter-spacing: 1px;
+    }
+
+    /* 区域映射表格 */
+    .region-table {
+      width: 100%;
+      border-collapse: separate;
+      border-spacing: 0 10px;
+    }
+
+    .region-table th {
+      font-size: 12px;
+      font-weight: 800;
+      color: var(--t3);
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      padding: 0 16px 4px;
+      text-align: left;
+    }
+
+    .region-table td {
+      padding: 14px 16px;
+      background: var(--bg);
+      font-size: 14px;
+      color: var(--t2);
+    }
+
+    .region-table td:first-child { border-radius: 12px 0 0 12px; }
+    .region-table td:last-child  { border-radius: 0 12px 12px 0; }
+
+    .region-row { box-shadow: var(--out-shadow); }
+
+    .region-tag {
+      display: inline-block;
+      padding: 3px 10px;
+      border-radius: 8px;
+      font-size: 12px;
+      font-weight: 700;
+      background: rgba(107,70,193,0.1);
+      color: var(--p);
+    }
   </style>
 </head>
 
 <body>
-  <!-- Modal -->
+  
+  
+  <!-- Modal：编辑 AI 配置 -->
+  <div class="modal-overlay" id="ai-modal">
+    <div class="modal" style="width:480px;max-width:95vw">
+      <div class="modal-close" onclick="closeAiModal()">&times;</div>
+      <div class="modal-title" id="ai-modal-title">编辑 AI 配置</div>
+      <input type="hidden" id="ai-modal-key" />
+      <div class="form-group">
+        <label id="ai-modal-label">配置值</label>
+        <input type="text" id="ai-val-input" class="form-control" autocomplete="off" />
+      </div>
+      <div class="form-group" id="ai-model-presets" style="display:none; margin-top:-10px; margin-bottom:16px;">
+        <span style="font-size:11px;color:var(--t3);font-weight:700;">快捷选择 →</span>
+        <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:6px">
+          <button class="btn-sm" style="font-size:11px;padding:5px 10px" onclick="pickModelModal('openai/gpt-5.2')">gpt-5.2</button>
+          <button class="btn-sm" style="font-size:11px;padding:5px 10px" onclick="pickModelModal('anthropic/claude-sonnet-4.6')">claude-sonnet-4.6</button>
+          <button class="btn-sm" style="font-size:11px;padding:5px 10px" onclick="pickModelModal('google/gemini-3-flash-preview')">gemini-3-flash</button>
+          <button class="btn-sm" style="font-size:11px;padding:5px 10px" onclick="pickModelModal('google/gemini-3.1-flash-lite-preview')">gemini-3.1-lite</button>
+        </div>
+      </div>
+      <button class="btn-primary" onclick="submitAiConfig()">保存配置</button>
+    </div>
+  </div>
+
+  <!-- Modal：编辑 Webhook -->
+  <div class="modal-overlay" id="webhook-modal">
+    <div class="modal" style="width:480px;max-width:95vw">
+      <div class="modal-close" onclick="closeWebhookModal()">&times;</div>
+      <div class="modal-title" id="webhook-modal-title">编辑 Webhook</div>
+      <input type="hidden" id="webhook-modal-key" />
+      <div class="form-group">
+        <label>Webhook URL</label>
+        <input type="text" id="webhook-url-input" class="form-control" placeholder="https://oapi.dingtalk.com/robot/send?access_token=..." autocomplete="off" />
+      </div>
+      <div class="form-group">
+        <label>加签秘钥 (Secret) <span style="color:var(--t3);font-size:12px;font-weight:normal">（可选）</span></label>
+        <input type="text" id="webhook-secret-input" class="form-control" placeholder="SEC... (留空则不加签)" autocomplete="off" />
+      </div>
+      <div style="display:flex;gap:12px;align-items:center;margin-top:16px;">
+        <button class="btn-primary" onclick="submitWebhook()" style="flex:1">保存配置</button>
+        <button class="btn-sm" id="btn-webhook-test" onclick="testWebhookConn()" style="background:#edf2f7;color:#2d3748;border:1px solid #cbd5e0;padding:0 16px;height:36px;border-radius:6px;font-weight:600;cursor:pointer">⚡ 测试连通性</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal：编辑区域 Webhook -->
+  <div class="modal-overlay" id="region-webhook-modal">
+    <div class="modal" style="width:480px;max-width:95vw">
+      <div class="modal-close" onclick="closeRegionWebhookModal()">&times;</div>
+      <div class="modal-title" id="region-webhook-modal-title">新增区域机器人</div>
+      <input type="hidden" id="rw-type" />
+      <div class="form-group">
+        <label>生效平台</label>
+        <select id="rw-platform" class="form-control">
+          <option value="wa">WhatsApp</option>
+          <option value="tg">Telegram Bot</option>
+          <option value="tgu">Telegram 用户账号(MTProto)</option>
+          <option value="teams">Microsoft Teams</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>配置类型</label>
+        <select id="rw-config-level" class="form-control" onchange="document.getElementById('rw-region-section').style.display = this.value === 'platform' ? 'none' : 'block'">
+          <option value="region">特定区域专属</option>
+          <option value="platform">不限区域</option>
+        </select>
+      </div>
+      <div class="form-group" id="rw-region-section">
+        <label>关联区域 (可多选)</label>
+        <div id="rw-region-checkboxes" style="max-height: 150px; overflow-y: auto; border: 1px solid #e2e8f0; border-radius: 6px; padding: 8px; background: #fafaab00; display: flex; flex-direction: column; gap: 6px;">
+        </div>
+        <input type="text" id="rw-region-custom" class="form-control" style="margin-top:8px" placeholder="额外自定义区域（用逗号分隔，如：拉美专线,欧洲专线）" />
+      </div>
+      <div class="form-group">
+        <label>Webhook URL</label>
+        <input type="text" id="rw-url-input" class="form-control" placeholder="https://oapi.dingtalk.com/robot/send?access_token=..." autocomplete="off" />
+      </div>
+      <div class="form-group">
+        <label>加签秘钥 (Secret) <span style="color:var(--t3);font-size:12px;font-weight:normal">（可选）</span></label>
+        <input type="text" id="rw-secret-input" class="form-control" placeholder="SEC... (留空则不加签)" autocomplete="off" />
+      </div>
+      <div style="display:flex;gap:12px;align-items:center;margin-top:16px;">
+        <button class="btn-primary" onclick="submitRegionWebhook()" style="flex:1">保存配置</button>
+        <button class="btn-sm" id="btn-rw-test" onclick="testRegionWebhookConn()" style="background:#edf2f7;color:#2d3748;border:1px solid #cbd5e0;padding:0 16px;height:36px;border-radius:6px;font-weight:600;cursor:pointer">⚡ 测试连通性</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal：新增采集账号 -->
   <div class="modal-overlay" id="add-modal">
-    <div class="modal">
+    <div class="modal" style="width:520px;max-width:95vw">
       <div class="modal-close" onclick="closeAddModal()">&times;</div>
       <div class="modal-title">新增采集节点</div>
       <div class="form-group">
         <label>选择平台</label>
         <select id="acc-platform" class="form-control" onchange="toggleTokenInput()">
           <option value="whatsapp">🟢 WhatsApp</option>
-          <option value="telegram">🔵 Telegram</option>
+          <option value="telegram-bot">🔵 Telegram Bot（实时监听）</option>
+          <option value="telegram-user">🟣 Telegram 用户账号（含历史消息）</option>
+          <option value="teams">🟦 Microsoft Teams 个人账号</option>
         </select>
       </div>
       <div class="form-group">
-        <label>账号标识ID (仅限英文数字，如: work_01)</label>
-        <input type="text" id="acc-id" class="form-control" placeholder="自定义一个唯一ID" />
+        <label>账号标识ID <span style="color:var(--t3);font-size:12px">(仅限英文数字下划线)</span></label>
+        <input type="text" id="acc-id" class="form-control" placeholder="如: oumei_tg_01" />
       </div>
-      <div class="form-group" id="tg-token-grp" style="display:none;">
-        <label>Telegram Bot Token</label>
-        <input type="text" id="acc-token" class="form-control" placeholder="123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11" />
+
+      <!-- Bot 模式 -->
+      <div id="tg-token-grp" style="display:none">
+        <div class="form-group">
+          <label>Telegram Bot Token</label>
+          <input type="text" id="acc-token" class="form-control" placeholder="123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11" />
+        </div>
+        <button class="btn-primary" onclick="submitCreateAccount()">确认添加并启动</button>
       </div>
-      <button class="btn-primary" onclick="submitCreateAccount()">确认添加并启动</button>
+
+      <!-- 用户账号模式 -->
+      <div id="tg-user-grp" style="display:none">
+        <div style="background:rgba(107,70,193,0.06);border-radius:12px;padding:14px 16px;margin-bottom:16px;font-size:13px;color:var(--t2);line-height:1.7">
+          📌 需先在 <a href="https://my.telegram.org" target="_blank" style="color:var(--p)">my.telegram.org</a> 获取 <strong>api_id</strong> 和 <strong>api_hash</strong>
+        </div>
+        <!-- Step 1: 基础配置 -->
+        <div id="tgu-step1">
+          <div class="form-group">
+            <label>API ID <span style="color:var(--red)">*</span></label>
+            <input type="text" id="tgu-api-id" class="form-control" placeholder="如：12345678" />
+          </div>
+          <div class="form-group">
+            <label>API Hash <span style="color:var(--red)">*</span></label>
+            <input type="text" id="tgu-api-hash" class="form-control" placeholder="32位字符串" />
+          </div>
+          <div class="form-group">
+            <label>手机号（含国际区号）<span style="color:var(--red)">*</span></label>
+            <input type="text" id="tgu-phone" class="form-control" placeholder="如：+8613800138000" />
+          </div>
+          <!-- 频控快捷预设 -->
+          <div style="margin-bottom:16px">
+            <div style="font-size:12px;font-weight:700;color:var(--t3);margin-bottom:8px">频控预设</div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap">
+              <button class="btn-sm" style="font-size:11px" onclick="applyRatePreset('conservative')">🛡️ 保守（500/天）</button>
+              <button class="btn-sm" style="font-size:11px" onclick="applyRatePreset('standard')">⚖️ 标准（2000/天）</button>
+              <button class="btn-sm" style="font-size:11px" onclick="applyRatePreset('none')">⏭️ 不回溯</button>
+            </div>
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px">
+            <div class="form-group" style="margin:0">
+              <label style="font-size:12px">每日拉取配额（条）</label>
+              <input type="number" id="tgu-daily-limit" class="form-control" value="2000" min="100" max="10000" />
+            </div>
+            <div class="form-group" style="margin:0">
+              <label style="font-size:12px">回溯天数（0=不回溯）</label>
+              <input type="number" id="tgu-backfill-days" class="form-control" value="7" min="0" />
+            </div>
+          </div>
+          <button class="btn-primary" id="btn-tgu-send-code" onclick="tguSendCode()">📱 发送验证码</button>
+        </div>
+
+        <!-- Step 2: 验证码 -->
+        <div id="tgu-step2" style="display:none">
+          <div style="background:#f0fff4;border-radius:10px;padding:12px 16px;font-size:13px;color:#276749;margin-bottom:16px">✅ 验证码已发送到手机，请在5分钟内输入</div>
+          <div class="form-group">
+            <label>短信验证码</label>
+            <input type="text" id="tgu-code" class="form-control" placeholder="如：12345" maxlength="6" style="letter-spacing:4px;font-size:20px;text-align:center" />
+          </div>
+          <button class="btn-primary" onclick="tguVerifyCode()">✅ 验证并完成登录</button>
+          <button class="btn-sm" style="width:100%;margin-top:8px" onclick="tguBackToStep1()">← 返回重填手机号</button>
+        </div>
+
+        <!-- Step 3: 2FA -->
+        <div id="tgu-step3" style="display:none">
+          <div style="background:#fffbf0;border-radius:10px;padding:12px 16px;font-size:13px;color:#92400e;margin-bottom:16px">🔐 该账号启用了两步验证，请输入密码</div>
+          <div class="form-group">
+            <label>两步验证密码</label>
+            <input type="password" id="tgu-2fa" class="form-control" placeholder="输入你的 2FA 密码" />
+          </div>
+          <button class="btn-primary" onclick="tguVerify2FA()">🔓 完成验证</button>
+        </div>
+
+        <!-- Step 4: 监控范围选择 -->
+        <div id="tgu-step4" style="display:none">
+          <div style="font-weight:700;margin-bottom:12px">请选择需要监控的群聊</div>
+          <div class="form-group">
+            <select id="tgu-monitor-mode" class="form-control" onchange="toggleMonitorMode()">
+              <option value="all">🌐 全部监控 (自动拉取所有已加入的群聊)</option>
+              <option value="partial">🎯 部分监控 (仅监控指定群聊)</option>
+            </select>
+          </div>
+          <div id="tgu-dialogs-container" style="display:none">
+             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 6px;">
+                 <div id="tgu-dialogs-loading" style="font-size:12px;color:var(--t3)">正在获取群聊列表...</div>
+                 <div>
+                   <button type="button" class="btn-sm" style="padding:4px 8px;font-size:12px;cursor:pointer" onclick="document.querySelectorAll('.tgu-dialog-cb').forEach(cb => cb.checked = true)">✅ 全选</button>
+                   <button type="button" class="btn-sm" style="padding:4px 8px;font-size:12px;cursor:pointer;margin-left:4px;" onclick="document.querySelectorAll('.tgu-dialog-cb').forEach(cb => cb.checked = false)">❌ 全不选</button>
+                 </div>
+             </div>
+             <div id="tgu-dialogs-list" style="max-height:200px;overflow-y:auto;border:1px solid #e2e8f0;border-radius:6px;padding:8px;display:flex;flex-direction:column;gap:6px">
+             </div>
+          </div>
+          <button class="btn-primary" style="margin-top:16px" onclick="submitTguWhitelist()">💾 确认并启动</button>
+        </div>
+      </div>
+
+      <!-- WA 模式：无额外字段直接添加 -->
+      <div id="wa-grp" style="display:none">
+        <button class="btn-primary" onclick="submitCreateAccount()">确认添加并启动（扫码登录）</button>
+      </div>
+
+      <!-- Teams 模式 -->
+      <div id="teams-grp" style="display:none">
+        <div style="background:rgba(0,120,212,0.07);border-radius:12px;padding:14px 16px;margin-bottom:16px;font-size:13px;color:var(--t2);line-height:1.7">
+          🟦 <strong>Microsoft Teams 个人账号</strong><br>
+          点击「确认添加」后，系统会在后台启动采集进程。<br>
+          如需登录，请在「账号管理」页面点击该账号的 <strong>登录引导</strong> 按鈕。
+        </div>
+        <!-- Step 1: 监控群聊选择 -->
+        <div id="teams-step1">
+          <div class="form-group">
+            <select id="teams-monitor-mode" class="form-control" onchange="toggleTeamsMonitorMode()">
+              <option value="all">🌐 全部监控 (自动拉取所有群聊)</option>
+              <option value="partial">🎯 部分监控 (仅监控指定群聊)</option>
+            </select>
+          </div>
+          <button class="btn-primary" onclick="submitCreateTeams()">确认添加并启动</button>
+        </div>
+      </div>
     </div>
   </div>
+
+  <!-- Modal：TG 用户账号频控设置 -->
+  <div class="modal-overlay" id="tgu-ratelimit-modal">
+    <div class="modal" style="width:500px;max-width:95vw">
+      <div class="modal-close" onclick="document.getElementById('tgu-ratelimit-modal').style.display='none'">&times;</div>
+      <div class="modal-title">📊 频控设置 — <span id="rl-account-name"></span></div>
+      <div style="font-size:12px;color:var(--t3);margin-bottom:20px;padding:10px 14px;background:rgba(107,70,193,0.06);border-radius:10px;line-height:1.8">
+        🛡️ 保守：500条/天，间隔5-15秒 &nbsp;|&nbsp; ⚖️ 标准：2000条/天，间隔3-8秒 &nbsp;|&nbsp; ⚡ 激进模式风险自担
+      </div>
+      <div style="font-weight:800;font-size:12px;color:var(--t3);text-transform:uppercase;letter-spacing:1px;margin-bottom:12px">📥 历史回溯</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:20px">
+        <div class="form-group" style="margin:0">
+          <label style="font-size:12px">开启历史回溯</label>
+          <select id="rl-enable-backfill" class="form-control">
+            <option value="true">✅ 开启</option>
+            <option value="false">❌ 关闭</option>
+          </select>
+        </div>
+        <div class="form-group" style="margin:0">
+          <label style="font-size:12px">回溯天数（0=不限）</label>
+          <input type="number" id="rl-backfill-days" class="form-control" min="0" />
+        </div>
+        <div class="form-group" style="margin:0;grid-column:1/-1">
+          <label style="font-size:12px">每日拉取配额（条）</label>
+          <input type="number" id="rl-daily-limit" class="form-control" min="100" max="10000" />
+        </div>
+      </div>
+      <div style="font-weight:800;font-size:12px;color:var(--t3);text-transform:uppercase;letter-spacing:1px;margin-bottom:12px">⏱️ 请求频率</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:24px">
+        <div class="form-group" style="margin:0;grid-column:1/-1">
+          <label style="font-size:12px">登录后预热静默期（秒）</label>
+          <input type="number" id="rl-warmup-seconds" class="form-control" min="0" max="3600" />
+        </div>
+        <div class="form-group" style="margin:0">
+          <label style="font-size:12px">每批次拉取数量（条）</label>
+          <input type="number" id="rl-batch-size" class="form-control" min="10" max="200" />
+        </div>
+        <div class="form-group" style="margin:0">
+          <label style="font-size:12px">批次间隔最小值（毫秒）</label>
+          <input type="number" id="rl-sleep-min" class="form-control" min="500" />
+        </div>
+        <div class="form-group" style="margin:0">
+          <label style="font-size:12px">批次间隔最大值（毫秒）</label>
+          <input type="number" id="rl-sleep-max" class="form-control" min="1000" />
+        </div>
+      </div>
+      <div style="display:flex;gap:12px">
+        <button class="btn-primary" style="flex:1" onclick="submitRateLimit()">💾 保存并应用</button>
+        <button class="btn-sm" onclick="document.getElementById('tgu-ratelimit-modal').style.display='none'">取消</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal：重新配置群聊监控 -->
+  <div class="modal-overlay" id="tgu-reconfig-modal">
+    <div class="modal" style="width:500px;max-width:95vw">
+      <div class="modal-close" onclick="document.getElementById('tgu-reconfig-modal').style.display='none'">&times;</div>
+      <div class="modal-title">⚙️ 配置监控群聊 — <span id="rc-account-name"></span></div>
+      <div class="form-group">
+        <select id="rc-monitor-mode" class="form-control" onchange="toggleRcMonitorMode()">
+          <option value="all">🌐 全部监控 (自动拉取所有已加入的群聊)</option>
+          <option value="partial">🎯 部分监控 (仅监控指定群聊)</option>
+        </select>
+      </div>
+      <div id="rc-dialogs-container" style="display:none">
+         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 6px;">
+             <div id="rc-dialogs-loading" style="font-size:12px;color:var(--t3)">正在连接并获取群聊列表...</div>
+             <div>
+               <button type="button" class="btn-sm" style="padding:4px 8px;font-size:12px;cursor:pointer" onclick="document.querySelectorAll('.rc-dialog-cb').forEach(cb => cb.checked = true)">✅ 全选</button>
+               <button type="button" class="btn-sm" style="padding:4px 8px;font-size:12px;cursor:pointer;margin-left:4px;" onclick="document.querySelectorAll('.rc-dialog-cb').forEach(cb => cb.checked = false)">❌ 全不选</button>
+             </div>
+         </div>
+         <div id="rc-dialogs-list" style="max-height:300px;overflow-y:auto;border:1px solid #e2e8f0;border-radius:6px;padding:8px;display:flex;flex-direction:column;gap:6px">
+         </div>
+      </div>
+      <button class="btn-primary" style="margin-top:16px;width:100%" onclick="submitReconfigGroups()">💾 保存并重启 Worker</button>
+    </div>
+  </div>
+
+  <!-- Modal：回溯进度 -->
+  <div class="modal-overlay" id="tgu-backfill-modal">
+    <div class="modal" style="width:640px;max-width:95vw">
+      <div class="modal-close" onclick="document.getElementById('tgu-backfill-modal').style.display='none'">&times;</div>
+      <div class="modal-title">📥 历史回溯进度 — <span id="bf-account-name"></span></div>
+      <div id="bf-loading" style="text-align:center;padding:32px;color:var(--t3)">加载中...</div>
+      <div id="bf-content" style="display:none">
+        <table style="width:100%;border-collapse:separate;border-spacing:0 8px;font-size:13px">
+          <thead>
+            <tr style="font-size:11px;font-weight:800;color:var(--t3);text-transform:uppercase;letter-spacing:1px">
+              <th style="text-align:left;padding:0 12px 4px">群组</th>
+              <th style="text-align:center;padding:0 8px 4px">状态</th>
+              <th style="text-align:right;padding:0 8px 4px">今日拉取</th>
+              <th style="text-align:right;padding:0 8px 4px">累计</th>
+              <th style="text-align:center;padding:0 8px 4px">操作</th>
+            </tr>
+          </thead>
+          <tbody id="bf-table-body"></tbody>
+        </table>
+        <div id="bf-empty" style="display:none;text-align:center;padding:32px;color:var(--t3)">暂无回溯任务（账号登录后会自动注册）</div>
+      </div>
+      <div style="margin-top:20px;display:flex;gap:10px;padding-top:16px;border-top:1px dashed #edf2f7">
+        <button class="btn-sm" onclick="backfillPauseAll()">⏸ 全部暂停</button>
+        <button class="btn-sm" onclick="backfillResumeAll()">▶️ 全部恢复</button>
+        <button class="btn-sm" style="margin-left:auto" onclick="loadBackfillTasks(document.getElementById('bf-account-name').textContent)">🔄 刷新</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal：新增区域账号映射 -->
+  <div class="modal-overlay" id="region-modal">
+    <div class="modal" style="width:480px;max-width:95vw">
+      <div class="modal-close" onclick="closeRegionModal()">&times;</div>
+      <div class="modal-title">新增 / 更新区域映射</div>
+      <div class="form-group">
+        <label>账号 ID <span style="color:var(--red);font-size:12px">* 必填</span></label>
+        <select id="r-account" class="form-control"><option value="">-- 请选择账号 --</option></select>
+        <div style="font-size:12px;color:var(--t3);margin-top:6px">对应数据库 receiver_account 字段值，需先在「帐号管理」中添加</div>
+      </div>
+      <div class="form-group">
+        <label>平台</label>
+        <select id="r-platform" class="form-control">
+          <option value="wa">🟢 WhatsApp</option>
+          <option value="tg">🔵 Telegram(Bot)</option>
+          <option value="tgu">👤 TG用户(MTProto)</option>
+          <option value="teams">🟣 Microsoft Teams</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>区域名称 <span style="color:var(--red);font-size:12px">* 必填</span></label>
+        <input type="text" id="r-region" class="form-control" placeholder="如：欧美区 / 南亚区 / 菲律宾专区" />
+      </div>
+      <div class="form-group">
+        <label>区域负责人</label>
+        <input type="text" id="r-owner" class="form-control" placeholder="如：Jasmine-001" />
+      </div>
+      <div class="form-group">
+        <label>钉钉用户 ID <span style="color:var(--t3);font-size:12px">用于 P0 告警 @</span></label>
+        <input type="text" id="r-dingtalk" class="form-control" placeholder="可留空，后续补充" />
+      </div>
+      <div class="form-group">
+        <label>备注说明</label>
+        <input type="text" id="r-desc" class="form-control" placeholder="如：欧美区主力账号，覆盖巴西/墨西哥方向" />
+      </div>
+      <button class="btn-primary" onclick="submitRegion()">保存映射</button>
+    </div>
+  </div>
+
+  <!-- Modal：编辑内部员工白名单 -->
+  <div class="modal-overlay" id="staff-modal">
+    <div class="modal" style="width:480px;max-width:95vw">
+      <div class="modal-close" onclick="closeStaffModal()">&times;</div>
+      <div class="modal-title">编辑内部员工配置</div>
+      <div class="form-group">
+        <label>精确匹配名单 (每行一个账号名称)</label>
+        <textarea id="staff-whitelist-input" class="form-control" style="height:100px;font-family:monospace;font-size:13px" placeholder="如：ITNIO~ DJ"></textarea>
+      </div>
+      <div class="form-group">
+        <label>模糊匹配关键词 (每行一个)</label>
+        <textarea id="staff-keywords-input" class="form-control" style="height:100px;font-family:monospace;font-size:13px" placeholder="如：itnio
+support"></textarea>
+        <div style="font-size:12px;color:var(--t3);margin-top:6px">名称包含这些词（不区分大小写）即被认定为内部员工</div>
+      </div>
+      <button class="btn-primary" onclick="submitStaffConfig()">保存配置</button>
+    </div>
+  </div>
+
 
   <div class="app">
 
@@ -622,6 +1365,7 @@
         <div class="nav-item active" onclick="switchView('dashboard', this)">📊 全盘态势 (Dashboard)</div>
         <div class="nav-item" onclick="switchView('feed', this)">💬 原始数据流 (Raw Feed)</div>
         <div class="nav-item" onclick="switchView('accounts', this)">👥 帐号管理 (Accounts)</div>
+        <div class="nav-item" onclick="switchView('config', this)">⚙️ 系统配置 (Config)</div>
       </nav>
     </aside>
 
@@ -666,7 +1410,9 @@
           <div class="filters">
             <button class="f-btn active" onclick="setFilter('all', this)">🌈 全渠道</button>
             <button class="f-btn" onclick="setFilter('whatsapp', this)">🟢 WhatsApp</button>
-            <button class="f-btn" onclick="setFilter('telegram', this)">🔵 Telegram</button>
+            <button class="f-btn" onclick="setFilter('telegram', this)">🔵 Telegram(Bot)</button>
+            <button class="f-btn" onclick="setFilter('telegram_user', this)">👤 TG用户(MTProto)</button>
+            <button class="f-btn" onclick="setFilter('teams', this)">🟣 Microsoft Teams</button>
           </div>
 
           <div class="feed-container" id="feed-box">
@@ -686,6 +1432,398 @@
             </div>
           </div>
         </div>
+
+        <!-- 视图 4: Config -->
+        <div id="view-config" class="view">
+
+          <!-- 分析引擎运行摘要 -->
+          <div class="panel">
+            <div class="panel-title">🔬 分析引擎运行摘要</div>
+            <div id="analytics-loading" class="empty-state loading-pulse" style="padding:32px">读取分析库数据...</div>
+            <div id="analytics-summary" style="display:none">
+              <div class="analytics-grid">
+                <div class="analytics-card">
+                  <div class="analytics-val" id="an-total" style="color:var(--p)">--</div>
+                  <div class="analytics-lbl">累计告警次数</div>
+                </div>
+                <div class="analytics-card">
+                  <div class="analytics-val" id="an-p0" style="color:#fc8181">--</div>
+                  <div class="analytics-lbl">P0 紧急告警</div>
+                </div>
+                <div class="analytics-card">
+                  <div class="analytics-val" id="an-p1" style="color:#f6ad55">--</div>
+                  <div class="analytics-lbl">P1 聚合告警</div>
+                </div>
+                <div class="analytics-card">
+                  <div class="analytics-val" id="an-open" style="color:#fc8181">--</div>
+                  <div class="analytics-lbl">待处理问题</div>
+                </div>
+                <div class="analytics-card">
+                  <div class="analytics-val" id="an-closed" style="color:#68d391">--</div>
+                  <div class="analytics-lbl">已闭环问题</div>
+                </div>
+              </div>
+            </div>
+            <div id="analytics-unready" style="display:none" class="empty-state">analytics.sqlite 尚未初始化。请先运行 <code style="background:rgba(107,70,193,0.1);padding:2px 8px;border-radius:6px;color:var(--p)">node scripts/init-analytics-db.js</code></div>
+          </div>
+
+          <!-- 钉钉推送配置 -->
+          
+          <!-- 钉钉推送配置 -->
+          <div class="panel" style="background:#ffffff; border:1px solid #edf2f7; box-shadow:0 4px 16px rgba(0,0,0,0.04);">
+            <div class="panel-title" style="margin-bottom:8px;">🔔 钉钉机器人 Webhook</div>
+            <p style="font-size:13px;color:var(--t3);margin-bottom:20px;line-height:1.6;">二级目录结构：点击展开配置各类告警通道。优先级回退链：<strong>区域专属 → 平台兜底 → 全局配置</strong>。同级告警类型（P0/P1/P2）未专属配置时自动回退至「通用告警」。</p>
+            <div id="wh-accordion">
+
+              <!-- ── Level 1: 业务告警 ── -->
+              <div class="wh-group" id="wh-grp-ALERT">
+                <div class="wh-group-header" onclick="toggleWhGroup('ALERT')">
+                  <div class="wh-group-header-left">
+                    <span>🚨</span>
+                    <span>业务告警</span>
+                    <span style="font-size:11px;font-weight:600;color:var(--t3)">(P0/P1/P2/SID 实时推送)</span>
+                  </div>
+                  <div class="wh-group-header-right">
+                    <span id="wh-grp-ALERT-count" class="wh-count-badge" style="display:none"></span>
+                    <span class="wh-arrow">▶</span>
+                  </div>
+                </div>
+                <div class="wh-group-body" id="wh-body-ALERT">
+
+                  <!-- 通用/兜底 子组 -->
+                  <div class="wh-subgroup">
+                    <div class="wh-subgroup-header" onclick="toggleWhSubgroup('ALERT')">
+                      <div class="wh-subgroup-title">
+                        <span class="wh-count-badge wh-tag-ops">通用</span>
+                        <span>通用告警通道</span>
+                        <span style="font-size:11px;color:var(--t3);font-weight:500">未细分 P0/P1/P2 时的默认回退通道</span>
+                      </div>
+                      <div style="display:flex;align-items:center;gap:8px">
+                        <span id="wh-sub-ALERT-count" class="wh-count-badge" style="display:none"></span>
+                        <button class="btn-sm" style="margin:0;padding:4px 10px;font-size:11px" onclick="event.stopPropagation();openRegionWebhookModal('ALERT')">+ 新增</button>
+                        <span class="wh-arrow">▶</span>
+                      </div>
+                    </div>
+                    <div class="wh-subgroup-body" id="wh-subbody-ALERT">
+                      <div class="config-list" id="webhook-list-ALERT">
+                        <div class="config-list-item">
+                          <div class="cli-left">
+                            <div class="cli-title">全局配置（最终兜底）</div>
+                            <span class="badge" id="badge-DINGTALK_ALERT">未配置</span>
+                          </div>
+                          <div class="cli-actions">
+                            <button class="btn-text edit" onclick="openWebhookModal('DINGTALK_ALERT', '通用告警全局配置（P0/P1/P2 共同回退至此）')">编辑</button>
+                            <button class="btn-text danger" onclick="deleteEnvKey('DINGTALK_ALERT')">清空</button>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <!-- P0 子组 -->
+                  <div class="wh-subgroup">
+                    <div class="wh-subgroup-header" onclick="toggleWhSubgroup('ALERT_P0')">
+                      <div class="wh-subgroup-title">
+                        <span class="wh-count-badge wh-tag-p0">P0</span>
+                        <span>严重业务中断</span>
+                        <span style="font-size:11px;color:var(--t3);font-weight:500">通道故障/0%送达率，直接触发</span>
+                      </div>
+                      <div style="display:flex;align-items:center;gap:8px">
+                        <span id="wh-sub-ALERT_P0-count" class="wh-count-badge" style="display:none"></span>
+                        <button class="btn-sm" style="margin:0;padding:4px 10px;font-size:11px" onclick="event.stopPropagation();openRegionWebhookModal('ALERT_P0')">+ 新增</button>
+                        <span class="wh-arrow">▶</span>
+                      </div>
+                    </div>
+                    <div class="wh-subgroup-body" id="wh-subbody-ALERT_P0">
+                      <div class="config-list" id="webhook-list-ALERT_P0">
+                        <div style="font-size:12px;color:var(--t3);padding:8px 4px">未专属配置时自动回退至通用告警通道。</div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <!-- P1 子组 -->
+                  <div class="wh-subgroup">
+                    <div class="wh-subgroup-header" onclick="toggleWhSubgroup('ALERT_P1')">
+                      <div class="wh-subgroup-title">
+                        <span class="wh-count-badge wh-tag-p1">P1</span>
+                        <span>业务异常告警</span>
+                        <span style="font-size:11px;color:var(--t3);font-weight:500">5分钟窗口聚合 + AI评分 ≥7</span>
+                      </div>
+                      <div style="display:flex;align-items:center;gap:8px">
+                        <span id="wh-sub-ALERT_P1-count" class="wh-count-badge" style="display:none"></span>
+                        <button class="btn-sm" style="margin:0;padding:4px 10px;font-size:11px" onclick="event.stopPropagation();openRegionWebhookModal('ALERT_P1')">+ 新增</button>
+                        <span class="wh-arrow">▶</span>
+                      </div>
+                    </div>
+                    <div class="wh-subgroup-body" id="wh-subbody-ALERT_P1">
+                      <div class="config-list" id="webhook-list-ALERT_P1">
+                        <div style="font-size:12px;color:var(--t3);padding:8px 4px">未专属配置时自动回退至 P0 通道，再回退至全局通用告警。</div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <!-- P2 子组 -->
+                  <div class="wh-subgroup">
+                    <div class="wh-subgroup-header" onclick="toggleWhSubgroup('ALERT_P2')">
+                      <div class="wh-subgroup-title">
+                        <span class="wh-count-badge wh-tag-p2">P2</span>
+                        <span>无响应告警</span>
+                        <span style="font-size:11px;color:var(--t3);font-weight:500">外部问题15分钟内未回复</span>
+                      </div>
+                      <div style="display:flex;align-items:center;gap:8px">
+                        <span id="wh-sub-ALERT_P2-count" class="wh-count-badge" style="display:none"></span>
+                        <button class="btn-sm" style="margin:0;padding:4px 10px;font-size:11px" onclick="event.stopPropagation();openRegionWebhookModal('ALERT_P2')">+ 新增</button>
+                        <span class="wh-arrow">▶</span>
+                      </div>
+                    </div>
+                    <div class="wh-subgroup-body" id="wh-subbody-ALERT_P2">
+                      <div class="config-list" id="webhook-list-ALERT_P2">
+                        <div style="font-size:12px;color:var(--t3);padding:8px 4px">未专属配置时自动回退至通用告警通道。</div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <!-- SID 子组 -->
+                  <div class="wh-subgroup">
+                    <div class="wh-subgroup-header" onclick="toggleWhSubgroup('ALERT_SID')">
+                      <div class="wh-subgroup-title">
+                        <span class="wh-count-badge wh-tag-sid">SID</span>
+                        <span>SID 变更告警</span>
+                        <span style="font-size:11px;color:var(--t3);font-weight:500">3个以上节点批量更新</span>
+                      </div>
+                      <div style="display:flex;align-items:center;gap:8px">
+                        <span id="wh-sub-ALERT_SID-count" class="wh-count-badge" style="display:none"></span>
+                        <button class="btn-sm" style="margin:0;padding:4px 10px;font-size:11px" onclick="event.stopPropagation();openRegionWebhookModal('ALERT_SID')">+ 新增</button>
+                        <span class="wh-arrow">▶</span>
+                      </div>
+                    </div>
+                    <div class="wh-subgroup-body" id="wh-subbody-ALERT_SID">
+                      <div class="config-list" id="webhook-list-ALERT_SID">
+                        <div style="font-size:12px;color:var(--t3);padding:8px 4px">未专属配置时自动回退至通用告警通道。</div>
+                      </div>
+                    </div>
+                  </div>
+
+                </div><!-- /wh-body-ALERT -->
+              </div><!-- /wh-grp-ALERT -->
+
+              <!-- ── Level 1: 日报 ── -->
+              <div class="wh-group" id="wh-grp-DIGEST">
+                <div class="wh-group-header" onclick="toggleWhGroup('DIGEST')">
+                  <div class="wh-group-header-left">
+                    <span>📋</span>
+                    <span>日报</span>
+                    <span style="font-size:11px;font-weight:600;color:var(--t3)">(每日 09:00 群汇总)</span>
+                  </div>
+                  <div class="wh-group-header-right">
+                    <span id="wh-grp-DIGEST-count" class="wh-count-badge" style="display:none"></span>
+                    <button class="btn-sm" style="margin:0;padding:4px 10px;font-size:11px" onclick="event.stopPropagation();openRegionWebhookModal('DIGEST')">+ 新增区域</button>
+                    <span class="wh-arrow">▶</span>
+                  </div>
+                </div>
+                <div class="wh-group-body" id="wh-body-DIGEST">
+                  <div class="config-list" id="webhook-list-DIGEST">
+                    <div class="config-list-item">
+                      <div class="cli-left">
+                        <div class="cli-title">全局配置</div>
+                        <span class="badge" id="badge-DINGTALK_DIGEST">未配置</span>
+                      </div>
+                      <div class="cli-actions">
+                        <button class="btn-text edit" onclick="openWebhookModal('DINGTALK_DIGEST', '日报群机器人 (全局配置)')">编辑</button>
+                        <button class="btn-text danger" onclick="deleteEnvKey('DINGTALK_DIGEST')">清空</button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- ── Level 1: 周报 ── -->
+              <div class="wh-group" id="wh-grp-WEEKLY">
+                <div class="wh-group-header" onclick="toggleWhGroup('WEEKLY')">
+                  <div class="wh-group-header-left">
+                    <span>📊</span>
+                    <span>周报</span>
+                    <span style="font-size:11px;font-weight:600;color:var(--t3)">(每周一 09:00 供应商评分)</span>
+                  </div>
+                  <div class="wh-group-header-right">
+                    <span id="wh-grp-WEEKLY-count" class="wh-count-badge" style="display:none"></span>
+                    <button class="btn-sm" style="margin:0;padding:4px 10px;font-size:11px" onclick="event.stopPropagation();openRegionWebhookModal('WEEKLY')">+ 新增区域</button>
+                    <span class="wh-arrow">▶</span>
+                  </div>
+                </div>
+                <div class="wh-group-body" id="wh-body-WEEKLY">
+                  <div class="config-list" id="webhook-list-WEEKLY">
+                    <div class="config-list-item">
+                      <div class="cli-left">
+                        <div class="cli-title">全局配置</div>
+                        <span class="badge" id="badge-DINGTALK_WEEKLY">未配置</span>
+                      </div>
+                      <div class="cli-actions">
+                        <button class="btn-text edit" onclick="openWebhookModal('DINGTALK_WEEKLY', '周报群机器人 (全局配置)')">编辑</button>
+                        <button class="btn-text danger" onclick="deleteEnvKey('DINGTALK_WEEKLY')">清空</button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- ── Level 1: 系统运维 ── -->
+              <div class="wh-group" id="wh-grp-OPS">
+                <div class="wh-group-header" onclick="toggleWhGroup('OPS')">
+                  <div class="wh-group-header-left">
+                    <span>🔧</span>
+                    <span>系统运维</span>
+                    <span style="font-size:11px;font-weight:600;color:var(--t3)">(WA/TG/Teams 账号健康，与业务隔离)</span>
+                  </div>
+                  <div class="wh-group-header-right">
+                    <span class="wh-arrow">▶</span>
+                  </div>
+                </div>
+                <div class="wh-group-body" id="wh-body-OPS">
+                  <div style="font-size:12px;color:var(--t3);margin-bottom:10px;line-height:1.6">建议单独建一个「运维通知群」，接收账号掉线/Session 过期/进程崩溃告警。</div>
+                  <div class="config-list">
+                    <div class="config-list-item">
+                      <div class="cli-left">
+                        <div class="cli-title">全平台统一通道</div>
+                        <span class="badge" id="badge-DINGTALK_SYSTEM_OPS">未配置</span>
+                      </div>
+                      <div class="cli-actions">
+                        <button class="btn-text edit" onclick="openSystemOpsModal()">配置</button>
+                        <button class="btn-text danger" onclick="deleteSystemOpsWebhook()">清空</button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+            </div><!-- /wh-accordion -->
+          </div>
+
+          <!-- AI Key 配置 -->
+          <div class="panel" style="background:#ffffff; border:1px solid #edf2f7; box-shadow:0 4px 16px rgba(0,0,0,0.04);">
+            <div class="panel-title" style="margin-bottom:16px;">🤖 AI 分析引擎配置</div>
+            <p style="font-size:13px;color:var(--t3);margin-bottom:24px;line-height:1.8">
+              支持 <strong>OpenAI 兼容接口</strong>（one-api 中转／官方 OpenAI 均可），也可配置 <strong>Gemini</strong> 作为备用。<br>
+              调用优先级：OpenAI 兼容接口 → Gemini → 纯关键词降级。
+            </p>
+
+            <div class="config-list">
+              <!-- BASE URL -->
+              <div class="config-list-item">
+                <div class="cli-left">
+                  <div class="cli-title">接口地址 (Base URL)</div>
+                  <span class="badge" id="badge-OPENAI_BASE_URL">未配置</span>
+                  <div class="cli-preview" id="preview-OPENAI_BASE_URL" style="display:none"></div>
+                </div>
+                <div class="cli-actions">
+                  <button class="btn-text edit" onclick="openAiModal('OPENAI_BASE_URL', '接口地址 (Base URL)', 'https://api.openai.com/v1')">编辑</button>
+                  <button class="btn-text danger" onclick="deleteEnvKey('OPENAI_BASE_URL')">清空</button>
+                </div>
+              </div>
+              
+              <!-- MODEL -->
+              <div class="config-list-item">
+                <div class="cli-left">
+                  <div class="cli-title">调用模型 (Model)</div>
+                  <span class="badge" id="badge-OPENAI_MODEL">未配置</span>
+                  <div class="cli-preview" id="preview-OPENAI_MODEL" style="display:none"></div>
+                </div>
+                <div class="cli-actions">
+                  <button class="btn-text edit" onclick="openAiModal('OPENAI_MODEL', '调用模型 (Model)', '如 openai/gpt-4')">编辑</button>
+                  <button class="btn-text danger" onclick="deleteEnvKey('OPENAI_MODEL')">清空</button>
+                </div>
+              </div>
+
+              <!-- OPENAI KEY -->
+              <div class="config-list-item">
+                <div class="cli-left">
+                  <div class="cli-title">主密钥 (OpenAI Key)</div>
+                  <span class="badge" id="badge-OPENAI_API_KEY">未配置</span>
+                  <div class="cli-preview" id="preview-OPENAI_API_KEY" style="display:none"></div>
+                </div>
+                <div class="cli-actions">
+                  <button class="btn-text edit" onclick="openAiModal('OPENAI_API_KEY', '主密钥 (OpenAI API Key)', 'sk-...', true)">编辑</button>
+                  <button class="btn-text danger" onclick="deleteEnvKey('OPENAI_API_KEY')">清空</button>
+                </div>
+              </div>
+
+              <!-- GEMINI KEY -->
+              <div class="config-list-item">
+                <div class="cli-left">
+                  <div class="cli-title">备用密钥 (Gemini Key)</div>
+                  <span class="badge" id="badge-GEMINI_API_KEY">未配置</span>
+                  <div class="cli-preview" id="preview-GEMINI_API_KEY" style="display:none"></div>
+                </div>
+                <div class="cli-actions">
+                  <button class="btn-text edit" onclick="openAiModal('GEMINI_API_KEY', '备用密钥 (Gemini API Key)', 'AIza...', true)">编辑</button>
+                  <button class="btn-text danger" onclick="deleteEnvKey('GEMINI_API_KEY')">清空</button>
+                </div>
+              </div>
+            </div>
+
+            <!-- 连通性测试 -->
+            <div style="margin-top:24px;display:flex;align-items:center;gap:16px;flex-wrap:wrap;padding-top:16px;border-top:1px dashed #edf2f7;">
+              <button class="btn-primary" style="background:linear-gradient(135deg,#5a67d8,#6b46c1)"
+                      id="btn-ai-test" onclick="testAIConnection()">⚡ 测试连通性</button>
+              <div id="ai-test-result" style="font-size:13px;font-weight:700;color:var(--t3)"></div>
+            </div>
+          </div>
+
+          <!-- 内部员工白名单 -->
+          <div class="panel">
+            <div class="panel-title" style="justify-content:space-between">
+              <span>👥 内部员工白名单</span>
+              <button class="btn-sm" onclick="openStaffModal()">编辑白名单</button>
+            </div>
+            <p style="font-size:13px;color:var(--t3);margin-bottom:24px;line-height:1.7">
+              系统根据此列表识别哪些发言人属于 ITNIO 内部运营或技术团队，以便过滤掉内部消息的告警并准确跟踪问题解决和审核进度。
+            </p>
+            <div class="config-list">
+              <div class="config-list-item">
+                <div class="cli-left">
+                  <div class="cli-title">精确匹配 (Whitelist)</div>
+                  <div class="cli-preview" id="staff-whitelist-preview" style="display:block;white-space:normal;word-break:break-all;"></div>
+                </div>
+              </div>
+              <div class="config-list-item" style="border-bottom:none">
+                <div class="cli-left">
+                  <div class="cli-title">模糊匹配关键词 (Keywords)</div>
+                  <div class="cli-preview" id="staff-keywords-preview" style="display:block;white-space:normal;word-break:break-all;"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 区域账号映射 -->
+          <div class="panel">
+            <div class="panel-title" style="justify-content:space-between">
+              <span>🗺️ 区域账号映射</span>
+              <button class="btn-sm" onclick="openRegionModal()">+ 新增映射</button>
+            </div>
+            <p style="font-size:13px;color:var(--t3);margin-bottom:24px;line-height:1.7">
+              告警路由与日报区域分组依赖此配置。新增 WhatsApp/Telegram 账号后，在此绑定区域负责人即可自动路由 @。
+            </p>
+            <div style="overflow-x:auto">
+              <table class="region-table">
+                <thead>
+                  <tr>
+                    <th>账号 ID</th>
+                    <th>平台</th>
+                    <th>区域</th>
+                    <th>负责人</th>
+                    <th>钉钉 ID</th>
+                    <th>备注</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody id="region-table-body">
+                  <tr><td colspan="7" class="empty-state loading-pulse" style="text-align:center;padding:32px">加载中...</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+        </div><!-- /view-config -->
 
       </div>
     </main>
@@ -715,10 +1853,12 @@
       const titles = {
         'dashboard': '全盘态势 Dashboard',
         'feed': '原始数据流 Raw Feed',
-        'accounts': '帐号管理 Accounts'
+        'accounts': '帐号管理 Accounts',
+        'config': '系统配置 Config'
       };
       document.getElementById('page-title').innerText = titles[viewName];
       if (viewName === 'accounts') fetchAccounts();
+      if (viewName === 'config') { fetchEnvStatus(); fetchRegionWebhooks(); fetchRegions(); fetchAnalyticsSummary(); fetchStaffConfig(); }
     }
 
     // 核心数据拉取
@@ -813,31 +1953,70 @@
 
         box.innerHTML = '';
         data.data.forEach(acc => {
+          const isTgu = acc.id.startsWith('tgu-');
           const isWa = acc.platform === 'whatsapp';
-          const icon = isWa ? '🟢 WA' : '🔵 TG';
-          
-          let stClass = '';
-          let stText = acc.status;
-          if (acc.status === 'authenticated') { stClass = 'online'; stText = '在线'; }
-          else if (acc.status === 'qr') { stClass = 'qr'; stText = '待扫码'; }
+          const isTeams = acc.platform === 'teams';
+          const tguName = isTgu ? acc.id.replace('tgu-', '') : '';
+          let icon = isWa ? '🟢 WA' : (isTgu ? '🟣 TG用户' : (isTeams ? '🟦 Teams' : '🔵 TG Bot'));
+
+          let stClass = '', stText = acc.status;
+          if (['authenticated', 'monitoring'].includes(acc.status)) { stClass = 'online'; stText = isTgu ? '监听中' : '在线'; }
+          else if (acc.status === 'warmup') { stClass = 'qr'; stText = '预热中🟡'; }
+          else if (acc.status === 'qr') { stClass = 'qr'; stText = isTeams ? '待网页授权' : '待扫码'; }
+          else if (acc.status === 'session_invalid') { stText = 'Session失效🔴'; }
+          else if (['logging_in','need_2fa'].includes(acc.status)) { stText = '登录中🟠'; }
           else if (acc.status === 'initializing') { stText = '初始化中'; }
+          else if (acc.status === 'timeout') { stText = '未登录(超时)🔴'; }
 
           const card = document.createElement('div');
           card.className = 'acc-card';
-          
+
           let contentHtml = `
             <div class="acc-status ${stClass}">${stText}</div>
             <div class="acc-icon">${icon}</div>
-            <div class="acc-name">${acc.pushname || acc.id}</div>
-            <div style="font-size:12px; color:var(--t3); margin-bottom:12px;">ID: ${acc.id}</div>
+            <div class="acc-name">${escapeHtml(acc.pushname || acc.id)}</div>
+            <div style="font-size:12px;color:var(--t3);margin-bottom:12px">ID: ${escapeHtml(acc.id)}</div>
           `;
 
           if (acc.status === 'qr' && acc.qr_code && isWa) {
             contentHtml += `<div class="qr-container"><canvas id="qr-${acc.id}"></canvas></div>
-                            <div style="font-size:13px; color:var(--t2); margin-top:8px">请使用 App 扫码登录</div>`;
-          } else if (acc.status === 'authenticated') {
-            contentHtml += `<button class="btn-action" onclick="logoutAccount('${acc.id}')">下线退出</button>`;
+                            <div style="font-size:13px;color:var(--t2);margin-top:8px">请使用 App 扫码登录</div>`;
           }
+
+          let actionsHtml = `<div style="display:flex;justify-content:center;gap:6px;margin-top:8px;flex-wrap:wrap">`;
+          if (isTeams) {
+            // Teams 账号专属操作
+            if (['authenticated', 'monitoring'].includes(acc.status)) {
+              actionsHtml += `<button class="btn-action" style="font-size:11px;padding:6px 10px;background:#f0fff4;color:#276749" onclick="teamsBackfill('${acc.id}')">&#x1F4E5; 回溯</button>`;
+              actionsHtml += `<button class="btn-action" style="font-size:11px;padding:6px 10px;background:#fff0f0;color:#e53e3e" onclick="teamsRelogin('${acc.id}')">&#x1F504; 重新登录</button>`;
+            } else if (acc.status === 'qr') {
+              actionsHtml += `<button class="btn-action" style="font-size:11px;padding:6px 10px;background:#f0f4ff;color:#0078d4" onclick="teamsRelogin('${acc.id}')">&#x1F517; 登录引导</button>`;
+            } else {
+              actionsHtml += `<button class="btn-action" style="font-size:11px;padding:6px 10px;background:#f0f4ff;color:#0078d4" onclick="teamsRelogin('${acc.id}')">&#x1F517; 重新登录</button>`;
+            }
+            actionsHtml += `<button class="btn-action" style="font-size:11px;padding:6px 10px;background:#fff0f0;color:#e53e3e" onclick="deleteAccount('${acc.id}')">&#x1F5D1; 删除</button>`;
+          } else if (isTgu) {
+            // TG 用户账号专属操作
+            if (['authenticated','monitoring','warmup'].includes(acc.status)) {
+              actionsHtml += `<button class="btn-action" style="font-size:11px;padding:6px 10px;background:#f0f4ff;color:#3182ce" onclick="openRateLimitModal('${tguName}')">📊 频控</button>`;
+              actionsHtml += `<button class="btn-action" style="font-size:11px;padding:6px 10px;background:#f0f4ff;color:#3182ce" onclick="openReconfigGroupsModal('${tguName}')">🎯 监控群聊</button>`;
+              actionsHtml += `<button class="btn-action" style="font-size:11px;padding:6px 10px;background:#f0fff4;color:#276749" onclick="openBackfillModal('${tguName}')">📥 回溯</button>`;
+              actionsHtml += `<button class="btn-action" style="font-size:11px;padding:6px 10px;background:#fff0f0;color:#e53e3e" onclick="revokeSession('${tguName}')">撤销Session</button>`;
+            } else {
+              actionsHtml += `<button class="btn-action" style="font-size:11px;padding:6px 10px;background:#f0f4ff;color:#3182ce" onclick="openRateLimitModal('${tguName}')">📊 频控</button>`;
+              actionsHtml += `<button class="btn-action" style="font-size:11px;padding:6px 10px;background:#f0f4ff;color:#3182ce" onclick="openReconfigGroupsModal('${tguName}')">🎯 监控群聊</button>`;
+              actionsHtml += `<button class="btn-action" style="font-size:11px;padding:6px 10px;background:#fff0f0;color:#e53e3e" onclick="deleteAccount('${acc.id}')">删除</button>`;
+            }
+          } else {
+            if (acc.status === 'authenticated') {
+              actionsHtml += `<button class="btn-action" onclick="logoutAccount('${acc.id}')">下线退出</button>`;
+            } else if (!['initializing','qr'].includes(acc.status)) {
+              actionsHtml += `<button class="btn-action" style="background:#f0f4ff;color:#3182ce" onclick="reloginAccount('${acc.id}')">重新登录</button>`;
+            }
+            actionsHtml += `<button class="btn-action" style="background:#fff0f0;color:#e53e3e" onclick="deleteAccount('${acc.id}')">永久删除</button>`;
+          }
+          actionsHtml += `</div>`;
+          contentHtml += actionsHtml;
 
           card.innerHTML = contentHtml;
           box.appendChild(card);
@@ -874,47 +2053,490 @@
       } catch (e) { alert('网络错误'); }
     }
 
+    async function reloginAccount(id) {
+      if(!confirm('确定要重新启动该账号进行登录吗？')) return;
+      try {
+        const res = await fetch(API_BASE + '/accounts/relogin', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id })
+        });
+        const data = await res.json();
+        if(data.success) {
+          alert('重启指令已发送，正在初始化...');
+          fetchAccounts();
+        } else {
+          alert('重启失败：' + data.error);
+        }
+      } catch (e) { alert('网络错误'); }
+    }
+
+    async function deleteAccount(id) {
+      if(!confirm('🚨 危险操作：确定要永久删除该账号吗？\n\n这将停止后台进程、清除登录状态并移除配置文件。此操作不可逆转！')) return;
+      try {
+        const res = await fetch(API_BASE + '/accounts/' + id, {
+          method: 'DELETE'
+        });
+        const data = await res.json();
+        if(data.success) {
+          alert('账号已永久删除！');
+          fetchAccounts();
+        } else {
+          alert('删除失败：' + data.error);
+        }
+      } catch (e) { alert('网络错误'); }
+    }
+
     // Modal logic
     function openAddModal() {
       document.getElementById('add-modal').style.display = 'flex';
+      // reset steps
+      ['tgu-step2','tgu-step3','tgu-step4'].forEach(id => document.getElementById(id).style.display = 'none');
+      document.getElementById('tgu-step1').style.display = 'block';
       toggleTokenInput();
     }
-    function closeAddModal() {
-      document.getElementById('add-modal').style.display = 'none';
-    }
+    function closeAddModal() { document.getElementById('add-modal').style.display = 'none'; }
+
     function toggleTokenInput() {
       const p = document.getElementById('acc-platform').value;
-      document.getElementById('tg-token-grp').style.display = p === 'telegram' ? 'block' : 'none';
+      document.getElementById('tg-token-grp').style.display = p === 'telegram-bot' ? 'block' : 'none';
+      document.getElementById('tg-user-grp').style.display = p === 'telegram-user' ? 'block' : 'none';
+      document.getElementById('wa-grp').style.display = p === 'whatsapp' ? 'block' : 'none';
+      document.getElementById('teams-grp').style.display = p === 'teams' ? 'block' : 'none';
     }
+
+    function applyRatePreset(preset) {
+      if (preset === 'conservative') {
+        document.getElementById('tgu-daily-limit').value = 500;
+        document.getElementById('tgu-backfill-days').value = 7;
+      } else if (preset === 'standard') {
+        document.getElementById('tgu-daily-limit').value = 2000;
+        document.getElementById('tgu-backfill-days').value = 7;
+      } else {
+        document.getElementById('tgu-daily-limit').value = 0;
+        document.getElementById('tgu-backfill-days').value = 0;
+      }
+    }
+
+    // ─── TG Bot 创建 ───────────────────────────────────────────────
     async function submitCreateAccount() {
       const platform = document.getElementById('acc-platform').value;
       const id = document.getElementById('acc-id').value.trim();
-      const token = document.getElementById('acc-token').value.trim();
-      
       if (!id) return alert('请输入账号标识!');
-      if (platform === 'telegram' && !token) return alert('请输入机器人的 Token!');
 
-      try {
-        const res = await fetch(API_BASE + '/accounts/create', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ platform, id, token })
-        });
-        const data = await res.json();
-        if (data.success) {
-          alert('配置已追加，新进程启动中！请耐心等待扫码...');
-          closeAddModal();
-          // Clear inputs
-          document.getElementById('acc-id').value = '';
-          document.getElementById('acc-token').value = '';
-          fetchAccounts();
-        } else {
-          alert('创建失败：' + data.error);
-        }
-      } catch(e) {
-        alert('无法连接到服务器');
+      if (platform === 'telegram-bot') {
+        const token = document.getElementById('acc-token').value.trim();
+        if (!token) return alert('请输入机器人的 Token!');
+        try {
+          const res = await fetch(API_BASE + '/accounts/create', {
+            method: 'POST', headers: {'Content-Type':'application/json'},
+            body: JSON.stringify({ platform: 'telegram', id, token })
+          });
+          const d = await res.json();
+          if (d.success) { showToast('Bot 进程启动中！', 'success'); closeAddModal(); fetchAccounts(); }
+          else alert('创建失败：' + d.error);
+        } catch(e) { alert('无法连接服务器'); }
+
+      } else if (platform === 'whatsapp') {
+        try {
+          const res = await fetch(API_BASE + '/accounts/create', {
+            method: 'POST', headers: {'Content-Type':'application/json'},
+            body: JSON.stringify({ platform: 'whatsapp', id })
+          });
+          const d = await res.json();
+          if (d.success) { showToast('WhatsApp 进程启动，请扫码登录！', 'success'); closeAddModal(); fetchAccounts(); }
+          else alert('创建失败：' + d.error);
+        } catch(e) { alert('无法连接服务器'); }
       }
     }
+
+    // ─── Teams 账号创建 ───────────────────────────────────
+    function toggleTeamsMonitorMode() {
+      // 展位保留，后续登录后拉取群聊列表
+    }
+
+    async function submitCreateTeams() {
+      const id = document.getElementById('acc-id').value.trim();
+      if (!id) return alert('请输入账号标识!');
+      try {
+        const res = await fetch(API_BASE + '/accounts/create-teams', {
+          method: 'POST', headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({ id })
+        });
+        const d = await res.json();
+        if (d.success) {
+          showToast('🟦 Teams 进程已启动！请在账号管理页面点击「登录引导」', 'success');
+          closeAddModal();
+          fetchAccounts();
+        } else {
+          alert('创建失败：' + d.error);
+        }
+      } catch(e) { alert('无法连接服务器'); }
+    }
+
+    async function teamsRelogin(name) {
+      if (!confirm(`确定要重新登录账号 ${name}？\n这将清除已保存的 Session，进程重启后需要重新完成 Teams 登录。`)) return;
+      try {
+        const res = await fetch(API_BASE + '/teams/relogin/' + name.replace('teams-', ''), { method: 'POST' });
+        const d = await res.json();
+        if (d.success) showToast('Session 已清除，进程重启中...', 'success');
+        else alert('操作失败：' + d.error);
+      } catch(e) { alert('无法连接服务器'); }
+    }
+
+    async function teamsBackfill(name) {
+      const days = prompt('请输入回溯天数（建议 7 天内）:', '7');
+      if (!days || isNaN(days)) return;
+      try {
+        const res = await fetch(API_BASE + '/teams/backfill/' + name.replace('teams-', '') + '/start', {
+          method: 'POST', headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({ days: parseInt(days) })
+        });
+        const d = await res.json();
+        if (d.success) showToast('回溯指令已发送，请查看日志确认状态', 'success');
+        else alert('操作失败：' + d.error);
+      } catch(e) { alert('无法连接服务器'); }
+    }
+
+    // ─── TG 用户账号登录流程 ────────────────────────────────────────
+    let _tguAccountName = '';
+
+    async function tguSendCode() {
+      const id = document.getElementById('acc-id').value.trim();
+      const apiId = document.getElementById('tgu-api-id').value.trim();
+      const apiHash = document.getElementById('tgu-api-hash').value.trim();
+      const phone = document.getElementById('tgu-phone').value.trim();
+      const dailyLimit = document.getElementById('tgu-daily-limit').value;
+      const backfillDays = document.getElementById('tgu-backfill-days').value;
+      if (!id || !apiId || !apiHash || !phone) return alert('请填写所有必填项');
+
+      const btn = document.getElementById('btn-tgu-send-code');
+      btn.textContent = '发送中...'; btn.disabled = true;
+      try {
+        // 先创建进程
+        const createRes = await fetch(API_BASE + '/accounts/create-tg-user', {
+          method: 'POST', headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({ id, api_id: apiId, api_hash: apiHash, daily_limit: parseInt(dailyLimit), backfill_days: parseInt(backfillDays) })
+        });
+        const createData = await createRes.json();
+        if (!createData.success && !createData.message?.includes('创建成功')) {
+          btn.textContent = '📱 发送验证码'; btn.disabled = false;
+          return alert('创建失败：' + createData.error);
+        }
+        // 发送验证码
+        const loginRes = await fetch(API_BASE + '/tg-user/start-login', {
+          method: 'POST', headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({ account_name: id, phone, api_id: apiId, api_hash: apiHash })
+        });
+        const loginData = await loginRes.json();
+        if (loginData.success) {
+          _tguAccountName = id;
+          document.getElementById('tgu-step1').style.display = 'none';
+          document.getElementById('tgu-step2').style.display = 'block';
+          showToast('验证码已发送！', 'success');
+        } else {
+          alert('发送失败：' + loginData.error);
+        }
+      } catch(e) { alert('网络错误：' + e.message); }
+      btn.textContent = '📱 发送验证码'; btn.disabled = false;
+    }
+
+    async function tguVerifyCode() {
+      const code = document.getElementById('tgu-code').value.trim();
+      if (!code) return alert('请输入验证码');
+      try {
+        const res = await fetch(API_BASE + '/tg-user/verify-code', {
+          method: 'POST', headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({ account_name: _tguAccountName, code })
+        });
+        const d = await res.json();
+        if (d.need2fa) {
+          document.getElementById('tgu-step2').style.display = 'none';
+          document.getElementById('tgu-step3').style.display = 'block';
+        } else if (d.success) {
+          showToast('验证成功！请配置监控范围', 'success');
+          document.getElementById('tgu-step2').style.display = 'none';
+          document.getElementById('tgu-step4').style.display = 'block';
+          loadTguDialogs();
+        } else { alert('验证失败：' + d.error); }
+      } catch(e) { alert('网络错误'); }
+    }
+
+    async function tguVerify2FA() {
+      const pwd = document.getElementById('tgu-2fa').value;
+      if (!pwd) return alert('请输入 2FA 密码');
+      try {
+        const res = await fetch(API_BASE + '/tg-user/verify-2fa', {
+          method: 'POST', headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({ account_name: _tguAccountName, password: pwd })
+        });
+        const d = await res.json();
+        if (d.success) {
+          showToast('2FA 验证成功！请配置监控范围', 'success');
+          document.getElementById('tgu-step3').style.display = 'none';
+          document.getElementById('tgu-step4').style.display = 'block';
+          loadTguDialogs();
+        } else alert('验证失败：' + d.error);
+      } catch(e) { alert('网络错误'); }
+    }
+
+    async function loadTguDialogs() {
+      document.getElementById('tgu-dialogs-loading').style.display = 'block';
+      document.getElementById('tgu-dialogs-list').innerHTML = '';
+      try {
+        const res = await fetch(API_BASE + '/tg-user/dialogs/' + _tguAccountName);
+        const d = await res.json();
+        document.getElementById('tgu-dialogs-loading').style.display = 'none';
+        if (d.success) {
+           const list = d.data || [];
+           if(list.length === 0) {
+             document.getElementById('tgu-dialogs-list').innerHTML = '<div style="font-size:12px;color:var(--t3)">未发现群组/频道</div>';
+             return;
+           }
+           document.getElementById('tgu-dialogs-list').innerHTML = list.map(item => `
+             <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer">
+               <input type="checkbox" value="${item.id}" class="tgu-dialog-cb" checked />
+               <span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${item.title}">${escapeHtml(item.title)}</span>
+             </label>
+           `).join('');
+        } else {
+           document.getElementById('tgu-dialogs-list').innerHTML = `<div style="font-size:12px;color:#e53e3e">获取群组失败：${escapeHtml(d.error || '未知错误')}</div>`;
+        }
+      } catch(e) { document.getElementById('tgu-dialogs-loading').innerText = '获取失败：' + e.message; }
+    }
+
+    function toggleMonitorMode() {
+      const mode = document.getElementById('tgu-monitor-mode').value;
+      document.getElementById('tgu-dialogs-container').style.display = mode === 'partial' ? 'block' : 'none';
+    }
+
+    async function submitTguWhitelist() {
+      const mode = document.getElementById('tgu-monitor-mode').value;
+      const cbs = document.querySelectorAll('.tgu-dialog-cb:checked');
+      const whitelist = Array.from(cbs).map(cb => cb.value);
+      
+      if (mode === 'partial' && whitelist.length === 0) {
+        return alert('请至少选择一个群聊');
+      }
+
+      try {
+        const res = await fetch(API_BASE + '/tg-user/whitelist/' + _tguAccountName, {
+          method: 'POST', headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({ mode, whitelist })
+        });
+        const d = await res.json();
+        if (d.success) {
+          showToast('账号配置完成！进入预热期...', 'success');
+          closeAddModal(); fetchAccounts();
+        } else {
+          alert('配置失败：' + d.error);
+        }
+      } catch(e) { alert('网络错误'); }
+    }
+
+    function tguBackToStep1() {
+      document.getElementById('tgu-step2').style.display = 'none';
+      document.getElementById('tgu-step1').style.display = 'block';
+    }
+
+    async function revokeSession(name) {
+      if (!confirm(`确定撤销账号 tgu-${name} 的 Session 并停止进程吗？`)) return;
+      try {
+        const res = await fetch(API_BASE + `/tg-user/revoke/${name}`, { method: 'POST' });
+        const d = await res.json();
+        if (d.success) { showToast('Session 已撤销', 'success'); fetchAccounts(); }
+        else alert('撤销失败：' + d.error);
+      } catch(e) { alert('网络错误'); }
+    }
+
+    // ─── 频控设置弹窗 ────────────────────────────────────────────────
+    let _rlAccountName = '';
+    async function openRateLimitModal(name) {
+      _rlAccountName = name;
+      document.getElementById('rl-account-name').textContent = `tgu-${name}`;
+      document.getElementById('tgu-ratelimit-modal').style.display = 'flex';
+      try {
+        const res = await fetch(API_BASE + `/tg-user/ratelimit/${name}`);
+        const d = await res.json();
+        if (d.success) {
+          const c = d.data;
+          document.getElementById('rl-enable-backfill').value = String(c.enable_backfill);
+          document.getElementById('rl-backfill-days').value = c.backfill_days;
+          document.getElementById('rl-daily-limit').value = c.daily_limit;
+          document.getElementById('rl-warmup-seconds').value = c.warmup_seconds;
+          document.getElementById('rl-batch-size').value = c.batch_size;
+          document.getElementById('rl-sleep-min').value = c.sleep_min_ms;
+          document.getElementById('rl-sleep-max').value = c.sleep_max_ms;
+        }
+      } catch(e) {}
+    }
+
+    async function submitRateLimit() {
+      const cfg = {
+        enable_backfill: document.getElementById('rl-enable-backfill').value === 'true',
+        backfill_days: parseInt(document.getElementById('rl-backfill-days').value),
+        daily_limit: parseInt(document.getElementById('rl-daily-limit').value),
+        warmup_seconds: parseInt(document.getElementById('rl-warmup-seconds').value),
+        batch_size: parseInt(document.getElementById('rl-batch-size').value),
+        sleep_min_ms: parseInt(document.getElementById('rl-sleep-min').value),
+        sleep_max_ms: parseInt(document.getElementById('rl-sleep-max').value)
+      };
+      try {
+        const res = await fetch(API_BASE + `/tg-user/ratelimit/${_rlAccountName}`, {
+          method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(cfg)
+        });
+        const d = await res.json();
+        if (d.success) { showToast('频控配置已保存！', 'success'); document.getElementById('tgu-ratelimit-modal').style.display = 'none'; }
+        else alert('保存失败：' + d.error);
+      } catch(e) { alert('网络错误'); }
+    }
+
+    // ─── 重新配置群聊 ────────────────────────────────────────────────
+    let currentRcAccount = '';
+    
+    function openReconfigGroupsModal(name) {
+        currentRcAccount = name;
+        document.getElementById('rc-account-name').textContent = currentRcAccount;
+        document.getElementById('tgu-reconfig-modal').style.display = 'flex';
+        loadRcDialogs();
+    }
+
+    function toggleRcMonitorMode() {
+        const mode = document.getElementById('rc-monitor-mode').value;
+        document.getElementById('rc-dialogs-container').style.display = mode === 'partial' ? 'block' : 'none';
+    }
+
+    async function loadRcDialogs() {
+        document.getElementById('rc-dialogs-loading').style.display = 'block';
+        document.getElementById('rc-dialogs-loading').innerText = '正在连接 Telegram 获取群聊，请稍候...';
+        document.getElementById('rc-dialogs-list').innerHTML = '';
+        try {
+            const res = await fetch(API_BASE + '/tg-user/dialogs/' + currentRcAccount);
+            const d = await res.json();
+            document.getElementById('rc-dialogs-loading').style.display = 'none';
+            if (d.success) {
+                const list = d.data || [];
+                const wl = d.whitelist;
+                if (wl === null) {
+                    document.getElementById('rc-monitor-mode').value = 'all';
+                } else {
+                    document.getElementById('rc-monitor-mode').value = 'partial';
+                }
+                toggleRcMonitorMode();
+
+                if(list.length === 0) {
+                    document.getElementById('rc-dialogs-list').innerHTML = '<div style="font-size:12px;color:var(--t3)">未发现群组/频道</div>';
+                    return;
+                }
+                document.getElementById('rc-dialogs-list').innerHTML = list.map(item => {
+                    const isChecked = wl === null || wl.includes(item.id) || wl.includes('-100'+item.id);
+                    return `
+                      <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer">
+                        <input type="checkbox" value="${item.id}" class="rc-dialog-cb" ${isChecked ? 'checked' : ''} />
+                        <span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${item.title}">${escapeHtml(item.title)}</span>
+                      </label>
+                    `;
+                }).join('');
+            } else {
+                document.getElementById('rc-dialogs-loading').innerText = '获取失败: ' + d.error;
+            }
+        } catch(e) { document.getElementById('rc-dialogs-loading').innerText = '网络或服务器错误'; }
+    }
+
+    async function submitReconfigGroups() {
+        const mode = document.getElementById('rc-monitor-mode').value;
+        const cbs = document.querySelectorAll('.rc-dialog-cb:checked');
+        const whitelist = Array.from(cbs).map(cb => cb.value);
+
+        if (mode === 'partial' && whitelist.length === 0) {
+            return alert('请至少选择一个群聊');
+        }
+
+        try {
+            const res = await fetch(API_BASE + '/tg-user/whitelist/' + currentRcAccount, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ mode, whitelist })
+            });
+            const d = await res.json();
+            if (d.success) {
+                showToast('配置已保存！后台服务将自动生效', 'success');
+                document.getElementById('tgu-reconfig-modal').style.display = 'none';
+                
+                // Restart PM2 worker to pick up new whitelist
+                try {
+                    await fetch(API_BASE + '/accounts/relogin', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ id: 'tgu-' + currentRcAccount }) 
+                    });
+                } catch(e) {}
+            } else {
+                alert('保存失败：' + d.error);
+            }
+        } catch(e) { alert('网络错误'); }
+    }
+
+    // ─── 回溯进度弹窗 ────────────────────────────────────────────────
+    let _bfAccountName = '';
+    async function openBackfillModal(name) {
+      _bfAccountName = name;
+      document.getElementById('bf-account-name').textContent = name;
+      document.getElementById('tgu-backfill-modal').style.display = 'flex';
+      await loadBackfillTasks(name);
+    }
+
+    async function loadBackfillTasks(name) {
+      document.getElementById('bf-loading').style.display = 'block';
+      document.getElementById('bf-content').style.display = 'none';
+      try {
+        const res = await fetch(API_BASE + `/tg-user/backfill/${name}`);
+        const d = await res.json();
+        document.getElementById('bf-loading').style.display = 'none';
+        document.getElementById('bf-content').style.display = 'block';
+        const tasks = d.data || [];
+        const tbody = document.getElementById('bf-table-body');
+        if (tasks.length === 0) {
+          tbody.innerHTML = '';
+          document.getElementById('bf-empty').style.display = 'block';
+          return;
+        }
+        document.getElementById('bf-empty').style.display = 'none';
+        const statusMap = { pending:'🟡 待处理', running:'🟢 进行中', paused:'⏸ 已暂停', completed:'✅ 已完成', error:'🔴 出错' };
+        tbody.innerHTML = tasks.map(t => `
+          <tr style="background:var(--bg);border-radius:10px">
+            <td style="padding:12px;border-radius:10px 0 0 10px;font-weight:600;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(t.chat_title || t.chat_id)}</td>
+            <td style="padding:12px;text-align:center;font-size:12px">${statusMap[t.status] || t.status}</td>
+            <td style="padding:12px;text-align:right;color:var(--t3)">${t.today_count}</td>
+            <td style="padding:12px;text-align:right;font-weight:700">${t.total_count}</td>
+            <td style="padding:12px;text-align:center;border-radius:0 10px 10px 0">
+              <button class="btn-sm" style="font-size:11px;padding:4px 8px" onclick="resetBackfillTask('${t.chat_id}')">重置</button>
+            </td>
+          </tr>`).join('');
+      } catch(e) { document.getElementById('bf-loading').style.display = 'none'; }
+    }
+
+    async function backfillPauseAll() {
+      await fetch(API_BASE + `/tg-user/backfill/${_bfAccountName}/pause`, { method: 'POST' });
+      showToast('已发送暂停指令', 'success');
+      await loadBackfillTasks(_bfAccountName);
+    }
+    async function backfillResumeAll() {
+      await fetch(API_BASE + `/tg-user/backfill/${_bfAccountName}/resume`, { method: 'POST' });
+      showToast('已发送恢复指令', 'success');
+      await loadBackfillTasks(_bfAccountName);
+    }
+    async function resetBackfillTask(chatId) {
+      if (!confirm('确定重置该群的回溯进度？将从头重新拉取')) return;
+      await fetch(API_BASE + `/tg-user/backfill/${_bfAccountName}/reset`, {
+        method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ chat_id: chatId })
+      });
+      showToast('已重置回溯进度', 'success');
+      await loadBackfillTasks(_bfAccountName);
+    }
+
+
+
 
     // 启动循环心跳
     fetchStats();
@@ -922,6 +2544,827 @@
     setInterval(fetchStats, 5000);
     setInterval(fetchFeed, 5000);
     setInterval(fetchAccounts, 3000);
+    setInterval(() => {
+      if (document.getElementById('view-config').classList.contains('active')) {
+        fetchAnalyticsSummary();
+      }
+    }, 5000);
+
+    // ─── Toast 通知 ───────────────────────────────────────────────
+    const toastEl = Object.assign(document.createElement('div'), { className: 'toast', id: 'toast' });
+    document.body.appendChild(toastEl);
+    let toastTimer;
+    function showToast(msg, type = 'success') {
+      toastEl.textContent = (type === 'success' ? '✓ ' : '✗ ') + msg;
+      toastEl.className = `toast ${type} show`;
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => toastEl.classList.remove('show'), 3000);
+    }
+
+    // ─── 配置中心：Env Key 状态 ───────────────────────────────────
+    
+    let envData = {}; // Global store for env values
+    
+    function openWebhookModal(key, titleName) {
+      document.getElementById('webhook-modal-title').textContent = '编辑 ' + titleName;
+      document.getElementById('webhook-modal-key').value = key;
+      document.getElementById('webhook-url-input').value = '';
+      document.getElementById('webhook-secret-input').value = '';
+      
+      const hasUrl = !!envData[key + '_set'];
+      const hasSecret = !!envData[key + '_SECRET_set'];
+      
+      document.getElementById('webhook-url-input').placeholder = hasUrl ? '(已配置，输入新值覆盖，或直接点测试)' : 'https://oapi.dingtalk.com/robot/send?...';
+      document.getElementById('webhook-secret-input').placeholder = hasSecret ? '(已配置，输入新秘钥覆盖)' : 'SEC... (留空则不加签)';
+      
+      document.getElementById('webhook-modal').style.display = 'flex';
+    }
+    function closeWebhookModal() {
+      document.getElementById('webhook-modal').style.display = 'none';
+    }
+    async function submitWebhook() {
+      const key = document.getElementById('webhook-modal-key').value;
+      const url = document.getElementById('webhook-url-input').value.trim();
+      const secret = document.getElementById('webhook-secret-input').value.trim();
+      
+      if (!url && !secret) return showToast('无修改项', 'error');
+      
+      const payload = {};
+      if (url) payload[key] = url;
+      if (secret) payload[key + '_SECRET'] = secret;
+      
+      try {
+        const res = await fetch(API_BASE + '/config/env', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        const data = await res.json();
+        if (data.success) {
+          showToast('Webhook 保存成功');
+          closeWebhookModal();
+          fetchEnvStatus();
+        } else {
+          showToast(data.error, 'error');
+        }
+      } catch (e) { showToast('保存失败，网络错误', 'error'); }
+    }
+    
+    async function testWebhookConn() {
+      const key = document.getElementById('webhook-modal-key').value;
+      const url = document.getElementById('webhook-url-input').value.trim();
+      const secret = document.getElementById('webhook-secret-input').value.trim();
+      
+      const btn = document.getElementById('btn-webhook-test');
+      const originalText = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = '测试中...';
+      
+      try {
+        const res = await fetch(API_BASE + '/config/test-webhook', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ key, url, secret })
+        });
+        const data = await res.json();
+        if (data.success) {
+          showToast(`连通成功！延迟 ${data.latencyMs}ms`);
+        } else {
+          showToast(`测试失败: ${data.error}`, 'error');
+        }
+      } catch (e) {
+        showToast('测试请求异常', 'error');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = originalText;
+      }
+    }
+
+    // ─── 区域 Webhook 逻辑 ───────────────────────────────────────
+    let regionWebhooksData = {};
+
+    async function fetchRegionWebhooks() {
+      try {
+        const res = await fetch(API_BASE + '/config/webhooks');
+        const data = await res.json();
+        if (data.success) {
+          regionWebhooksData = data.data;
+          renderRegionWebhooks();
+        }
+      } catch (e) { console.error('fetchRegionWebhooks error', e); }
+    }
+
+    function renderRegionWebhooks() {
+      // 所有需要渲染的类型（含新增的 P0/P1/P2/SID）
+      const ALL_TYPES = ['ALERT', 'ALERT_P0', 'ALERT_P1', 'ALERT_P2', 'ALERT_SID', 'DIGEST', 'WEEKLY'];
+      
+      ALL_TYPES.forEach(type => {
+        document.querySelectorAll(`.dynamic-rw-${type}`).forEach(e => e.remove());
+        const list = document.getElementById(`webhook-list-${type}`);
+        if (!list) return;
+
+        const grouped = {};
+        Object.keys(regionWebhooksData).forEach(key => {
+          if (!key.startsWith(type + '_')) return;
+          // 解析：TYPE_platform_region（platform = wa/tg/teams）
+          const rest = key.slice(type.length + 1); // 去掉 "TYPE_"
+          const firstUnderscore = rest.indexOf('_');
+          if (firstUnderscore === -1) return;
+          const platform = rest.slice(0, firstUnderscore);
+          if (!['wa', 'tg', 'tgu', 'teams'].includes(platform)) return; // 防止 ALERT 匹配到 ALERT_P0
+          
+          const region = rest.slice(firstUnderscore + 1);
+          const wh = regionWebhooksData[key];
+          const groupKey = `${platform}_${wh.url}_${wh.secret}`;
+          if (!grouped[groupKey]) {
+            grouped[groupKey] = { platform, url: wh.url, secret: wh.secret, regions: [], keys: [] };
+          }
+          grouped[groupKey].regions.push(region);
+          grouped[groupKey].keys.push(key);
+        });
+
+        const platIcon = { wa: '🟢 WA', tg: '🔵 TG(Bot)', tgu: '👤 TG(User)', teams: '🟦 Teams' };
+        Object.values(grouped).forEach(group => {
+          const maskUrl = (group.url || '').substring(0, 30) + '...';
+          const icon = platIcon[group.platform] || group.platform;
+          const regionsText = group.regions.join(', ');
+          const allRegions = group.regions.join(',');
+          const allKeys = group.keys.join(',');
+          const item = document.createElement('div');
+          item.className = `config-list-item dynamic-rw-${type}`;
+          item.innerHTML = `
+            <div class="cli-left">
+              <div class="cli-title" title="${escapeHtml(regionsText)}">${icon} — ${escapeHtml(regionsText.length > 30 ? regionsText.substring(0,30)+'...' : regionsText)}</div>
+              <span class="badge badge-set">已配置</span>
+              <div class="cli-preview">${escapeHtml(maskUrl)}${group.secret ? ' 🔐' : ''}</div>
+            </div>
+            <div class="cli-actions">
+              <button class="btn-text edit" onclick="editRegionWebhook('${type}','${group.platform}','${escapeHtml(allRegions)}')">编辑</button>
+              <button class="btn-text danger" onclick="deleteRegionWebhookGroup('${escapeHtml(allKeys)}')">删除</button>
+            </div>
+          `;
+          list.appendChild(item);
+        });
+
+        // 更新徽章计数
+        const count = Object.keys(grouped).length;
+        // 子组徽章
+        const subBadge = document.getElementById(`wh-sub-${type}-count`);
+        if (subBadge) {
+          if (count > 0) { subBadge.textContent = `${count} 条`; subBadge.style.display = ''; }
+          else subBadge.style.display = 'none';
+        }
+      });
+
+      // 更新一级组徽章（汇总 ALERT + ALERT_P0/P1/P2/SID 数量）
+      const alertTotal = ['ALERT', 'ALERT_P0', 'ALERT_P1', 'ALERT_P2', 'ALERT_SID'].reduce((sum, t) => {
+        return sum + document.querySelectorAll(`.dynamic-rw-${t}`).length;
+      }, 0);
+      const alertGrpBadge = document.getElementById('wh-grp-ALERT-count');
+      if (alertGrpBadge) {
+        if (alertTotal > 0) { alertGrpBadge.textContent = `${alertTotal} 条`; alertGrpBadge.style.display = ''; }
+        else alertGrpBadge.style.display = 'none';
+      }
+
+      ['DIGEST', 'WEEKLY'].forEach(t => {
+        const cnt = document.querySelectorAll(`.dynamic-rw-${t}`).length;
+        const badge = document.getElementById(`wh-grp-${t}-count`);
+        if (badge) {
+          if (cnt > 0) { badge.textContent = `${cnt} 条`; badge.style.display = ''; }
+          else badge.style.display = 'none';
+        }
+      });
+    }
+
+    function renderPlatformWebhooks() {
+      if (!envData) return;
+      ['ALERT', 'DIGEST', 'WEEKLY'].forEach(type => {
+        // remove existing ones first
+        document.querySelectorAll(`.dynamic-pw-${type}`).forEach(e => e.remove());
+        const list = document.getElementById(`webhook-list-${type}`);
+        if (!list) return;
+
+        ['WA', 'TG', 'TGU', 'TEAMS'].forEach(plat => {
+           const envKey = `DINGTALK_${type}_${plat}`;
+           if (envData[envKey + '_set']) {
+              const platformCode = plat.toLowerCase();
+              const platIconMap = { wa: '🟢 WhatsApp 平台兜底', tg: '🔵 Telegram Bot 平台兜底', tgu: '👤 TG用户账号 平台兜底', teams: '🟦 Teams 平台兜底' };
+              const icon = platIconMap[platformCode] || platformCode + ' 平台兜底';
+              let maskUrl = envData[envKey] || '已隐藏';
+              if (maskUrl !== '已隐藏') maskUrl = maskUrl.substring(0, 30) + '...';
+              const hasSecret = envData[envKey + '_SECRET_set'];
+              
+              const item = document.createElement('div');
+              item.className = `config-list-item dynamic-pw-${type}`;
+              item.innerHTML = `
+                <div class="cli-left">
+                  <div class="cli-title">${icon}</div>
+                  <span class="badge badge-set">已配置</span>
+                  <div class="cli-preview">${escapeHtml(maskUrl)}${hasSecret ? ' 🔐' : ''}</div>
+                </div>
+                <div class="cli-actions">
+                  <button class="btn-text edit" onclick="openRegionWebhookModal('${type}', '${platformCode}', '', true)">编辑</button>
+                  <button class="btn-text danger" onclick="deleteEnvKey('${envKey}')">清空</button>
+                </div>
+              `;
+              
+              const firstRw = list.querySelector(`.dynamic-rw-${type}`);
+              if (firstRw) {
+                  list.insertBefore(item, firstRw);
+              } else {
+                  list.appendChild(item);
+              }
+           }
+        });
+      });
+    }
+
+    // ─── Webhook 二级目录折叠控制 ────────────────────────────────────
+    function toggleWhGroup(grp) {
+      const header = document.querySelector(`#wh-grp-${grp} .wh-group-header`);
+      const body = document.getElementById(`wh-body-${grp}`);
+      if (!body) return;
+      const isOpen = body.classList.contains('open');
+      body.classList.toggle('open', !isOpen);
+      if (header) header.classList.toggle('open', !isOpen);
+    }
+
+    function toggleWhSubgroup(subKey) {
+      const header = document.querySelector(`#wh-subbody-${subKey}`)?.previousElementSibling;
+      const body = document.getElementById(`wh-subbody-${subKey}`);
+      if (!body) return;
+      const isOpen = body.classList.contains('open');
+      body.classList.toggle('open', !isOpen);
+      if (header) header.classList.toggle('open', !isOpen);
+    }
+
+    // ─── 系统运维 Webhook 配置 ───────────────────────────────────────
+    function openSystemOpsModal() {
+      // 复用现有的通用 Webhook 编辑弹窗
+      openWebhookModal('DINGTALK_SYSTEM_OPS', '🔧 系统运维告警 Webhook（全平台统一通道）');
+    }
+
+    async function deleteSystemOpsWebhook() {
+      if (!confirm('确定要清空系统运维告警 Webhook 吗？清空后掉线/崩溃告警将无法推送。')) return;
+      // 同时清空 webhooks.json 中的 SYSTEM_OPS 配置
+      try {
+        await fetch(API_BASE + '/config/webhooks/SYSTEM_OPS', { method: 'DELETE' });
+        await deleteEnvKey('DINGTALK_SYSTEM_OPS');
+      } catch(e) {}
+      showToast('已清空运维告警 Webhook');
+      fetchEnvStatus();
+    }
+
+    async function deleteRegionWebhookGroup(keysStr) {
+      if(!confirm('确定要删除该专线下配置的所有区域 Webhook 吗？')) return;
+      const keys = keysStr.split(',');
+      try {
+        for (const key of keys) {
+          await fetch(API_BASE + '/config/webhooks/' + encodeURIComponent(key), { method: 'DELETE' });
+        }
+        fetchRegionWebhooks();
+      } catch(e) {}
+    }
+
+    function openRegionWebhookModal(type, editPlatform = 'wa', editRegionsStr = '', isPlatformLevel = false) {
+      document.getElementById('region-webhook-modal').style.display = 'flex';
+      document.getElementById('rw-type').value = type;
+      
+      const isEdit = !!(editRegionsStr || isPlatformLevel);
+      const TYPE_LABEL = {
+        ALERT: '通用告警', ALERT_P0: 'P0 严重告警', ALERT_P1: 'P1 业务告警',
+        ALERT_P2: 'P2 无响应', ALERT_SID: 'SID变更', DIGEST: '日报', WEEKLY: '周报'
+      };
+      document.getElementById('region-webhook-modal-title').textContent = (isEdit ? '编辑' : '新增') + (TYPE_LABEL[type] || type);
+      
+      const selPlatform = document.getElementById('rw-platform');
+      selPlatform.value = editPlatform;
+      selPlatform.disabled = isEdit;
+      
+      const levelSelect = document.getElementById('rw-config-level');
+      levelSelect.value = isPlatformLevel ? 'platform' : 'region';
+      levelSelect.disabled = isEdit;
+      document.getElementById('rw-region-section').style.display = isPlatformLevel ? 'none' : 'block';
+      
+      const editRegionsArr = editRegionsStr ? editRegionsStr.split(',') : [];
+      
+      // Populate regions checkboxes
+      const regions = [...new Set((window.allRegions || []).map(r => r.region))];
+      const cbBox = document.getElementById('rw-region-checkboxes');
+      let html = '';
+      regions.forEach(r => {
+         const isChecked = editRegionsArr.includes(r) ? 'checked' : '';
+         html += `<label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" value="${escapeHtml(r)}" class="rw-region-cb" ${isChecked}> ${escapeHtml(r)}</label>`;
+      });
+      cbBox.innerHTML = html;
+      
+      const customRegions = editRegionsArr.filter(r => !regions.includes(r));
+      const customInput = document.getElementById('rw-region-custom');
+      customInput.value = customRegions.join(', ');
+      
+      document.getElementById('rw-url-input').placeholder = 'https://oapi.dingtalk.com/robot/send?...';
+      document.getElementById('rw-secret-input').placeholder = 'SEC... (留空则不加签)';
+      
+      if (isPlatformLevel) {
+         const envKey = `DINGTALK_${type}_${editPlatform.toUpperCase()}`;
+         document.getElementById('rw-url-input').value = envData[envKey] || '';
+         document.getElementById('rw-secret-input').value = '';
+         document.getElementById('rw-secret-input').placeholder = envData[envKey + '_SECRET_set'] ? '(已配置，输入新秘钥覆盖)' : 'SEC... (留空则不加签)';
+      } else if (editRegionsArr.length > 0) {
+         const firstRegion = editRegionsArr[0];
+         const key = `${type}_${editPlatform}_${firstRegion}`;
+         const wh = regionWebhooksData[key];
+         document.getElementById('rw-url-input').value = wh ? wh.url : '';
+         document.getElementById('rw-secret-input').value = wh ? wh.secret : '';
+      } else {
+         document.getElementById('rw-url-input').value = '';
+         document.getElementById('rw-secret-input').value = '';
+      }
+    }
+
+    function editRegionWebhook(type, platform, regionsStr) {
+      openRegionWebhookModal(type, platform, regionsStr);
+    }
+
+    function closeRegionWebhookModal() {
+      document.getElementById('region-webhook-modal').style.display = 'none';
+    }
+
+    async function submitRegionWebhook() {
+      const type = document.getElementById('rw-type').value;
+      const platform = document.getElementById('rw-platform').value;
+      const configLevel = document.getElementById('rw-config-level').value;
+      
+      const url = document.getElementById('rw-url-input').value.trim();
+      const secret = document.getElementById('rw-secret-input').value.trim();
+      
+      if (configLevel === 'platform') {
+          if (!url && !secret) return showToast('无修改项', 'error');
+          const envKey = `DINGTALK_${type}_${platform.toUpperCase()}`;
+          const payload = {};
+          if (url) payload[envKey] = url;
+          if (secret) payload[envKey + '_SECRET'] = secret;
+          
+          try {
+            const res = await fetch(API_BASE + '/config/env', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(payload)
+            });
+            const data = await res.json();
+            if (data.success) { showToast('保存成功'); closeRegionWebhookModal(); fetchEnvStatus(); }
+            else { showToast(data.error, 'error'); }
+          } catch(e) { showToast('保存失败', 'error'); }
+          return;
+      }
+      
+      // Region specific config
+      let regions = Array.from(document.querySelectorAll('.rw-region-cb:checked')).map(cb => cb.value);
+      const customRegions = document.getElementById('rw-region-custom').value.split(',').map(s => s.trim()).filter(s => s);
+      regions = [...new Set([...regions, ...customRegions])];
+      
+      if (regions.length === 0) return showToast('请至少选择或输入一个关联区域', 'error');
+      
+      if (!url) return showToast('请输入 Webhook URL', 'error');
+      
+      try {
+        const res = await fetch(API_BASE + '/config/webhooks', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ type, platform, regions, url, secret })
+        });
+        const data = await res.json();
+        if (data.success) {
+          showToast('保存成功');
+          closeRegionWebhookModal();
+          fetchRegionWebhooks();
+        } else {
+          showToast(data.error, 'error');
+        }
+      } catch(e) { showToast('保存失败', 'error'); }
+    }
+
+    async function testRegionWebhookConn() {
+      const type = document.getElementById('rw-type').value;
+      const platform = document.getElementById('rw-platform').value;
+      const configLevel = document.getElementById('rw-config-level').value;
+      
+      let regions = Array.from(document.querySelectorAll('.rw-region-cb:checked')).map(cb => cb.value);
+      const customRegions = document.getElementById('rw-region-custom').value.split(',').map(s => s.trim()).filter(s => s);
+      const allRegions = [...new Set([...regions, ...customRegions])];
+      const region = allRegions[0] || 'test_region';
+      
+      const key = configLevel === 'platform' ? `DINGTALK_${type}_${platform.toUpperCase()}` : `${type}_${platform}_${region}`;
+      const url = document.getElementById('rw-url-input').value.trim();
+      const secret = document.getElementById('rw-secret-input').value.trim();
+      
+      const btn = document.getElementById('btn-rw-test');
+      const originalText = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = '测试中...';
+      
+      try {
+        const res = await fetch(API_BASE + '/config/test-webhook', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ key, url, secret, isRegionWebhook: true })
+        });
+        const data = await res.json();
+        if (data.success) showToast(`连通成功！延迟 ${data.latencyMs}ms`);
+        else showToast(`测试失败: ${data.error}`, 'error');
+      } catch (e) {
+        showToast('测试请求异常', 'error');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = originalText;
+      }
+    }
+    
+    // Override fetchEnvStatus to work with new preview elements
+    async function fetchEnvStatus() {
+      try {
+        const res = await fetch(API_BASE + '/config/env');
+        const data = await res.json();
+        if (!data.success) return;
+        envData = data.data; // Store globally
+        
+        renderPlatformWebhooks();
+        
+        const KEYS = [
+          'DINGTALK_ALERT','DINGTALK_ALERT_WA','DINGTALK_ALERT_TG',
+          'DINGTALK_DIGEST','DINGTALK_DIGEST_WA','DINGTALK_DIGEST_TG',
+          'DINGTALK_WEEKLY','DINGTALK_WEEKLY_WA','DINGTALK_WEEKLY_TG',
+          'DINGTALK_SYSTEM_OPS',
+          'GEMINI_API_KEY','OPENAI_API_KEY','OPENAI_BASE_URL','OPENAI_MODEL'
+        ];
+        
+        for (const k of KEYS) {
+          const badge = document.getElementById('badge-' + k);
+          const isSet = data.data[k + '_set'];
+          if (badge) {
+            badge.textContent = isSet ? '🟢 已配置' : '⚪ 未配置';
+            badge.className = 'badge ' + (isSet ? 'badge-set' : 'badge-unset');
+          }
+          
+          // For AI config inputs (still using inputs)
+          const input = document.getElementById('input-' + k);
+          if (input) {
+             input.placeholder = isSet ? '(已配置，输入新值可覆盖)' : (input.getAttribute('data-placeholder') || input.placeholder);
+          }
+          const hint = document.getElementById('hint-' + k);
+          if (hint) {
+            if (isSet) {
+              const val = data.data[k] || '';
+              hint.textContent = '当前：' + val;
+              hint.style.display = 'block';
+            } else {
+              hint.style.display = 'none';
+            }
+          }
+          
+          // For Webhook list preview
+          const preview = document.getElementById('preview-' + k);
+          if (preview) {
+             if (isSet) {
+                 const hasSecret = data.data[k + '_SECRET_set'];
+                 const secretIcon = hasSecret ? ' <span title="已配置加签秘钥">🔐</span>' : '';
+                 let maskVal = data.data[k] || '已隐藏';
+                 if (k.endsWith('_API_KEY') && maskVal !== '已隐藏') {
+                     maskVal = maskVal.substring(0, 3) + '***' + maskVal.substring(maskVal.length - 4);
+                 }
+                 preview.innerHTML = maskVal + secretIcon;
+                 preview.style.display = 'block';
+             } else {
+                 preview.style.display = 'none';
+             }
+          }
+        }
+      } catch (e) { console.error('fetchEnvStatus', e); }
+    }
+    
+    // Clean up old deleteEnvKey to work with both webhook list and ai configs
+    async function deleteEnvKey(key) {
+      if (!confirm('确定要清空此项的所有配置吗？')) return;
+      try {
+        const payload = {};
+        payload[key] = '';
+        // If it's a dingtalk key, also clear the secret
+        if (key.startsWith('DINGTALK_')) {
+             payload[key + '_SECRET'] = '';
+        }
+        
+        const res = await fetch(API_BASE + '/config/env', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        const data = await res.json();
+        if (data.success) {
+          showToast('已成功清空');
+          // Clear any associated inputs just in case (for AI config)
+          const input = document.getElementById('input-' + key);
+          if (input) input.value = '';
+          fetchEnvStatus();
+        } else {
+          showToast(data.error, 'error');
+        }
+      } catch (e) { showToast('清空失败', 'error'); }
+    }
+
+    async function saveEnvKey(key) {
+      const input = document.getElementById('input-' + key);
+      const val = input?.value.trim();
+      if (!val) return showToast('请先输入内容再保存', 'error');
+      try {
+        const res = await fetch(API_BASE + '/config/env', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ [key]: val })
+        });
+        const data = await res.json();
+        if (data.success) {
+          input.value = '';
+          showToast(data.message);
+          fetchEnvStatus();
+        } else {
+          showToast(data.error, 'error');
+        }
+      } catch (e) { showToast('保存失败，网络错误', 'error'); }
+    }
+
+    
+    // AI Modal Logic
+    function openAiModal(key, titleName, placeholderText, isPassword = false) {
+      document.getElementById('ai-modal-title').textContent = '编辑 ' + titleName;
+      document.getElementById('ai-modal-label').textContent = titleName;
+      document.getElementById('ai-modal-key').value = key;
+      
+      const input = document.getElementById('ai-val-input');
+      input.type = isPassword ? 'password' : 'text';
+      input.placeholder = placeholderText;
+      
+      // For API keys, don't show the real value directly in the input field to prevent shoulder-surfing, unless it's a non-password field.
+      // Wait, actually showing it is fine since it's just an edit modal and they can clear it.
+      // But envData[key] for API keys might be fully redacted. Let's show empty string if it's redacted, or show the masked value.
+      input.value = envData[key] || '';
+      
+      document.getElementById('ai-model-presets').style.display = (key === 'OPENAI_MODEL') ? 'block' : 'none';
+      
+      document.getElementById('ai-modal').style.display = 'flex';
+      input.focus();
+    }
+    function closeAiModal() {
+      document.getElementById('ai-modal').style.display = 'none';
+    }
+    function pickModelModal(name) {
+      document.getElementById('ai-val-input').value = name;
+    }
+    async function submitAiConfig() {
+      const key = document.getElementById('ai-modal-key').value;
+      const val = document.getElementById('ai-val-input').value.trim();
+      
+      try {
+        const res = await fetch(API_BASE + '/config/env', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ [key]: val })
+        });
+        const data = await res.json();
+        if (data.success) {
+          showToast('保存成功');
+          closeAiModal();
+          fetchEnvStatus();
+        } else {
+          showToast(data.error, 'error');
+        }
+      } catch (e) { showToast('保存失败，网络错误', 'error'); }
+    }
+
+    // 一键填入模型名称
+    function pickModel(name) {
+      const input = document.getElementById('input-OPENAI_MODEL');
+      if (!input) return;
+      input.value = name;
+      input.focus();
+      // 敷动补丁点击效果
+      input.style.boxShadow = 'inset 4px 4px 8px var(--shadow-dark), inset -4px -4px 8px var(--shadow-light), 0 0 0 2px rgba(107,70,193,0.4)';
+      setTimeout(() => input.style.boxShadow = '', 800);
+    }
+
+    // AI 连通性测试
+    async function testAIConnection() {
+      const btn    = document.getElementById('btn-ai-test');
+      const result = document.getElementById('ai-test-result');
+      btn.disabled = true;
+      btn.textContent = '测试中...';
+      result.style.color = 'var(--t3)';
+      result.textContent = '正在连接，请稍候...';
+      try {
+        const res  = await fetch(API_BASE + '/ai/test');
+        const data = await res.json();
+        if (data.success) {
+          result.style.color = '#276749';
+          result.textContent = `✓ 连接成功 | 模型：${data.model} | 云端响应："${data.reply}" | 延迟：${data.latencyMs}ms`;
+          showToast(`AI 连通成功，延迟 ${data.latencyMs}ms`);
+        } else {
+          result.style.color = '#c53030';
+          const hint = data.status === 401 ? '(认证失败，请检查 Key)'
+                     : data.status === 404 ? '(模型不存在或路由错误)'
+                     : data.status ? `(HTTP ${data.status})` : '';
+          result.textContent = `✗ 连接失败 ${hint}：${data.error}`;
+          showToast('连接失败，请检查配置', 'error');
+        }
+      } catch (e) {
+        result.style.color = '#c53030';
+        result.textContent = `✗ 请求异常：${e.message}`;
+        showToast('网络错误', 'error');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = '⚡ 测试连通性';
+      }
+    }
+
+    // ─── 配置中心：Analytics 摘要 ─────────────────────────────────
+    async function fetchAnalyticsSummary() {
+      try {
+        const res = await fetch(API_BASE + '/analytics/summary');
+        const data = await res.json();
+        const loading = document.getElementById('analytics-loading');
+        const summary = document.getElementById('analytics-summary');
+        const unready = document.getElementById('analytics-unready');
+        if (!data.success || !data.data.ready) {
+          loading.style.display = 'none';
+          unready.style.display = 'block';
+          return;
+        }
+        const d = data.data;
+        document.getElementById('an-total').textContent = d.totalAlerts;
+        document.getElementById('an-p0').textContent = d.p0;
+        document.getElementById('an-p1').textContent = d.p1;
+        document.getElementById('an-open').textContent = d.openIssues;
+        document.getElementById('an-closed').textContent = d.closedIssues;
+        loading.style.display = 'none';
+        summary.style.display = 'block';
+      } catch (e) { console.error('fetchAnalyticsSummary', e); }
+    }
+
+    // ─── 配置中心：区域账号映射 ───────────────────────────────────
+    async function fetchRegions() {
+      try {
+        const res = await fetch(API_BASE + '/config/regions');
+        const data = await res.json();
+        const tbody = document.getElementById('region-table-body');
+        window.allRegions = data.data;
+        if (!data.success || data.data.length === 0) {
+          tbody.innerHTML = `<tr><td colspan="7" class="empty-state" style="text-align:center;padding:32px">暂无区域映射配置</td></tr>`;
+          return;
+        }
+        tbody.innerHTML = data.data.map(a => `
+          <tr class="region-row">
+            <td><code style="font-size:12px;color:var(--p)">${escapeHtml(a.account)}</code></td>
+            <td>${a.platform === 'wa' ? '🟢 WA' : (a.platform === 'tg' ? '🔵 TG(Bot)' : (a.platform === 'tgu' ? '👤 TG(User)' : (a.platform === 'teams' ? '🟣 Teams' : escapeHtml(a.platform))))}</td>
+            <td><span class="region-tag">${escapeHtml(a.region)}</span></td>
+            <td>${escapeHtml(a.owner) || '<span style="color:var(--t3)">—</span>'}</td>
+            <td style="font-size:12px;color:var(--t3)">${escapeHtml(a.owner_dingtalk_id) || '—'}</td>
+            <td style="font-size:12px;color:var(--t3);max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapeHtml(a.description)}">${escapeHtml(a.description) || '—'}</td>
+            <td>
+              <button class="btn-sm" style="margin-right:6px" onclick="editRegion('${escapeHtml(a.account)}')">编辑</button>
+              <button class="btn-danger" onclick="deleteRegion('${escapeHtml(a.account)}')">删除</button>
+            </td>
+          </tr>
+        `).join('');
+      } catch (e) { console.error('fetchRegions', e); }
+    }
+
+    async function deleteRegion(account) {
+      if (!confirm(`确定删除区域映射「${account}」吗？`)) return;
+      try {
+        const res = await fetch(`${API_BASE}/config/regions/${encodeURIComponent(account)}`, { method: 'DELETE' });
+        const data = await res.json();
+        if (data.success) { showToast(data.message); fetchRegions(); }
+        else showToast(data.error, 'error');
+      } catch (e) { showToast('删除失败', 'error'); }
+    }
+
+    // ─── 区域映射 Modal ────────────────────────────────────────────
+    const regionModal = document.getElementById('region-modal');
+    
+    async function openRegionModal(editData = null) {
+      regionModal.style.display = 'flex';
+      const accSelect = document.getElementById('r-account');
+      
+      try {
+        const res = await fetch(API_BASE + '/accounts');
+        const data = await res.json();
+        if (data.success) {
+          accSelect.innerHTML = '<option value="">-- 请选择账号 --</option>';
+          data.data.forEach(a => {
+            accSelect.innerHTML += `<option value="${a.id}">${a.id} (${a.platform})</option>`;
+          });
+        }
+      } catch (e) { accSelect.innerHTML = '<option value="">获取账号失败</option>'; }
+
+      if (editData) {
+        // If editData.account is not in options, add it
+        if (!Array.from(accSelect.options).find(o => o.value === editData.account)) {
+            accSelect.innerHTML += `<option value="${editData.account}">${editData.account} (保留)</option>`;
+        }
+        document.getElementById('r-account').value = editData.account;
+        document.getElementById('r-account').disabled = true;
+        document.getElementById('r-platform').value = editData.platform;
+        document.getElementById('r-region').value = editData.region;
+        document.getElementById('r-owner').value = editData.owner;
+        document.getElementById('r-dingtalk').value = editData.owner_dingtalk_id;
+        document.getElementById('r-desc').value = editData.description;
+      } else {
+        document.getElementById('r-account').disabled = false;
+        document.getElementById('r-account').value = '';
+        document.getElementById('r-platform').value = 'wa';
+        document.getElementById('r-region').value = '';
+        document.getElementById('r-owner').value = '';
+        document.getElementById('r-dingtalk').value = '';
+        document.getElementById('r-desc').value = '';
+      }
+    }
+    
+    function editRegion(account) {
+      const data = window.allRegions.find(a => a.account === account);
+      if (data) openRegionModal(data);
+    }
+
+    function closeRegionModal() {
+      regionModal.style.display = 'none';
+      ['r-account','r-region','r-owner','r-dingtalk','r-desc'].forEach(id => document.getElementById(id).value = '');
+    }
+    async function submitRegion() {
+      const account = document.getElementById('r-account').value.trim();
+      const region = document.getElementById('r-region').value.trim();
+      const platform = document.getElementById('r-platform').value;
+      const owner = document.getElementById('r-owner').value.trim();
+      const owner_dingtalk_id = document.getElementById('r-dingtalk').value.trim();
+      const description = document.getElementById('r-desc').value.trim();
+      if (!account || !region) return showToast('账号ID和区域为必填项', 'error');
+      try {
+        const res = await fetch(API_BASE + '/config/regions', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ account, region, platform, owner, owner_dingtalk_id, description })
+        });
+        const data = await res.json();
+        if (data.success) { showToast(data.message); closeRegionModal(); fetchRegions(); }
+        else showToast(data.error, 'error');
+      } catch (e) { showToast('保存失败', 'error'); }
+    }
+
+    // ─── 配置中心：内部员工白名单 ─────────────────────────────────
+    async function fetchStaffConfig() {
+      try {
+        const res = await fetch(API_BASE + '/config/staff');
+        const data = await res.json();
+        if (data.success) {
+          const wl = data.data.whitelist || [];
+          const kw = data.data.keywords || [];
+          document.getElementById('staff-whitelist-preview').innerHTML = wl.length > 0 ? wl.map(w => `<span class="region-tag" style="background:#e2e8f0;color:#2d3748;margin:0 6px 6px 0">${escapeHtml(w)}</span>`).join('') : '<span style="color:var(--t3)">未配置</span>';
+          document.getElementById('staff-keywords-preview').innerHTML = kw.length > 0 ? kw.map(k => `<span class="region-tag" style="background:#e2e8f0;color:#2d3748;margin:0 6px 6px 0">${escapeHtml(k)}</span>`).join('') : '<span style="color:var(--t3)">未配置</span>';
+          window.staffConfigData = data.data;
+        }
+      } catch (e) { console.error('fetchStaffConfig error', e); }
+    }
+
+    function openStaffModal() {
+      const data = window.staffConfigData || { whitelist: [], keywords: [] };
+      document.getElementById('staff-whitelist-input').value = (data.whitelist || []).join('\n');
+      document.getElementById('staff-keywords-input').value = (data.keywords || []).join('\n');
+      document.getElementById('staff-modal').style.display = 'flex';
+    }
+    
+    function closeStaffModal() {
+      document.getElementById('staff-modal').style.display = 'none';
+    }
+
+    async function submitStaffConfig() {
+      const wlText = document.getElementById('staff-whitelist-input').value;
+      const kwText = document.getElementById('staff-keywords-input').value;
+      
+      const whitelist = wlText.split('\n').map(s => s.trim()).filter(s => s);
+      const keywords = kwText.split('\n').map(s => s.trim()).filter(s => s);
+      
+      try {
+        const res = await fetch(API_BASE + '/config/staff', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ whitelist, keywords })
+        });
+        const data = await res.json();
+        if (data.success) {
+          showToast(data.message);
+          closeStaffModal();
+          fetchStaffConfig();
+        } else {
+          showToast(data.error, 'error');
+        }
+      } catch (e) { showToast('保存失败', 'error'); }
+    }
 
   </script>
 </body>
