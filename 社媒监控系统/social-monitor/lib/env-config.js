@@ -9,7 +9,7 @@
 const path = require('path');
 const fs = require('fs');
 
-const ENV_PATH = path.join(__dirname, '..', '.env');
+const ENV_PATH = path.join(process.env.DATA_DIR || path.join(__dirname, '..'), '.env');
 
 function readEnvFile() {
     if (!fs.existsSync(ENV_PATH)) return {};

@@ -101,7 +101,7 @@ function buildText(content, atMobiles = [], atAll = false) {
 /**
  * 根据类型和平台解析 webhook URL 及 secret
  */
-const WEBHOOKS_PATH = path.join(__dirname, '..', 'config', 'webhooks.json');
+const WEBHOOKS_PATH = path.join(process.env.DATA_DIR || path.join(__dirname, '..'), 'config', 'webhooks.json');
 
 function getRegionWebhooks() {
   try {

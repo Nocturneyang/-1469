@@ -18,7 +18,7 @@ const path = require('path');
  * @returns {{ action: 'start'|'pause'|null, days: number }}
  */
 function checkBackfillFlag(accountName) {
-    const flagPath = path.join(__dirname, '..', `teams-profile-${accountName}`, 'backfill.flag');
+    const flagPath = path.join(process.env.DATA_DIR || path.join(__dirname, '..'), `teams-profile-${accountName}`, 'backfill.flag');
     if (!fs.existsSync(flagPath)) return { action: null, days: 0 };
     
     try {
@@ -34,7 +34,7 @@ function checkBackfillFlag(accountName) {
  * @param {string} accountName
  */
 function clearBackfillFlag(accountName) {
-    const flagPath = path.join(__dirname, '..', `teams-profile-${accountName}`, 'backfill.flag');
+    const flagPath = path.join(process.env.DATA_DIR || path.join(__dirname, '..'), `teams-profile-${accountName}`, 'backfill.flag');
     if (fs.existsSync(flagPath)) {
         try { fs.unlinkSync(flagPath); } catch {}
     }
@@ -46,7 +46,7 @@ function clearBackfillFlag(accountName) {
  * @param {object} status
  */
 function writeBackfillStatus(accountName, status) {
-    const statusPath = path.join(__dirname, '..', `teams-profile-${accountName}`, 'backfill-status.json');
+    const statusPath = path.join(process.env.DATA_DIR || path.join(__dirname, '..'), `teams-profile-${accountName}`, 'backfill-status.json');
     try {
         const dir = path.dirname(statusPath);
         if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
@@ -61,7 +61,7 @@ function writeBackfillStatus(accountName, status) {
  * 读取回溯状态
  */
 function readBackfillStatus(accountName) {
-    const statusPath = path.join(__dirname, '..', `teams-profile-${accountName}`, 'backfill-status.json');
+    const statusPath = path.join(process.env.DATA_DIR || path.join(__dirname, '..'), `teams-profile-${accountName}`, 'backfill-status.json');
     if (!fs.existsSync(statusPath)) return null;
     try {
         return JSON.parse(fs.readFileSync(statusPath, 'utf8'));
@@ -76,7 +76,7 @@ function readBackfillStatus(accountName) {
  * @param {Array<{chatId, name}>} chats
  */
 function cacheChats(accountName, chats) {
-    const cachePath = path.join(__dirname, '..', `teams-profile-${accountName}`, 'chats-cache.json');
+    const cachePath = path.join(process.env.DATA_DIR || path.join(__dirname, '..'), `teams-profile-${accountName}`, 'chats-cache.json');
     try {
         const dir = path.dirname(cachePath);
         if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });

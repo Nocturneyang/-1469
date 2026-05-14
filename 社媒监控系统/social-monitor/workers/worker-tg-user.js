@@ -25,7 +25,7 @@
 'use strict';
 
 const path = require('path');
-require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
+require('dotenv').config({ path: path.join(process.env.DATA_DIR || path.join(__dirname, '..'), '.env') });
 
 const { TelegramClient } = require('telegram');
 const { StringSession } = require('telegram/sessions');
@@ -62,7 +62,7 @@ const BACKFILL_DAYS = parseInt(process.env[`TG_BACKFILL_DAYS_${accountKey}`] || 
 
 // ─── 全局状态（供 server.js 的登录 API 读写）────────────────────────────────
 // 通过文件共享状态（同一 PM2 进程内存隔离，用文件通信）
-const STATUS_FILE = path.join(__dirname, '..', `db/.tgu_status_${accountName}.json`);
+const STATUS_FILE = path.join(process.env.DATA_DIR || path.join(__dirname, '..'), `db/.tgu_status_${accountName}.json`);
 const fs = require('fs');
 
 function writeStatus(state) {
@@ -116,7 +116,7 @@ async function main() {
             await sleep(2000);
         }
         // 当收到放行信号，说明 UI 已保存完毕，重新加载环境变量
-        require('dotenv').config({ path: path.join(__dirname, '..', '.env'), override: true });
+        require('dotenv').config({ path: path.join(process.env.DATA_DIR || path.join(__dirname, '..'), '.env'), override: true });
 
         // ── 重新读取 session 并建立真正的连接 ──────────────────────────
         const newSessionString = getSession(accountName);

@@ -1,0 +1,11 @@
+.git
+.DS_Store
+**/.DS_Store
+**/node_modules
+**/.env
+**/*.sqlite
+**/*.sqlite-*
+**/.wwebjs_cache
+**/whatsapp-session*
+**/teams-profile-*
+**/media

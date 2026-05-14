@@ -11,7 +11,7 @@ const path = require('path');
 const Database = require('better-sqlite3');
 const { saveMessage } = require('../db/database');
 
-const analyticsDbPath = path.join(__dirname, '..', 'db', 'analytics.sqlite');
+const analyticsDbPath = path.join(process.env.DATA_DIR || path.join(__dirname, '..'), 'db', 'analytics.sqlite');
 
 let analyticsDb = null;
 

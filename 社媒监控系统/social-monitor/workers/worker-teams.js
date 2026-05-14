@@ -32,7 +32,7 @@ const whitelist = whitelistRaw ? whitelistRaw.split(',').map(s => s.trim()).filt
 // 区域映射
 let regionInfo = { region: '未配置', platform: 'teams' };
 try {
-    const regionsPath = path.join(__dirname, '..', 'config', 'account-regions.json');
+    const regionsPath = path.join(process.env.DATA_DIR || path.join(__dirname, '..'), 'config', 'account-regions.json');
     if (fs.existsSync(regionsPath)) {
         const config = JSON.parse(fs.readFileSync(regionsPath, 'utf8'));
         const found = (config.accounts || []).find(a => a.account === accountKey);
@@ -103,6 +103,7 @@ async function main() {
     try {
         context = await chromium.launchPersistentContext(userDataDir, {
             headless: true,
+            executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH || process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
             args: [
                 '--no-sandbox',
                 '--disable-setuid-sandbox',
@@ -176,6 +177,7 @@ async function main() {
         // 重新以有界面模式启动
         context = await chromium.launchPersistentContext(userDataDir, {
             headless: false,
+            executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH || process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
             args: [
                 '--no-sandbox',
                 '--disable-setuid-sandbox',

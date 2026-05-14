@@ -8,7 +8,7 @@ const { sendAccountAlert } = require('../lib/dingtalk');
 // 区域映射配置
 let regionMap = {};
 try {
-    const configPath = path.join(__dirname, '..', 'config', 'account-regions.json');
+    const configPath = path.join(process.env.DATA_DIR || path.join(__dirname, '..'), 'config', 'account-regions.json');
     if (fs.existsSync(configPath)) {
         const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
         config.accounts.forEach(a => {
@@ -20,7 +20,7 @@ try {
 }
 
 const accountName = process.env.ACCOUNT_NAME || 'default';
-const sessionPath = path.join(__dirname, '..', `whatsapp-session-${accountName}`);
+const sessionPath = path.join(process.env.DATA_DIR || path.join(__dirname, '..'), `whatsapp-session-${accountName}`);
 
 // Mark as initializing only if no existing record (avoid overwriting 'authenticated')
 if (updateAccountStatus) {
@@ -36,7 +36,7 @@ if (updateAccountStatus) {
 }
 
 // ─── WebVersion 缓存兜底 ────────────────────────────────────────
-const CACHE_DIR = path.join(__dirname, '..', '.wwebjs_cache');
+const CACHE_DIR = path.join(process.env.DATA_DIR || path.join(__dirname, '..'), '.wwebjs_cache');
 const CACHE_FILE = path.join(CACHE_DIR, 'wa-version.html');
 const REMOTE_HTML_URL = 'https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/2.2412.54.html';
 
@@ -243,7 +243,7 @@ client.on('message_create', async (message) => {
                     const typePart = media.mimetype ? media.mimetype.split(';')[0] : '';
                     const ext = extNames[typePart] || 'bin';
                     const fileName = `wa_${message.id.id}_${Date.now()}.${ext}`;
-                    const absoluteMediaDir = path.join(__dirname, '..', 'media');
+                    const absoluteMediaDir = path.join(process.env.DATA_DIR || path.join(__dirname, '..'), 'media');
                     const absoluteMediaPath = path.join(absoluteMediaDir, fileName);
                     fs.writeFileSync(absoluteMediaPath, Buffer.from(media.data, 'base64'));
                     mediaPath = `media/${fileName}`; // relative representation

@@ -1,16 +1,18 @@
-require('dotenv').config();
+const path = require('path');
+require('dotenv').config({ path: path.join(process.env.DATA_DIR || __dirname, '.env') });
 const axios = require('axios');
 const fs = require('fs');
-const path = require('path');
 const { db } = require('./db/database');
+const DATA_DIR = process.env.DATA_DIR || __dirname;
 
 // Configuration
 const SYNC_URL = process.env.SYNC_URL || "https://nwp-service.tyhsys.com/api/v1/social-monitor/messages/sync";
 const SYNC_TOKEN = process.env.SYNC_TOKEN;
 
 if (!SYNC_TOKEN) {
-    console.error('[Sync Agent] FATAL: SYNC_TOKEN 环境变量未配置，无法启动同步。请在 .env 中配置 SYNC_TOKEN。');
-    process.exit(1);
+    console.warn('[Sync Agent] SYNC_TOKEN 环境变量未配置，跳过同步。请在 .env 中配置 SYNC_TOKEN 后重启。');
+    setInterval(() => {}, 100000000);
+    return;
 }
 // Base64 传输会显著膨胀请求体积，限制每批 50 条防止网络包过大
 const BATCH_SIZE = 50;
@@ -40,7 +42,7 @@ async function syncMessagesToCenter() {
             // 遇到含媒体的消息，读取本地物理文件并转 Base64
             // media_path 存储的是相对于 social-monitor 目录的路径（如 media/xxxx.jpg）
             if (row.has_media && row.media_path) {
-                const absPath = path.join(__dirname, row.media_path);
+                const absPath = path.join(DATA_DIR, row.media_path);
                 if (fs.existsSync(absPath)) {
                     try {
                         mediaBase64 = fs.readFileSync(absPath).toString('base64');

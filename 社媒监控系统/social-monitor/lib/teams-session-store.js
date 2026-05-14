@@ -8,7 +8,7 @@
 const fs = require('fs');
 const path = require('path');
 
-const ROOT = path.join(__dirname, '..');
+const ROOT = process.env.DATA_DIR || path.join(__dirname, '..');
 
 /**
  * 获取账号的 Profile 目录路径

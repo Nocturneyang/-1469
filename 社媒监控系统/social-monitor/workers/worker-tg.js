@@ -1,5 +1,5 @@
 const path = require('path');
-require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
+require('dotenv').config({ path: path.join(process.env.DATA_DIR || path.join(__dirname, '..'), '.env') });
 const TelegramBot = require('node-telegram-bot-api');
 const fs = require('fs');
 const { saveMessage, updateAccountStatus } = require('../db/database');
@@ -40,7 +40,7 @@ bot.on('message', async (msg) => {
             hasMedia = true;
             const photo = msg.photo[msg.photo.length - 1]; // highest resolution
             try {
-                const mediaDir = path.join(__dirname, '..', 'media');
+                const mediaDir = path.join(process.env.DATA_DIR || path.join(__dirname, '..'), 'media');
                 const filePath = await bot.downloadFile(photo.file_id, mediaDir);
                 const fileName = path.basename(filePath);
                 mediaPath = `media/${fileName}`;
@@ -50,7 +50,7 @@ bot.on('message', async (msg) => {
         } else if (msg.document) {
             hasMedia = true;
             try {
-                const mediaDir = path.join(__dirname, '..', 'media');
+                const mediaDir = path.join(process.env.DATA_DIR || path.join(__dirname, '..'), 'media');
                 const filePath = await bot.downloadFile(msg.document.file_id, mediaDir);
                 const fileName = path.basename(filePath);
                 mediaPath = `media/${fileName}`;
