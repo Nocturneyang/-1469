@@ -16,8 +16,19 @@ if [ ! -f "$DATA_DIR/.env" ]; then
   touch "$DATA_DIR/.env"
 fi
 
-if [ ! -f "$DATA_DIR/ecosystem.config.js" ]; then
-  cp "$APP_DIR/ecosystem.config.js" "$DATA_DIR/ecosystem.config.js"
+if [ -f "$APP_DIR/ecosystem.cloud.config.js" ] && [ ! -f "$DATA_DIR/.cloud-ecosystem-version" ]; then
+  if [ -f "$DATA_DIR/ecosystem.config.js" ]; then
+    cp "$DATA_DIR/ecosystem.config.js" "$DATA_DIR/ecosystem.config.js.bak.$(date +%Y%m%d%H%M%S)"
+  fi
+  cp "$APP_DIR/ecosystem.cloud.config.js" "$DATA_DIR/ecosystem.config.js"
+  echo "1" > "$DATA_DIR/.cloud-ecosystem-version"
+elif [ ! -f "$DATA_DIR/ecosystem.config.js" ]; then
+  if [ -f "$APP_DIR/ecosystem.cloud.config.js" ]; then
+    cp "$APP_DIR/ecosystem.cloud.config.js" "$DATA_DIR/ecosystem.config.js"
+    echo "1" > "$DATA_DIR/.cloud-ecosystem-version"
+  else
+    cp "$APP_DIR/ecosystem.config.js" "$DATA_DIR/ecosystem.config.js"
+  fi
 fi
 
 rm -f "$APP_DIR/.env" "$APP_DIR/ecosystem.config.js"
