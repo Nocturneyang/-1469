@@ -8,7 +8,7 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 // ─── 复用 analytics DB 只读连接 ────────────────────────────────
-const ANALYTICS_PATH = path.join(__dirname, 'db', 'analytics.sqlite');
+const ANALYTICS_PATH = path.join(process.env.DATA_DIR || __dirname, 'db', 'analytics.sqlite');
 let _analyticsDb = null;
 function getAnalyticsDb() {
     if (_analyticsDb) return _analyticsDb;
@@ -34,7 +34,38 @@ if (!fs.existsSync(publicDir)) {
 app.use(express.static(publicDir));
 
 // Serve media files route
-app.use('/media', express.static(path.join(__dirname, 'media')));
+app.use('/media', express.static(path.join(process.env.DATA_DIR || __dirname, 'media')));
+
+// ─── 安全写入 ecosystem.config.js（备份 + 验证 + 回滚）─────────────
+const ECO_PATH = path.join(process.env.DATA_DIR || __dirname, 'ecosystem.config.js');
+
+function safeWriteEcosystem(newContent) {
+    if (!fs.existsSync(ECO_PATH)) {
+        throw new Error('ecosystem.config.js 不存在');
+    }
+    // 备份原文件
+    const backupPath = ECO_PATH + '.bak';
+    fs.copyFileSync(ECO_PATH, backupPath);
+    // 写入新内容
+    fs.writeFileSync(ECO_PATH, newContent, 'utf8');
+    // 验证：新文件必须包含 module.exports 且能被 Node require
+    try {
+        const verify = fs.readFileSync(ECO_PATH, 'utf8');
+        if (!verify.includes('module.exports')) {
+            throw new Error('ecosystem.config.js 写入后缺少 module.exports');
+        }
+        // 清除 require 缓存后重新加载验证
+        delete require.cache[require.resolve(ECO_PATH)];
+        const parsed = require(ECO_PATH);
+        if (!parsed || !Array.isArray(parsed.apps)) {
+            throw new Error('ecosystem.config.js 解析后 apps 不是数组');
+        }
+    } catch (verifyErr) {
+        // 回滚
+        fs.copyFileSync(backupPath, ECO_PATH);
+        throw new Error(`ecosystem.config.js 验证失败，已回滚: ${verifyErr.message}`);
+    }
+}
 
 // API: Get Stats
 app.get('/api/stats', (req, res) => {
@@ -101,6 +132,24 @@ app.get('/api/messages', (req, res) => {
     }
 });
 
+// API: Get distinct groups (for label override picker, etc.)
+app.get('/api/groups', (req, res) => {
+    try {
+        const accountFilter = req.query.account;
+        let query = 'SELECT DISTINCT group_name, group_id, receiver_account FROM messages WHERE group_name IS NOT NULL AND group_name != \'\'';
+        const params = [];
+        if (accountFilter) {
+            query += ' AND receiver_account = ?';
+            params.push(accountFilter);
+        }
+        query += ' ORDER BY group_name';
+        const rows = db.prepare(query).all(...params);
+        res.json({ success: true, data: rows });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
 // API: Get Accounts
 app.get('/api/accounts', (req, res) => {
     try {
@@ -124,7 +173,7 @@ app.post('/api/accounts/logout', (req, res) => {
             // update status
             db.prepare(`UPDATE accounts SET status = 'disconnected', qr_code = NULL WHERE id = ?`).run(id);
             // clear session folder if needed, pm2 handles restart mapping
-            const sessionPath = path.join(__dirname, `whatsapp-session-${accName}`);
+            const sessionPath = path.join(process.env.DATA_DIR || __dirname, `whatsapp-session-${accName}`);
             if (fs.existsSync(sessionPath)) {
                 fs.rmSync(sessionPath, { recursive: true, force: true });
             }
@@ -211,21 +260,21 @@ app.delete('/api/accounts/:id', (req, res) => {
 
         // 2. Delete session folder (if WA)
         if (id.startsWith('wa-')) {
-            const sessionPath = path.join(__dirname, `whatsapp-session-${accName}`);
+            const sessionPath = path.join(process.env.DATA_DIR || __dirname, `whatsapp-session-${accName}`);
             if (fs.existsSync(sessionPath)) {
                 fs.rmSync(sessionPath, { recursive: true, force: true });
             }
         }
 
         // 3. Remove from ecosystem.config.js
-        const ecoPath = path.join(__dirname, 'ecosystem.config.js');
+        const ecoPath = path.join(process.env.DATA_DIR || __dirname, 'ecosystem.config.js');
         if (fs.existsSync(ecoPath)) {
             let eco = fs.readFileSync(ecoPath, 'utf8');
             // matches { name: "workerName", ... },
             const regex = new RegExp(`\\s*\\{\\s*name:\\s*["']${workerName}["'][\\s\\S]*?\\},`, 'g');
             if (regex.test(eco)) {
                 eco = eco.replace(regex, '');
-                fs.writeFileSync(ecoPath, eco);
+                safeWriteEcosystem(eco);
             }
         }
 
@@ -259,17 +308,17 @@ app.post('/api/accounts/create', (req, res) => {
         if (platform === 'whatsapp') {
             workerName = `worker-wa-${id}`;
             scriptPath = './workers/worker-wa.js';
-            spawnEnv = { ...process.env, ACCOUNT_NAME: id };
+            spawnEnv = { PATH: process.env.PATH, HOME: process.env.HOME, NODE_ENV: 'production', ACCOUNT_NAME: id };
             db.prepare(`INSERT OR REPLACE INTO accounts (id, platform, status) VALUES (?, 'whatsapp', 'initializing')`).run('wa-' + id);
         } else {
             workerName = `worker-tg-${id}`;
             scriptPath = './workers/worker-tg.js';
-            spawnEnv = { ...process.env, TG_ACCOUNT_NAME: id, TG_BOT_TOKEN: token };
+            spawnEnv = { PATH: process.env.PATH, HOME: process.env.HOME, NODE_ENV: 'production', TG_ACCOUNT_NAME: id, TG_BOT_TOKEN: token };
             db.prepare(`INSERT OR REPLACE INTO accounts (id, platform, status) VALUES (?, 'telegram', 'initializing')`).run('tg-' + id);
         }
 
         // Dynamically add to ecosystem.config.js
-        const ecoPath = path.join(__dirname, 'ecosystem.config.js');
+        const ecoPath = path.join(process.env.DATA_DIR || __dirname, 'ecosystem.config.js');
         if (fs.existsSync(ecoPath)) {
             let eco = fs.readFileSync(ecoPath, 'utf8');
             let insertStr = '';
@@ -295,7 +344,7 @@ app.post('/api/accounts/create', (req, res) => {
             }
             if (eco.includes('// --- Web UI Server ---') && !eco.includes(workerName)) {
                 eco = eco.replace('// --- Web UI Server ---', insertStr);
-                fs.writeFileSync(ecoPath, eco);
+                safeWriteEcosystem(eco);
             }
         }
 
@@ -318,47 +367,10 @@ app.post('/api/accounts/create', (req, res) => {
 
 // ─── 配置中心 API ─────────────────────────────────────────────────
 
-const ENV_PATH = path.join(__dirname, '.env');
-const ACCOUNT_REGIONS_PATH = path.join(__dirname, 'config', 'account-regions.json');
+const { readEnvFile, writeEnvKeys } = require('./lib/env-config');
+const ACCOUNT_REGIONS_PATH = path.join(process.env.DATA_DIR || __dirname, 'config', 'account-regions.json');
 
-/** 读取 .env 文件并解析为 key=value 对象 */
-function readEnvFile() {
-    if (!fs.existsSync(ENV_PATH)) return {};
-    const lines = fs.readFileSync(ENV_PATH, 'utf8').split('\n');
-    const result = {};
-    for (const line of lines) {
-        const trimmed = line.trim();
-        if (!trimmed || trimmed.startsWith('#')) continue;
-        const idx = trimmed.indexOf('=');
-        if (idx < 0) continue;
-        const key = trimmed.slice(0, idx).trim();
-        const val = trimmed.slice(idx + 1).trim();
-        result[key] = val;
-    }
-    return result;
-}
-
-/** 将 key-value 对象写回 .env，保留注释行和原有格式 */
-function writeEnvKeys(updates) {
-    let content = fs.existsSync(ENV_PATH) ? fs.readFileSync(ENV_PATH, 'utf8') : '';
-    for (const [key, value] of Object.entries(updates)) {
-        const regex = new RegExp(`^${key}=.*$`, 'm');
-        if (value === '') {
-            if (regex.test(content)) {
-                content = content.replace(new RegExp(`^${key}=.*\\n?`, 'm'), '');
-            }
-        } else {
-            if (regex.test(content)) {
-                content = content.replace(regex, `${key}=${value}`);
-            } else {
-                content += `\n${key}=${value}`;
-            }
-        }
-    }
-    fs.writeFileSync(ENV_PATH, content, 'utf8');
-}
-
-const WEBHOOKS_PATH = path.join(__dirname, 'config', 'webhooks.json');
+const WEBHOOKS_PATH = path.join(process.env.DATA_DIR || __dirname, 'config', 'webhooks.json');
 function readWebhooksFile() {
     if (!fs.existsSync(WEBHOOKS_PATH)) return {};
     try {
@@ -476,11 +488,6 @@ app.post('/api/config/env', (req, res) => {
             return res.status(400).json({ success: false, error: '没有提供任何有效配置项' });
         }
         writeEnvKeys(updates);
-        // Sync to current process memory so subsequent tests use the latest values
-        for (const [key, value] of Object.entries(updates)) {
-            if (value === '') delete process.env[key];
-            else process.env[key] = value;
-        }
         res.json({ success: true, message: `已更新 ${Object.keys(updates).join(', ')}` });
     } catch (err) {
         res.status(500).json({ success: false, error: err.message });
@@ -527,7 +534,7 @@ app.get('/api/config/regions', (req, res) => {
 
 // POST /api/config/regions — 添加/更新区域账号映射条目
 app.post('/api/config/regions', (req, res) => {
-    const { account, region, platform, owner, owner_dingtalk_id, description } = req.body;
+    const { account, region, business_sector, platform, owner, owner_dingtalk_id, description } = req.body;
     if (!account || !region || !platform) {
         return res.status(400).json({ success: false, error: '缺少 account / region / platform 字段' });
     }
@@ -538,7 +545,7 @@ app.post('/api/config/regions', (req, res) => {
         const config = JSON.parse(fs.readFileSync(ACCOUNT_REGIONS_PATH, 'utf8'));
         const accounts = config.accounts || [];
         const idx = accounts.findIndex(a => a.account === account);
-        const entry = { account, region, platform, owner: owner || '', owner_dingtalk_id: owner_dingtalk_id || '', description: description || '' };
+        const entry = { account, region, business_sector: business_sector || '', platform, owner: owner || '', owner_dingtalk_id: owner_dingtalk_id || '', description: description || '' };
         if (idx >= 0) {
             accounts[idx] = entry;
         } else {
@@ -565,7 +572,7 @@ app.delete('/api/config/regions/:account', (req, res) => {
     }
 });
 
-const STAFF_CONFIG_PATH = path.join(__dirname, 'config', 'internal-staff.json');
+const STAFF_CONFIG_PATH = path.join(process.env.DATA_DIR || __dirname, 'config', 'internal-staff.json');
 
 // GET /api/config/staff — 读取内部员工白名单配置
 app.get('/api/config/staff', (req, res) => {
@@ -840,24 +847,21 @@ app.get('/api/tg-user/dialogs/:name', async (req, res) => {
         const sessionStr = getSession(name);
         if (!sessionStr) return res.status(400).json({ success: false, error: '无此账号的登录状态，请先登录' });
 
-        const ecoPath = path.join(__dirname, 'ecosystem.config.js');
-        let apiId, apiHash;
-        if (fs.existsSync(ecoPath)) {
-            const ecoStr = fs.readFileSync(ecoPath, 'utf8');
-            const workerName = `worker-tgu-${name}`;
-            const workerIdx = ecoStr.indexOf(workerName);
-            if (workerIdx !== -1) {
-                const apiIdMatch = ecoStr.substring(workerIdx).match(/TG_API_ID:\s*["'](\d+)["']/);
-                const apiHashMatch = ecoStr.substring(workerIdx).match(/TG_API_HASH:\s*["']([^"']+)["']/);
-                if (apiIdMatch && apiHashMatch) {
-                    apiId = parseInt(apiIdMatch[1]);
-                    apiHash = apiHashMatch[1];
-                }
-            }
-        }
+        // 从环境变量读取账号专属 API 凭据（不再从 ecosystem.config.js 正则解析）
+        const accountKey = name.toUpperCase().replace(/-/g, '_');
+        const envMap = readEnvFile();
+        const apiId = parseInt(
+            process.env[`TG_API_ID_${accountKey}`] ||
+            envMap[`TG_API_ID_${accountKey}`] ||
+            process.env.TG_API_ID || '0', 10
+        );
+        const apiHash =
+            process.env[`TG_API_HASH_${accountKey}`] ||
+            envMap[`TG_API_HASH_${accountKey}`] ||
+            process.env.TG_API_HASH || '';
 
         if (!apiId || !apiHash) {
-            return res.status(400).json({ success: false, error: '未能找到 API ID/Hash，请重新添加账号' });
+            return res.status(400).json({ success: false, error: '未能找到 API ID/Hash，请在 .env 中配置 TG_API_ID_${ACCOUNT_NAME} 和 TG_API_HASH_${ACCOUNT_NAME}' });
         }
 
         try {
@@ -924,7 +928,7 @@ app.post('/api/tg-user/whitelist/:name', (req, res) => {
         // 通知 worker 放行（同进程兼容）
         global[`tgu_logged_in_${name}`] = true;
         // 写文件信号（跨进程，worker 轮询此文件）
-        const statusFilePath = path.join(__dirname, `db/.tgu_status_${name}.json`);
+        const statusFilePath = path.join(process.env.DATA_DIR || __dirname, `db/.tgu_status_${name}.json`);
         try {
             fs.writeFileSync(statusFilePath, JSON.stringify({ status: 'login_complete', account: name, updated_at: Date.now() }), 'utf8');
         } catch (_) { }
@@ -942,7 +946,7 @@ app.get('/api/tg-user/status/:name', (req, res) => {
     try {
         const sessionStatus = getSessionStatus(name);
         const dbAccount = db.prepare(`SELECT * FROM accounts WHERE id = ?`).get(`tgu-${name}`);
-        const statusFilePath = path.join(__dirname, `db/.tgu_status_${name}.json`);
+        const statusFilePath = path.join(process.env.DATA_DIR || __dirname, `db/.tgu_status_${name}.json`);
         let runtimeStatus = null;
         if (fs.existsSync(statusFilePath)) {
             try { runtimeStatus = JSON.parse(fs.readFileSync(statusFilePath, 'utf8')); } catch (_) {}
@@ -1084,7 +1088,7 @@ app.post('/api/accounts/create-tg-user', (req, res) => {
         saveRateLimit(id, cfg);
 
         // 写入 ecosystem.config.js
-        const ecoPath = path.join(__dirname, 'ecosystem.config.js');
+        const ecoPath = path.join(process.env.DATA_DIR || __dirname, 'ecosystem.config.js');
         if (fs.existsSync(ecoPath)) {
             let eco = fs.readFileSync(ecoPath, 'utf8');
             if (!eco.includes(workerName)) {
@@ -1099,8 +1103,6 @@ app.post('/api/accounts/create-tg-user', (req, res) => {
       env: {
         NODE_ENV: "production",
         TG_ACCOUNT_NAME: "${id}",
-        TG_API_ID: "${api_id}",
-        TG_API_HASH: "${api_hash}",
         TG_WARMUP_SECONDS: "${cfg.warmup_seconds}",
         TG_DAILY_LIMIT: "${cfg.daily_limit}",
         TG_BATCH_SIZE: "${cfg.batch_size}",
@@ -1111,20 +1113,23 @@ app.post('/api/accounts/create-tg-user', (req, res) => {
       }
     },\n    // --- Web UI Server ---`;
                 eco = eco.replace('// --- Web UI Server ---', insertStr);
-                fs.writeFileSync(ecoPath, eco);
+                safeWriteEcosystem(eco);
             }
         }
 
         // 初始化账号数据库记录
         db.prepare(`INSERT OR REPLACE INTO accounts (id, platform, status, updated_at) VALUES (?, 'telegram', 'idle', datetime('now'))`).run(`tgu-${id}`);
 
-        // 启动 PM2 进程
+        // 启动 PM2 进程（仅传递必要环境变量，不展开 process.env 防止凭据泄漏）
         const { spawn, exec } = require('child_process');
+        const accountKey = id.toUpperCase().replace(/-/g, '_');
         const spawnEnv = {
-            ...process.env,
+            PATH: process.env.PATH,
+            HOME: process.env.HOME,
+            NODE_ENV: 'production',
             TG_ACCOUNT_NAME: id,
-            TG_API_ID: String(api_id),
-            TG_API_HASH: api_hash,
+            [`TG_API_ID_${accountKey}`]: String(api_id),
+            [`TG_API_HASH_${accountKey}`]: api_hash,
             TG_WARMUP_SECONDS: String(cfg.warmup_seconds),
             TG_DAILY_LIMIT: String(cfg.daily_limit),
             TG_BATCH_SIZE: String(cfg.batch_size),
@@ -1166,7 +1171,7 @@ app.post('/api/accounts/create-teams', (req, res) => {
         db.prepare(`INSERT OR REPLACE INTO accounts (id, platform, status) VALUES (?, 'teams', 'initializing')`).run(accountKey);
 
         // 写入 ecosystem.config.js
-        const ecoPath = path.join(__dirname, 'ecosystem.config.js');
+        const ecoPath = path.join(process.env.DATA_DIR || __dirname, 'ecosystem.config.js');
         if (fs.existsSync(ecoPath)) {
             let eco = fs.readFileSync(ecoPath, 'utf8');
             const insertStr = `    {
@@ -1180,13 +1185,13 @@ app.post('/api/accounts/create-teams', (req, res) => {
     },\n    // --- Web UI Server ---`;
             if (eco.includes('// --- Web UI Server ---') && !eco.includes(workerName)) {
                 eco = eco.replace('// --- Web UI Server ---', insertStr);
-                fs.writeFileSync(ecoPath, eco, 'utf8');
+                safeWriteEcosystem(eco);
             }
         }
 
         // 启动 Worker（首次需要用户登录，Worker 检测到需要登录后会发运维告警）
         exec(`npx pm2 start ./workers/worker-teams.js --name "${workerName}" --max-memory-restart 600M -- --env ACCOUNT_NAME=${id}`, {
-            env: { ...process.env, ACCOUNT_NAME: id },
+            env: { PATH: process.env.PATH, HOME: process.env.HOME, NODE_ENV: 'production', ACCOUNT_NAME: id },
             cwd: __dirname
         }, (err, stdout, stderr) => {
             if (err) {
@@ -1208,7 +1213,7 @@ app.post('/api/accounts/create-teams', (req, res) => {
  */
 app.get('/api/teams/chats/:name', (req, res) => {
     const { name } = req.params;
-    const chatsCachePath = path.join(__dirname, `teams-profile-${name}`, 'chats-cache.json');
+    const chatsCachePath = path.join(process.env.DATA_DIR || __dirname, `teams-profile-${name}`, 'chats-cache.json');
     if (!fs.existsSync(chatsCachePath)) {
         return res.json({ success: true, chats: [], message: '暂无缓存，请确认账号已成功登录' });
     }
@@ -1233,17 +1238,7 @@ app.post('/api/teams/whitelist/:name', (req, res) => {
     const value = Array.isArray(chatIds) ? chatIds.join(',') : '';
 
     try {
-        // 写入 .env 文件
-        const envPath = path.join(__dirname, '.env');
-        let envContent = fs.existsSync(envPath) ? fs.readFileSync(envPath, 'utf8') : '';
-        const regex = new RegExp(`^${envKey}=.*$`, 'm');
-        if (regex.test(envContent)) {
-            envContent = envContent.replace(regex, `${envKey}=${value}`);
-        } else {
-            envContent += `\n${envKey}=${value}`;
-        }
-        fs.writeFileSync(envPath, envContent, 'utf8');
-
+        writeEnvKeys({ [envKey]: value });
         res.json({ success: true, message: `白名单已设置，共 ${chatIds?.length || 0} 个群聊` });
     } catch (e) {
         res.status(500).json({ success: false, error: e.message });
@@ -1256,9 +1251,9 @@ app.post('/api/teams/whitelist/:name', (req, res) => {
  */
 app.post('/api/teams/backfill/:name/start', (req, res) => {
     const { name } = req.params;
-    const flagPath = path.join(__dirname, `teams-profile-${name}`, 'backfill.flag');
+    const flagPath = path.join(process.env.DATA_DIR || __dirname, `teams-profile-${name}`, 'backfill.flag');
     try {
-        const profileDir = path.join(__dirname, `teams-profile-${name}`);
+        const profileDir = path.join(process.env.DATA_DIR || __dirname, `teams-profile-${name}`);
         if (!fs.existsSync(profileDir)) fs.mkdirSync(profileDir, { recursive: true });
         fs.writeFileSync(flagPath, JSON.stringify({ action: 'start', days: req.body.days || 7, ts: Date.now() }));
         res.json({ success: true, message: '回溯指令已发送，Worker 将在下次轮询时开始回溯' });
@@ -1273,7 +1268,7 @@ app.post('/api/teams/backfill/:name/start', (req, res) => {
  */
 app.post('/api/teams/backfill/:name/pause', (req, res) => {
     const { name } = req.params;
-    const flagPath = path.join(__dirname, `teams-profile-${name}`, 'backfill.flag');
+    const flagPath = path.join(process.env.DATA_DIR || __dirname, `teams-profile-${name}`, 'backfill.flag');
     try {
         fs.writeFileSync(flagPath, JSON.stringify({ action: 'pause', ts: Date.now() }));
         res.json({ success: true, message: '回溯已暂停' });
@@ -1300,6 +1295,355 @@ app.post('/api/teams/relogin/:name', async (req, res) => {
     }
 });
 
+// ─── 价值标签配置 API ────────────────────────────────────────────
+
+// GET /api/config/value-labels — 读取所有账号及群组的价值标签
+app.get('/api/config/value-labels', (req, res) => {
+    try {
+        const config = JSON.parse(fs.readFileSync(ACCOUNT_REGIONS_PATH, 'utf8'));
+        const accounts = (config.accounts || []).map(a => ({
+            account: a.account,
+            region: a.region,
+            business_sector: a.business_sector || '',
+            platform: a.platform,
+            value_label: a.value_label || 'L1',
+            description: a.description || '',
+        }));
+        const groupOverrides = config._group_overrides || {};
+        const guide = config._value_label_guide || {};
+        res.json({ success: true, data: { accounts, group_overrides: groupOverrides, guide } });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// POST /api/config/value-labels — 更新价值标签（账号或群覆盖）
+// body: { type: 'account'|'group', key: 'wa-xxx'|'群名', value_label: 'L0'|'L1'|'L2'|'L3', reason?: '' }
+app.post('/api/config/value-labels', (req, res) => {
+    const { type, key, value_label, reason } = req.body;
+    if (!type || !key || !value_label) {
+        return res.status(400).json({ success: false, error: '缺少 type / key / value_label 字段' });
+    }
+    if (!['account', 'group'].includes(type)) {
+        return res.status(400).json({ success: false, error: 'type 必须是 account 或 group' });
+    }
+    if (!/^L[0-3]$/.test(value_label)) {
+        return res.status(400).json({ success: false, error: 'value_label 必须是 L0/L1/L2/L3' });
+    }
+    console.log('[value-labels] POST body:', JSON.stringify(req.body));
+    try {
+        const config = JSON.parse(fs.readFileSync(ACCOUNT_REGIONS_PATH, 'utf8'));
+        if (type === 'account') {
+            const accounts = config.accounts || [];
+            const idx = accounts.findIndex(a => a.account === key);
+            if (idx < 0) {
+                console.warn('[value-labels] 账号 %s 不存在', key);
+                return res.status(404).json({ success: false, error: `账号 ${key} 不存在` });
+            }
+            accounts[idx].value_label = value_label;
+            config.accounts = accounts;
+        } else {
+            // group override
+            if (!config._group_overrides) config._group_overrides = {};
+            config._group_overrides[key] = { value_label, reason: reason || '' };
+        }
+        fs.writeFileSync(ACCOUNT_REGIONS_PATH, JSON.stringify(config, null, 2), 'utf8');
+        console.log('[value-labels] ✅ 已更新 %s=%s → %s', type, key, value_label);
+        res.json({ success: true, message: `已更新 ${type}=${key} → ${value_label}` });
+    } catch (err) {
+        console.error('[value-labels] 写入失败:', err.message);
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// DELETE /api/config/value-labels — 删除群覆盖标签（恢复为账号级标签）
+// body: { type: 'group', key: '群名' }
+app.delete('/api/config/value-labels', (req, res) => {
+    const { type, key } = req.body;
+    if (type !== 'group' || !key) {
+        return res.status(400).json({ success: false, error: '当前仅支持删除群覆盖标签 (type=group)' });
+    }
+    try {
+        const config = JSON.parse(fs.readFileSync(ACCOUNT_REGIONS_PATH, 'utf8'));
+        if (config._group_overrides?.[key]) {
+            delete config._group_overrides[key];
+            fs.writeFileSync(ACCOUNT_REGIONS_PATH, JSON.stringify(config, null, 2), 'utf8');
+            res.json({ success: true, message: `已删除群覆盖标签：${key}` });
+        } else {
+            res.status(404).json({ success: false, error: `群覆盖标签 ${key} 不存在` });
+        }
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// ─── QA 知识库 API ──────────────────────────────────────────────
+
+// GET /api/knowledge-base — 搜索 QA 知识库
+app.get('/api/knowledge-base', (req, res) => {
+    try {
+        const adb = getAnalyticsDb();
+        if (!adb) return res.json({ success: true, data: [], total: 0 });
+
+        const { keyword, sector, page, limit } = req.query;
+        const pageNum = Math.max(1, parseInt(page) || 1);
+        const limitNum = Math.min(100, Math.max(1, parseInt(limit) || 20));
+        const offset = (pageNum - 1) * limitNum;
+
+        let sql = 'SELECT * FROM qa_knowledge_base WHERE 1=1';
+        const params = [];
+
+        if (keyword) {
+            sql += ' AND (question_summary LIKE ? OR question_keywords LIKE ? OR question_type LIKE ?)';
+            const kw = `%${keyword}%`;
+            params.push(kw, kw, kw);
+        }
+        if (sector) {
+            sql += ' AND business_sector = ?';
+            params.push(sector);
+        }
+
+        const countSql = sql.replace('SELECT *', 'SELECT COUNT(*) as total');
+        const { total } = adb.prepare(countSql).get(...params);
+
+        sql += ' ORDER BY confidence DESC, frequency DESC LIMIT ? OFFSET ?';
+        params.push(limitNum, offset);
+
+        const rows = adb.prepare(sql).all(...params);
+
+        res.json({
+            success: true,
+            data: rows.map(r => ({
+                ...r,
+                answer_steps: (r.answer_pattern || '').split('\n').filter(Boolean),
+                question_keywords: (r.question_keywords || '').split(/[,，]/).map(k => k.trim()).filter(Boolean),
+            })),
+            total,
+            page: pageNum,
+            limit: limitNum,
+        });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// GET /api/knowledge-base/sectors — 获取所有板块列表（用于筛选下拉）
+app.get('/api/knowledge-base/sectors', (req, res) => {
+    try {
+        const adb = getAnalyticsDb();
+        if (!adb) return res.json({ success: true, data: [] });
+        const rows = adb.prepare(
+            'SELECT DISTINCT business_sector FROM qa_knowledge_base WHERE business_sector IS NOT NULL ORDER BY business_sector'
+        ).all();
+        res.json({ success: true, data: rows.map(r => r.business_sector) });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// ─── 供应商画像 API ──────────────────────────────────────────────
+
+// GET /api/supplier-profiles — 供应商画像列表（支持排序和筛选）
+app.get('/api/supplier-profiles', (req, res) => {
+    try {
+        const adb = getAnalyticsDb();
+        if (!adb) return res.json({ success: true, data: [], total: 0 });
+
+        const { sector, region, sort, page, limit } = req.query;
+        const pageNum = Math.max(1, parseInt(page) || 1);
+        const limitNum = Math.min(50, Math.max(1, parseInt(limit) || 20));
+        const offset = (pageNum - 1) * limitNum;
+
+        let sql = 'SELECT * FROM supplier_profiles WHERE 1=1';
+        const params = [];
+
+        if (sector) { sql += ' AND business_sector = ?'; params.push(sector); }
+        if (region) { sql += ' AND region = ?'; params.push(region); }
+
+        const orderCols = {
+            score: 'reliability_score DESC',
+            issues: 'total_issues DESC',
+            response: 'avg_response_mins ASC',
+            commitment: 'commitment_rate DESC',
+        };
+        sql += ' ORDER BY ' + (orderCols[sort] || 'reliability_score DESC');
+
+        const countSql = sql.replace(/SELECT \*/, 'SELECT COUNT(*) as total')
+            .replace(/ ORDER BY .*/, '');
+        const { total } = adb.prepare(countSql).get(...params);
+
+        sql += ' LIMIT ? OFFSET ?';
+        params.push(limitNum, offset);
+
+        const rows = adb.prepare(sql).all(...params);
+
+        res.json({
+            success: true,
+            data: rows.map(r => ({
+                ...r,
+                top_issue_types: JSON.parse(r.top_issue_types || '[]'),
+                active_hours: JSON.parse(r.active_hours || '{}'),
+            })),
+            total, page: pageNum, limit: limitNum,
+        });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// GET /api/supplier-profiles/sectors — 获取有画像的板块列表（必须放在 :groupName 之前）
+app.get('/api/supplier-profiles/sectors', (req, res) => {
+    try {
+        const adb = getAnalyticsDb();
+        if (!adb) return res.json({ success: true, data: [] });
+        const rows = adb.prepare(
+            'SELECT DISTINCT business_sector FROM supplier_profiles WHERE business_sector IS NOT NULL ORDER BY business_sector'
+        ).all();
+        res.json({ success: true, data: rows.map(r => r.business_sector) });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// GET /api/supplier-profiles/:groupName — 单个供应商详情
+app.get('/api/supplier-profiles/:groupName', (req, res) => {
+    try {
+        const adb = getAnalyticsDb();
+        if (!adb) return res.status(503).json({ success: false, error: 'analytics 不可用' });
+
+        const groupName = decodeURIComponent(req.params.groupName);
+        const profile = adb.prepare('SELECT * FROM supplier_profiles WHERE group_name = ?').get(groupName);
+        if (!profile) return res.status(404).json({ success: false, error: '供应商未找到' });
+
+        // 近期告警
+        const recentAlerts = adb.prepare(`
+            SELECT alert_level, trigger_type, trigger_keywords, created_at
+            FROM alert_records WHERE group_name = ? ORDER BY created_at DESC LIMIT 10
+        `).all(groupName);
+
+        // 近期 channel_quality_metrics (最近30天)
+        const qualityMetrics = adb.prepare(`
+            SELECT metric_date, metric_type, metric_value
+            FROM channel_quality_metrics
+            WHERE group_name = ? AND metric_date >= ?
+            ORDER BY metric_date DESC, metric_type
+            LIMIT 100
+        `).all(groupName, new Date(Date.now() - 30 * 24 * 3600 * 1000).toISOString().split('T')[0]);
+
+        res.json({
+            success: true,
+            data: {
+                ...profile,
+                top_issue_types: JSON.parse(profile.top_issue_types || '[]'),
+                active_hours: JSON.parse(profile.active_hours || '{}'),
+                ai_attitude_tags: JSON.parse(profile.ai_attitude_tags || '[]'),
+                ai_insight_tags: JSON.parse(profile.ai_insight_tags || '[]'),
+                ai_insight_summary: profile.ai_insight_summary || '',
+                ai_sub_scores: JSON.parse(profile.ai_sub_scores || '{}'),
+                ai_avg_turns: profile.ai_avg_turns,
+                ai_fcr: profile.ai_fcr,
+                ai_tech_contact: profile.ai_tech_contact,
+                ai_tech_reply_rate: profile.ai_tech_reply_rate,
+                ai_planned_maintenance_pct: profile.ai_planned_maintenance_pct,
+                ai_profile_version: profile.ai_profile_version,
+                recent_alerts: recentAlerts,
+                quality_metrics: qualityMetrics,
+            },
+        });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// ─── 5.2 设备知识图谱 API ─────────────────────────────────────────
+// GET /api/device-kb — 查询设备知识库
+app.get('/api/device-kb', (req, res) => {
+    try {
+        const adb = getAnalyticsDb();
+        if (!adb) return res.json({ success: true, data: [], total: 0 });
+        const { keyword, category, page, limit } = req.query;
+        const pageNum = Math.max(1, parseInt(page) || 1);
+        const limitNum = Math.min(50, Math.max(1, parseInt(limit) || 20));
+        const offset = (pageNum - 1) * limitNum;
+
+        let where = 'WHERE 1=1';
+        const params = [];
+        if (keyword) {
+            where += ' AND (device_model LIKE ? OR fault_symptom LIKE ? OR solution_steps LIKE ?)';
+            const kw = `%${keyword}%`;
+            params.push(kw, kw, kw);
+        }
+        if (category) { where += ' AND fault_category = ?'; params.push(category); }
+
+        const total = adb.prepare(`SELECT COUNT(*) AS c FROM device_knowledge_graph ${where}`).get(...params)?.c || 0;
+        const rows = adb.prepare(
+            `SELECT * FROM device_knowledge_graph ${where} ORDER BY frequency DESC, last_seen_at DESC LIMIT ? OFFSET ?`
+        ).all(...params, limitNum, offset);
+        res.json({ success: true, data: rows, total, page: pageNum, pages: Math.ceil(total / limitNum) });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// GET /api/device-kb/categories — 设备故障分类列表
+app.get('/api/device-kb/categories', (req, res) => {
+    try {
+        const adb = getAnalyticsDb();
+        if (!adb) return res.json({ success: true, data: [] });
+        const rows = adb.prepare(
+            'SELECT DISTINCT fault_category FROM device_knowledge_graph WHERE fault_category IS NOT NULL ORDER BY fault_category'
+        ).all();
+        res.json({ success: true, data: rows.map(r => r.fault_category) });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// ─── 5.3 内容模板库 API ───────────────────────────────────────────
+// GET /api/content-templates — 查询内容模板库
+app.get('/api/content-templates', (req, res) => {
+    try {
+        const adb = getAnalyticsDb();
+        if (!adb) return res.json({ success: true, data: [], total: 0 });
+        const { keyword, customer, type, page, limit } = req.query;
+        const pageNum = Math.max(1, parseInt(page) || 1);
+        const limitNum = Math.min(50, Math.max(1, parseInt(limit) || 20));
+        const offset = (pageNum - 1) * limitNum;
+
+        let where = 'WHERE 1=1';
+        const params = [];
+        if (keyword) {
+            where += ' AND (template_content LIKE ? OR compliance_notes LIKE ?)';
+            const kw = `%${keyword}%`;
+            params.push(kw, kw);
+        }
+        if (customer) { where += ' AND customer_name = ?'; params.push(customer); }
+        if (type) { where += ' AND template_type = ?'; params.push(type); }
+
+        const total = adb.prepare(`SELECT COUNT(*) AS c FROM content_template_lib ${where}`).get(...params)?.c || 0;
+        const rows = adb.prepare(
+            `SELECT * FROM content_template_lib ${where} ORDER BY frequency DESC, last_seen_at DESC LIMIT ? OFFSET ?`
+        ).all(...params, limitNum, offset);
+        res.json({ success: true, data: rows, total, page: pageNum, pages: Math.ceil(total / limitNum) });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// GET /api/content-templates/customers — 客户列表
+app.get('/api/content-templates/customers', (req, res) => {
+    try {
+        const adb = getAnalyticsDb();
+        if (!adb) return res.json({ success: true, data: [] });
+        const rows = adb.prepare(
+            'SELECT DISTINCT customer_name FROM content_template_lib WHERE customer_name IS NOT NULL ORDER BY customer_name'
+        ).all();
+        res.json({ success: true, data: rows.map(r => r.customer_name) });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
 app.listen(PORT, () => {
     console.log(`🌐 Social Monitor UI Server listening on http://localhost:${PORT}`);
 });
@@ -1318,5 +1662,11 @@ process.on('uncaughtException', (err) => {
 
 process.on('unhandledRejection', (reason) => {
     console.error('[server] unhandledRejection:', reason);
+});
+
+process.on('SIGINT', () => {
+    console.log('[server] SIGINT 收到，正在优雅关闭...');
+    if (_analyticsDb) { try { _analyticsDb.close(); } catch (_) {} }
+    process.exit(0);
 });
 

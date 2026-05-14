@@ -24,8 +24,12 @@ const fs = require('fs');
 const Database = require('better-sqlite3');
 const dingtalk = require('../lib/dingtalk');
 const aiClient = require('../lib/ai-client');
+const { getRegionInfo, getValueLabel } = require('../lib/region-config');
 
-const ROOT = path.resolve(__dirname, '..');
+// 向后兼容别名
+const getRegionLabel = getRegionInfo;
+
+const ROOT = process.env.DATA_DIR || path.resolve(__dirname, '..');
 
 // ─── 数据库连接 ──────────────────────────────────────────────────
 const sourceDb = new Database(path.join(ROOT, 'db', 'database.sqlite'), { readonly: true });
@@ -34,43 +38,53 @@ sourceDb.pragma('journal_mode = WAL');
 const analyticsDb = new Database(path.join(ROOT, 'db', 'analytics.sqlite'));
 analyticsDb.pragma('journal_mode = WAL');
 
-// ─── 区域配置（热加载，60秒缓存）──────────────────────────────
-const REGION_CONFIG_PATH = path.join(ROOT, 'config', 'account-regions.json');
-let _regionMap = null;
-let _regionMapLoadedAt = 0;
-
-function getRegionMap() {
-  const now = Date.now();
-  if (_regionMap && now - _regionMapLoadedAt < 60 * 1000) return _regionMap;
-  try {
-    const cfg = JSON.parse(fs.readFileSync(REGION_CONFIG_PATH, 'utf8'));
-    _regionMap = Object.fromEntries(cfg.accounts.map((a) => [a.account, a]));
-    _regionMapLoadedAt = now;
-  } catch (e) {
-    console.error('[supplier-analyzer] 重载 account-regions.json 失败:', e.message);
-    if (!_regionMap) _regionMap = {};
-  }
-  return _regionMap;
-}
-
-// 保持向后兼容的常量引用（实际通过 getRegionMap() 获取最新值）
-const REGION_MAP = new Proxy({}, { get: (_, k) => getRegionMap()[k] });
+// 区域配置由 lib/region-config.js 统一管理
 
 // ─── 关键词规则库（基于实测数据）────────────────────────────────
 
 // 🔴 P0：组合词，极低误报，直接触发
-const P0_PATTERNS = [
+// 通用 P0（所有板块适用）
+const P0_COMMON = [
   /send\s+failed/i,
   /0%\s+deliver(?:y|ed)/i,
   /0%\s+success/i,
   /not\s+working/i,
   /bind\s+is\s+down/i,
-  /route\s+down/i,
   /service\s+down/i,
   /completely\s+down/i,
   /failed\s+to\s+deliver/i,
   /delivery\s+rate\s+(?:is\s+)?0%/i,
 ];
+
+// 按板块专属 P0 规则
+const P0_BY_SECTOR = {
+  '设备供应商': [
+    /(?:device|goip|modem|gateway).*completely\s+down/i,
+    /all\s+ports?\s+(?:down|not\s+working|failed)/i,
+    /IMEI\s+(?:changed|unknown|blocked)/i,
+  ],
+  '直连供应商': [
+    /0%\s+(?:delivery|success|click)/i,
+    /route\s+(?:completely\s+)?(?:down|blocked|suspended)/i,
+    /all\s+(?:SMS|messages?)\s+(?:blocked|failed|rejected)/i,
+  ],
+  '语音直连供应商': [
+    /\b503\b.*(?:error|code|SIP)/i,
+    /ASR\s+(?:drop|down|zero|0%|below)/i,
+    /SIP\s+trunk\s+(?:down|unreachable|failed)/i,
+  ],
+  '客服': [
+    /all\s+OTP.*(?:not\s+received?|failed|undelivered)/i,
+    /(?:operator|carrier|telco).*(?:blocked|banned|suspended)/i,
+    /(?:multiple|many|several|3\+?)\s+(?:numbers?|users?|players?).*(?:not\s+receiv|can'?t\s+receiv)/i,
+    /template\s+(?:rejected|blocked|banned|not\s+approved)/i,
+    /channel\s+(?:completely\s+)?(?:down|not\s+working|stopped)/i,
+    /content\s+(?:blocked|flagged|rejected)\s+by\s+(?:operator|carrier)/i,
+  ],
+  '卡线': [
+    /all\s+ports?\s+(?:down|not\s+working|failed)/i,
+  ],
+};
 
 // 🟠 P1：单词，需5分钟聚合+AI判断
 const P1_KEYWORDS = [
@@ -78,6 +92,15 @@ const P1_KEYWORDS = [
   'offline', 'blocked', 'suspended', 'rejected', 'undelivered',
   'timeout', 'disconnected', 'pending', 'not receiving',
 ];
+
+// 按板块专属 P1 关键词（在通用 P1 基础上叠加）
+const P1_BY_SECTOR = {
+  '设备供应商': ['disconnect', 'not responding', 'can\'t access', 'no signal', 'no network', 'stuck', 'freeze', '无法连接', '不工作', '打不开'],
+  '直连供应商': ['smsfw', 'spam filter', 'content blocked', 'DLR delay', 'low click', 'quality degrade', 'queue'],
+  '语音直连供应商': ['503', '486', '408', 'call failure', 'SBC', 'invite failed', 'no ring', 'one-way audio', 'concurrent exceeded'],
+  '客服': ['not receive', 'didn\'t receive', 'not delivered', 'template rejected', 'link blocked', 'channel down', 'did not receive', 'haven\'t received', 'still waiting'],
+  '卡线': [],
+};
 
 // ✅ 闭环词（用于 issue-lifecycle-tracker，此处仅用于SID检测）
 const CLOSE_PATTERNS = [
@@ -101,19 +124,37 @@ const COMMITMENT_PATTERNS = [
 const { isInternalStaff } = require('../lib/staff-detector');
 
 // ─── 关键词匹配 ──────────────────────────────────────────────────
-function matchP0(content) {
+function matchP0(content, sector) {
   if (!content) return null;
-  for (const pattern of P0_PATTERNS) {
+  // 通用 P0（所有板块）
+  for (const pattern of P0_COMMON) {
     const m = content.match(pattern);
     if (m) return m[0];
+  }
+  // 板块专属 P0
+  const sectorPatterns = P0_BY_SECTOR[sector];
+  if (sectorPatterns) {
+    for (const pattern of sectorPatterns) {
+      const m = content.match(pattern);
+      if (m) return m[0];
+    }
   }
   return null;
 }
 
-function matchP1Keywords(content) {
+function matchP1Keywords(content, sector) {
   if (!content) return [];
   const lower = content.toLowerCase();
-  return P1_KEYWORDS.filter((kw) => lower.includes(kw));
+  const hits = P1_KEYWORDS.filter((kw) => lower.includes(kw));
+  // 叠加板块专属 P1 关键词
+  if (sector && P1_BY_SECTOR[sector]) {
+    for (const kw of P1_BY_SECTOR[sector]) {
+      if (lower.includes(kw.toLowerCase()) && !hits.includes(kw)) {
+        hits.push(kw);
+      }
+    }
+  }
+  return hits;
 }
 
 function extractCommitment(content) {
@@ -167,11 +208,11 @@ function updateCursor(lastMsgId, lastTs) {
 // ─── 告警记录写入 ─────────────────────────────────────────────────
 const insertAlert = analyticsDb.prepare(`
   INSERT INTO alert_records
-    (source_msg_ids, group_name, group_id, region, receiver_account,
+    (source_msg_ids, group_name, group_id, region, business_sector, receiver_account,
      alert_level, trigger_type, trigger_keywords, ai_score, ai_title,
      ai_type, ai_action, ai_commitment, is_pushed, push_channel)
   VALUES
-    (@source_msg_ids, @group_name, @group_id, @region, @receiver_account,
+    (@source_msg_ids, @group_name, @group_id, @region, @business_sector, @receiver_account,
      @alert_level, @trigger_type, @trigger_keywords, @ai_score, @ai_title,
      @ai_type, @ai_action, @ai_commitment, @is_pushed, @push_channel)
 `);
@@ -183,12 +224,21 @@ const checkMsgAlerted = analyticsDb.prepare(`
   LIMIT 1
 `);
 
+// 同群同级别时间窗口去重：30分钟内不重复推送
+const DEDUP_WINDOW_MS = 30 * 60 * 1000;
+const checkRecentAlert = analyticsDb.prepare(`
+  SELECT id, source_msg_ids FROM alert_records
+  WHERE group_name = ? AND alert_level = ? AND is_pushed = 1
+    AND created_at > datetime('now', '+8 hours', '-30 minutes')
+  ORDER BY created_at DESC LIMIT 1
+`);
+
 const insertIssue = analyticsDb.prepare(`
   INSERT INTO issue_records
-    (alert_id, group_name, group_id, region, issue_type, status,
+    (alert_id, group_name, group_id, region, business_sector, issue_type, status,
      opened_at, commitment_text, commitment_due, recurrence_count)
   VALUES
-    (@alert_id, @group_name, @group_id, @region, @issue_type, 'open',
+    (@alert_id, @group_name, @group_id, @region, @business_sector, @issue_type, 'open',
      @opened_at, @commitment_text, @commitment_due, @recurrence_count)
 `);
 
@@ -197,14 +247,6 @@ function getRecurrenceCount(groupName, issueType) {
     .prepare('SELECT COUNT(*) AS cnt FROM issue_records WHERE group_name = ? AND issue_type = ?')
     .get(groupName, issueType);
   return (row?.cnt || 0) + 1;
-}
-
-// ─── 区域路由 ────────────────────────────────────────────────────
-function getRegionInfo(receiverAccount) {
-  return REGION_MAP[`wa-${receiverAccount}`] ||
-         REGION_MAP[`tg-${receiverAccount}`] ||
-         REGION_MAP[receiverAccount] ||
-         { region: '未知区', owner: null, owner_dingtalk_id: '', platform: 'wa' };
 }
 
 // ─── 告警消息格式化 ───────────────────────────────────────────────
@@ -258,6 +300,7 @@ function buildNoResponseContent(msg, regionInfo, minutesElapsed) {
 // 内存缓存：{ groupId: [{ msg, keywords, ts }] }
 const p1Windows = new Map();
 const WINDOW_MS = 5 * 60 * 1000;
+const MAX_P1_WINDOWS = 200;
 
 function flushExpiredWindows() {
   const now = Date.now();
@@ -266,12 +309,95 @@ function flushExpiredWindows() {
       p1Windows.delete(key);
     }
   }
+  // LRU 淘汰：超过容量上限时删除最旧的条目
+  if (p1Windows.size > MAX_P1_WINDOWS) {
+    let oldestKey = null;
+    let oldestTs = Infinity;
+    for (const [key, items] of p1Windows) {
+      if (items.length > 0 && items[0].ts < oldestTs) {
+        oldestTs = items[0].ts;
+        oldestKey = key;
+      }
+    }
+    if (oldestKey) p1Windows.delete(oldestKey);
+  }
 }
 
 // ─── 无响应检测状态 ──────────────────────────────────────────────
 // { groupId: { firstExternalTs, alerted } }
 const noResponseState = new Map();
 const NO_RESPONSE_MS = 15 * 60 * 1000;
+
+// ─── P0 上下文窗口（查询触发消息前 15 条）───────────────────────────
+const getContextWindow = sourceDb.prepare(`
+  SELECT id, sender_name, content, timestamp
+  FROM messages
+  WHERE (group_id = ? OR group_name = ?)
+    AND id < ?
+    AND content IS NOT NULL AND content != ''
+  ORDER BY id DESC
+  LIMIT 15
+`);
+
+const p0ValidationCache = new Map(); // key: groupId, value: { ts, result }
+const P0_CACHE_TTL = 2 * 60 * 1000;
+
+function buildP0ContextPrompt(msg, keyword, contextMsgs) {
+  const contextBlock = contextMsgs.map(m => {
+    const t = new Date(m.timestamp).toLocaleTimeString('zh-CN', { timeZone: 'Asia/Shanghai' });
+    return `[${t}] ${m.sender_name}: ${m.content}`;
+  }).join('\n');
+
+  return `你是ITNIO告警风控引擎的上下文分析器。
+
+触发关键词："${keyword}"
+触发消息：[${msg.sender_name}]: ${msg.content}
+
+该群前15条消息（时间正序）：
+---
+${contextBlock}
+---
+
+请判断：
+1. 这是新发生的故障报告，还是对历史问题的讨论/确认？
+2. 如果是新故障，严重程度是 p0（全群/全通道故障）还是 p1（局部/单客户）？
+3. 如果是对历史问题的讨论，是否表明问题已经恢复？
+
+严格JSON输出：
+{"is_genuine_alert":true/false,"reason":"一句话原因","severity":"p0"/"p1"/"false_alarm","affected_scope":"全群"/"单客户"/"未知"}`;
+}
+
+async function validateP0WithContext(msg, keyword) {
+  const cacheKey = msg.group_id || msg.group_name;
+  const cached = p0ValidationCache.get(cacheKey);
+  if (cached && (Date.now() - cached.ts < P0_CACHE_TTL)) {
+    return cached.result;
+  }
+
+  const contextMsgs = getContextWindow.all(
+    msg.group_id || '', msg.group_name, msg.id
+  ).reverse(); // 转为时间正序
+
+  if (contextMsgs.length === 0) {
+    const result = { is_genuine_alert: true, reason: '无上下文，默认放行', severity: 'p0' };
+    p0ValidationCache.set(cacheKey, { ts: Date.now(), result });
+    return result;
+  }
+
+  const prompt = buildP0ContextPrompt(msg, keyword, contextMsgs);
+  try {
+    const text = await aiClient.callAI(prompt);
+    const result = aiClient.extractJSON(text);
+    const final = result || { is_genuine_alert: true, reason: 'AI解析失败，默认放行', severity: 'p0' };
+    p0ValidationCache.set(cacheKey, { ts: Date.now(), result: final });
+    return final;
+  } catch (err) {
+    if (err.message === 'AI_DEGRADED') {
+      return { is_genuine_alert: true, reason: 'AI降级，关键词放行', severity: 'p0' };
+    }
+    return { is_genuine_alert: true, reason: 'AI异常，默认放行', severity: 'p0' };
+  }
+}
 
 // ─── 主处理函数 ───────────────────────────────────────────────────
 async function processNewMessages() {
@@ -295,16 +421,28 @@ async function processNewMessages() {
   const externalMsgs = newMsgs.filter((m) => !isInternalStaff(m.sender_name));
   const internalMsgs = newMsgs.filter((m) => isInternalStaff(m.sender_name));
 
-  // ── Step 1: P0 直接推送 ──
+  // ── Step 1: P0 直接推送（含板块专属规则）──
   for (const msg of externalMsgs) {
-    const keyword = matchP0(msg.content);
+    const regionInfo = getRegionInfo(msg.receiver_account);
+    // L3 群静默，不触发任何告警
+    const label = getValueLabel(msg.receiver_account, msg.group_name);
+    if (label === 'L3') continue;
+
+    const keyword = matchP0(msg.content, regionInfo.business_sector);
     if (!keyword) continue;
 
     // 去重：同一条消息已触发过 P0 告警则跳过
     const alreadyAlerted = checkMsgAlerted.get(`%${msg.id}%`);
     if (alreadyAlerted) continue;
 
-    const regionInfo = getRegionInfo(msg.receiver_account);
+    // P0 上下文AI二次验证（新故障 vs 历史讨论）
+    const validation = await validateP0WithContext(msg, keyword);
+    if (!validation.is_genuine_alert) {
+      console.log(`[P0-SUPPRESSED] ${msg.group_name} | keyword=${keyword} | reason=${validation.reason}`);
+      continue;
+    }
+    const severity = validation.severity === 'p1' ? 'p1' : 'p0';
+
     const commitment = extractCommitment(msg.content);
 
     // 写告警记录
@@ -313,8 +451,9 @@ async function processNewMessages() {
       group_name: msg.group_name,
       group_id: msg.group_id,
       region: regionInfo.region,
+      business_sector: regionInfo.business_sector || null,
       receiver_account: msg.receiver_account,
-      alert_level: 'p0',
+      alert_level: severity,
       trigger_type: 'keyword',
       trigger_keywords: keyword,
       ai_score: null,
@@ -332,12 +471,22 @@ async function processNewMessages() {
       group_name: msg.group_name,
       group_id: msg.group_id,
       region: regionInfo.region,
+      business_sector: regionInfo.business_sector || null,
       issue_type: '通道故障',
       opened_at: msg.timestamp,
       commitment_text: commitment,
       commitment_due: commitment ? parseCommitmentDeadline(commitment) : null,
       recurrence_count: recurrence,
     });
+
+    // 同群同级别30分钟去重：已有推送则跳过，仅追加消息ID到已有记录
+    const recentP0 = checkRecentAlert.get(msg.group_name, 'p0');
+    if (recentP0) {
+      const mergedIds = recentP0.source_msg_ids.replace(/]$/, `,${msg.id}]`);
+      analyticsDb.prepare('UPDATE alert_records SET source_msg_ids = ? WHERE id = ?').run(mergedIds, recentP0.id);
+      console.log(`[P0-DEDUP] ${msg.group_name} | 30分钟内已有P0推送，跳过 | 合并msg ${msg.id}`);
+      continue;
+    }
 
     // 推送
     const content = buildP0AlertContent(msg, keyword, regionInfo);
@@ -353,7 +502,13 @@ async function processNewMessages() {
 
   // ── Step 2: P1 窗口聚合 ──
   for (const msg of externalMsgs) {
-    const kws = matchP1Keywords(msg.content);
+    // L2/L3 群不触发 P1 聚合（L2 仅 P0，L3 全静默）
+    const label = getValueLabel(msg.receiver_account, msg.group_name);
+    if (label === 'L2' || label === 'L3') continue;
+
+    const regionInfoP1 = getRegionLabel(msg.receiver_account);
+    const sectorP1 = regionInfoP1.business_sector || '';
+    const kws = matchP1Keywords(msg.content, sectorP1);
     if (kws.length === 0) continue;
 
     const key = msg.group_id || msg.group_name;
@@ -378,9 +533,14 @@ async function processNewMessages() {
     const displayName = `${regionInfo.region}-${firstMsg.group_name}`;
     const senderNames = [...new Set(msgs.map((m) => m.sender_name))];
 
+    // P1 上下文锚点：取窗口前 5 条消息作为对话背景
+    const contextAnchor = getContextWindow.all(
+      firstMsg.group_id || '', firstMsg.group_name, firstMsg.id
+    ).reverse();
+
     // 确定群类型
     const groupType = detectGroupType(firstMsg.group_name);
-    const aiResult = await aiClient.analyzeAlertMessages(displayName, groupType, msgs, senderNames);
+    const aiResult = await aiClient.analyzeAlertMessages(displayName, groupType, msgs, senderNames, contextAnchor);
 
     const finalScore = aiResult?.score ?? 6; // 降级时默认6
     if (finalScore < 7) continue;
@@ -393,6 +553,7 @@ async function processNewMessages() {
       group_name: firstMsg.group_name,
       group_id: firstMsg.group_id,
       region: regionInfo.region,
+      business_sector: regionInfo.business_sector || null,
       receiver_account: firstMsg.receiver_account,
       alert_level: 'p1',
       trigger_type: aiResult ? 'ai' : 'keyword',
@@ -403,7 +564,7 @@ async function processNewMessages() {
       ai_action: aiResult?.action ?? null,
       ai_commitment: commitment,
       is_pushed: 0,
-      push_channel: 'dingtalk_alert',
+      push_channel: 'dingtalk_alert'
     });
 
     const recurrence = getRecurrenceCount(firstMsg.group_name, issueType);
@@ -412,12 +573,23 @@ async function processNewMessages() {
       group_name: firstMsg.group_name,
       group_id: firstMsg.group_id,
       region: regionInfo.region,
+      business_sector: regionInfo.business_sector || null,
       issue_type: issueType,
       opened_at: firstMsg.timestamp,
       commitment_text: commitment,
       commitment_due: commitment ? parseCommitmentDeadline(commitment) : null,
       recurrence_count: recurrence,
     });
+
+    // 同群同级别30分钟去重
+    const recentP1 = checkRecentAlert.get(firstMsg.group_name, 'p1');
+    if (recentP1) {
+      const newIds = msgs.map(m => m.id);
+      const mergedIds = recentP1.source_msg_ids.replace(/]$/, ',' + newIds.join(',') + ']');
+      analyticsDb.prepare('UPDATE alert_records SET source_msg_ids = ? WHERE id = ?').run(mergedIds, recentP1.id);
+      console.log(`[P1-DEDUP] ${displayName} | 30分钟内已有P1推送，跳过 | 合并${msgs.length}条消息`);
+      continue;
+    }
 
     const content = buildP1AlertContent(firstMsg.group_name, regionInfo, aiResult || { score: finalScore, title: 'P1聚合告警', type: issueType, commitment, action: null }, msgs.length);
     await dingtalk.sendAlert({ title: `🟠 P1告警 ${displayName}`, content, platform: regionInfo.platform, region: regionInfo.region, alertType: 'P1' });
@@ -427,6 +599,9 @@ async function processNewMessages() {
 
   // ── Step 3: 无响应检测 ──
   for (const msg of externalMsgs) {
+    // L3 群不启动无响应检测
+    if (getValueLabel(msg.receiver_account, msg.group_name) === 'L3') continue;
+
     const key = msg.group_id || msg.group_name;
     if (!noResponseState.has(key)) {
       noResponseState.set(key, { firstExternalTs: now, firstMsg: msg, alerted: false });
@@ -461,9 +636,9 @@ async function processNewMessages() {
 
     const regionInfo = getRegionInfo(msg.receiver_account);
     analyticsDb.prepare(`
-      INSERT INTO sid_change_records (group_name, group_id, region, sender_name, sid_list, raw_content, source_msg_id, is_pushed)
-      VALUES (?, ?, ?, ?, ?, ?, ?, 0)
-    `).run(msg.group_name, msg.group_id, regionInfo.region, msg.sender_name, JSON.stringify(sids), msg.content.slice(0, 500), msg.id);
+      INSERT INTO sid_change_records (group_name, group_id, region, business_sector, sender_name, sid_list, raw_content, source_msg_id, is_pushed)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)
+    `).run(msg.group_name, msg.group_id, regionInfo.region, regionInfo.business_sector || null, msg.sender_name, JSON.stringify(sids), msg.content.slice(0, 500), msg.id);
 
     await dingtalk.sendSidChangeAlert({
       groupName: msg.group_name,
@@ -515,3 +690,10 @@ async function tick() {
 // ─── 启动 ────────────────────────────────────────────────────────
 console.log('[supplier-analyzer] 启动，分时轮询：高峰15s / 普通30s / 低谷60s');
 tick();
+
+process.on('SIGINT', () => {
+    console.log('[supplier-analyzer] SIGINT 收到，正在优雅关闭...');
+    try { sourceDb.close(); } catch (_) {}
+    try { analyticsDb.close(); } catch (_) {}
+    process.exit(0);
+});

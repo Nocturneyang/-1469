@@ -1,6 +1,10 @@
 node_modules/
 .env
 db/*.db
+db/*.sqlite
 db/.tgu_status_*.json
 teams-profile-*/
+whatsapp-session-*/
+.wwebjs_cache/
 *.png
+.DS_Store

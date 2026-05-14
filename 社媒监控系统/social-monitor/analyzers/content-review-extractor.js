@@ -15,7 +15,7 @@ const path = require('path');
 const fs = require('fs');
 const Database = require('better-sqlite3');
 
-const ROOT = path.resolve(__dirname, '..');
+const ROOT = process.env.DATA_DIR || path.resolve(__dirname, '..');
 
 const sourceDb = new Database(path.join(ROOT, 'db', 'database.sqlite'), { readonly: true });
 sourceDb.pragma('journal_mode = WAL');
@@ -63,13 +63,69 @@ function updateCursor(lastMsgId, lastTs) {
 const pendingReviews = new Map();
 const REVIEW_WINDOW_MS = 30 * 60 * 1000; // 30 分钟窗口等待 ITNIO 回复
 
+// ─── 内容模板库 ──────────────────────────────────────────────────
+let _templateTableReady = true;
+function ensureTemplateTable() {
+  if (!_templateTableReady) return false;
+  try {
+    analyticsDb.prepare('SELECT COUNT(*) FROM content_template_lib LIMIT 1').get();
+    try { analyticsDb.prepare('ALTER TABLE content_template_lib ADD COLUMN source_issue_id INTEGER').run(); } catch (_) {}
+    return true;
+  } catch (_) {
+    _templateTableReady = false;
+    return false;
+  }
+}
+
+function isTemplateExtracted(sourceMsgId) {
+  if (!ensureTemplateTable()) return true; // table missing, skip
+  const row = analyticsDb
+    .prepare('SELECT id FROM content_template_lib WHERE source_msg_ids LIKE ? LIMIT 1')
+    .get(`%${sourceMsgId}%`);
+  return !!row;
+}
+
+function saveTemplate(tmpl, groupName, msgIds) {
+  if (!ensureTemplateTable()) return null;
+  const result = analyticsDb.prepare(`
+    INSERT INTO content_template_lib
+      (customer_name, template_content, template_type, target_region, target_operator,
+       review_result, compliance_notes, source_group_name, source_msg_ids, frequency, last_seen_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
+  `).run(
+    tmpl.customer_name, tmpl.template_content, tmpl.template_type,
+    tmpl.target_region, tmpl.target_operator, tmpl.review_result,
+    tmpl.compliance_notes, groupName, JSON.stringify(msgIds), Date.now()
+  );
+  console.log(`[content-review] 📝 新增模板 #${result.lastInsertRowid}: ${tmpl.customer_name} — ${tmpl.template_type}`);
+  return result.lastInsertRowid;
+}
+
+async function extractAndSaveTemplate(groupName, pendingMsg, replyMsg, sectorName, reviewVerdict) {
+  // 从所有板块的审核对话中提取内容模板
+  if (isTemplateExtracted(pendingMsg.id)) return;
+
+  const aiClient = require('../lib/ai-client');
+  const conversationMsgs = [pendingMsg, replyMsg];
+  try {
+    const tmpl = await aiClient.analyzeContentTemplate(groupName, conversationMsgs, reviewVerdict);
+    if (!tmpl || !tmpl.customer_name || !tmpl.template_content) {
+      console.log(`[content-review] 📝 跳过模板提取（AI未识别出有效模板）`);
+      return;
+    }
+    saveTemplate(tmpl, groupName, [pendingMsg.id, replyMsg.id]);
+  } catch (err) {
+    console.error(`[content-review] 模板提取失败:`, err.message);
+  }
+}
+
 // ─── 处理逻辑 ────────────────────────────────────────────────────
 async function processMessages() {
   const cursor = getLastProcessed();
 
   const newMsgs = sourceDb
     .prepare(`
-      SELECT id, group_id, group_name, sender_name, content, timestamp
+      SELECT id, group_id, group_name, receiver_account, sender_name, content, timestamp
       FROM messages
       WHERE id > ?
         AND content IS NOT NULL AND content != ''
@@ -80,7 +136,10 @@ async function processMessages() {
 
   if (newMsgs.length === 0) return;
 
-  const now = Date.now();
+  let currentBatchTime = Date.now();
+  if (newMsgs.length > 0) {
+    currentBatchTime = newMsgs[newMsgs.length - 1].timestamp;
+  }
 
   for (const msg of newMsgs) {
     const isInternal = isInternalStaff(msg.sender_name);
@@ -104,14 +163,36 @@ async function processMessages() {
       // 外部人员 (供应商) 发言，检查是否是针对之前的审核请求的回复
       const pending = pendingReviews.get(key);
       if (pending && msg.timestamp <= pending.expireAt) {
-        // 粗略判断通过/拒绝 (可接入AI进行更精准的判断)
-        const isApproved = /ok|go ahead|approved|fine|yes/i.test(msg.content) ? 1 : 
-                           (/no|reject|cannot|don't|not/i.test(msg.content) ? 0 : null);
-                           
-        const rejectionReason = isApproved === 0 ? msg.content : null;
+        const aiClient = require('../lib/ai-client');
+        const aiResult = await aiClient.analyzeContentReview(
+          pending.originalMsg.sender_name,
+          pending.originalMsg.content,
+          msg.content
+        );
 
+        let isApproved = null;
+        let rejectionReason = null;
+        let aiConfidence = null;
+
+        if (aiResult) {
+          isApproved = aiResult.approved === true ? 1 : (aiResult.approved === false ? 0 : null);
+          rejectionReason = aiResult.approved === false ? (aiResult.reason || msg.content) : null;
+          aiConfidence = aiResult.confidence;
+        } else {
+          // AI 不可用：回退到关键词判定
+          if (/ok|go ahead|approved|fine|yes|可以|没问题|没问题|通过/i.test(msg.content)) {
+            isApproved = 1;
+            aiConfidence = 0.3;
+          } else if (/no|reject|cannot|don't|not|不行|不可以|拒绝|blocked/i.test(msg.content)) {
+            isApproved = 0;
+            rejectionReason = msg.content.slice(0, 200);
+            aiConfidence = 0.3;
+          }
+        }
+
+        const verdictText = isApproved === 1 ? 'approved' : (isApproved === 0 ? 'rejected' : 'pending');
         analyticsDb.prepare(`
-          INSERT INTO content_reviews 
+          INSERT INTO content_reviews
             (group_name, submitter_name, content_submitted, reviewer_reply, approved, rejection_reason, source_msg_id, timestamp)
           VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         `).run(
@@ -124,18 +205,28 @@ async function processMessages() {
           pending.originalMsg.id,
           pending.originalMsg.timestamp
         );
-        
-        console.log(`[content-review] 记录审核回复: ${msg.group_name} | Approved: ${isApproved}`);
-        
+
+        console.log(`[content-review] 记录审核回复: ${msg.group_name} | Approved: ${isApproved}${aiConfidence !== null ? ` | AI置信度: ${aiConfidence.toFixed(2)}` : ''}`);
+
+        // 提取内容模板（所有板块 + 所有判定结果，AI 自行判断是否可提取）
+        try {
+          const regionCfg = JSON.parse(fs.readFileSync(path.join(ROOT, 'config', 'account-regions.json'), 'utf8'));
+          const acctInfo = (regionCfg.accounts || []).find(a => a.account === msg.receiver_account);
+          const sector = acctInfo?.business_sector || '';
+          extractAndSaveTemplate(msg.group_name, pending.originalMsg, msg, sector, verdictText);
+        } catch (err) {
+          console.error(`[content-review] 模板提取异常: ${msg.group_name}`, err.message);
+        }
+
         // 清除 pending
         pendingReviews.delete(key);
       }
     }
   }
 
-  // 清理过期 pending
+  // 清理过期 pending (基于当前处理的消息时间而非系统时间)
   for (const [key, pending] of pendingReviews.entries()) {
-    if (now > pending.expireAt) {
+    if (currentBatchTime > pending.expireAt) {
       pendingReviews.delete(key);
     }
   }
@@ -158,3 +249,10 @@ function tick() {
 
 console.log('[content-review-extractor] 启动，轮询间隔: 60s');
 tick();
+
+process.on('SIGINT', () => {
+    console.log('[content-review-extractor] SIGINT 收到，正在优雅关闭...');
+    try { sourceDb.close(); } catch (_) {}
+    try { analyticsDb.close(); } catch (_) {}
+    process.exit(0);
+});

@@ -186,6 +186,15 @@ module.exports = {
       watch: false,
       env: { NODE_ENV: "production", ACCOUNT_NAME: "yuyin_wa_02" }
     },
+        {
+      name: "worker-teams-text2_teams",
+      script: "./workers/worker-teams.js",
+      max_memory_restart: '600M',
+      instances: 1,
+      autorestart: true,
+      watch: false,
+      env: { NODE_ENV: "production", ACCOUNT_NAME: "text2_teams" }
+    },
     // --- Web UI Server ---
     {
       name: "ui-server",

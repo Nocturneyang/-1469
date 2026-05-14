@@ -18,11 +18,9 @@
 
 require('dotenv').config();
 const path = require('path');
-const fs = require('fs');
 const Database = require('better-sqlite3');
-const dingtalk = require('../lib/dingtalk');
 
-const ROOT = path.resolve(__dirname, '..');
+const ROOT = process.env.DATA_DIR || path.resolve(__dirname, '..');
 
 // ─── 数据库连接 ──────────────────────────────────────────────────
 const sourceDb = new Database(path.join(ROOT, 'db', 'database.sqlite'), { readonly: true });
@@ -30,31 +28,6 @@ sourceDb.pragma('journal_mode = WAL');
 
 const analyticsDb = new Database(path.join(ROOT, 'db', 'analytics.sqlite'));
 analyticsDb.pragma('journal_mode = WAL');
-
-// ─── 区域配置（热加载，60秒缓存）──────────────────────────────
-const REGION_CONFIG_PATH = path.join(ROOT, 'config', 'account-regions.json');
-let _regionMap = null;
-let _regionMapLoadedAt = 0;
-
-function getRegionMap() {
-  const now = Date.now();
-  if (_regionMap && now - _regionMapLoadedAt < 60 * 1000) return _regionMap;
-  try {
-    const cfg = JSON.parse(fs.readFileSync(REGION_CONFIG_PATH, 'utf8'));
-    _regionMap = Object.fromEntries(cfg.accounts.map((a) => [a.account, a]));
-    _regionMapLoadedAt = now;
-  } catch (e) {
-    console.error('[issue-lifecycle-tracker] 重载 account-regions.json 失败:', e.message);
-    if (!_regionMap) _regionMap = {};
-  }
-  return _regionMap;
-}
-
-function getRegionInfo(region) {
-  const map = getRegionMap();
-  return Object.values(map).find((a) => a.region === region) ||
-         { region: region || '未知区', owner: null, owner_dingtalk_id: '', platform: 'wa' };
-}
 
 // ─── 闭环词 ──────────────────────────────────────────────────────
 const CLOSE_PATTERNS = [
@@ -152,63 +125,25 @@ async function scanIssues() {
     }
     if (closed) continue;
 
-    // ── 2. 承诺到期检查（承诺存在且未到期时间已过）──
+    // ── 2. 承诺到期检查（仅标记，不推送）──
     if (issue.commitment_due && now > issue.commitment_due) {
       const dueMsCheck = analyticsDb.prepare('SELECT commitment_met FROM issue_records WHERE id = ?').get(issue.id);
       if (dueMsCheck?.commitment_met === null) {
         markCommitmentUnmet.run(issue.id);
-        const regionInfo = getRegionInfo(issue.region);
-        const dueStr = new Date(issue.commitment_due).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' });
-        const content = [
-          `### ⏰ [承诺未兑现] ${issue.region} | ${issue.group_name}`,
-          '',
-          `**问题类型：** ${issue.issue_type}`,
-          `**供应商承诺：** "${issue.commitment_text}"`,
-          `**承诺截止：** ${dueStr}`,
-          `**当前状态：** 仍未收到闭环确认`,
-          '',
-          `> 请跟进供应商，确认问题处理进展。`,
-        ].join('\n');
-        await dingtalk.sendAlert({
-          title: `⏰ 承诺未兑现 ${issue.region}-${issue.group_name}`,
-          content,
-          platform: regionInfo.platform
-        });
-        console.log(`[lifecycle] ⏰ 承诺未兑现：${issue.group_name}`);
+        console.log(`[lifecycle] ⏰ 承诺未兑现（仅记录）：${issue.group_name}`);
       }
     }
 
-    // ── 3. 超时30分钟提醒 ──
+    // ── 3. 超时标记（仅升级状态，不推送）──
     if (elapsedMs >= WARN_MS && issue.status === 'open' && (issue.escalation_count || 0) === 0) {
-      const regionInfo = getRegionInfo(issue.region);
-      await dingtalk.sendAlert({
-        title: `⚠️ 问题未解决 ${issue.region}-${issue.group_name}`,
-        content: [
-          `### ⚠️ [问题未解决提醒] ${issue.region} | ${issue.group_name}`,
-          '',
-          `**问题类型：** ${issue.issue_type}`,
-          `**已持续：** ${Math.round(elapsedMs / 60000)} 分钟`,
-          `**状态：** 未收到供应商闭环确认`,
-        ].join('\n'),
-        platform: regionInfo.platform
-      });
       escalateIssue.run(now, issue.id);
-      console.log(`[lifecycle] ⚠️ 30分钟提醒：${issue.group_name}`);
+      console.log(`[lifecycle] ⚠️ 30分钟超时（仅标记）：${issue.group_name}`);
     }
 
-    // ── 4. 超时2小时升级 ──
+    // ── 4. 超时2小时升级（仅标记，不推送）──
     if (elapsedMs >= ESCALATE_MS && (issue.escalation_count || 0) < 2) {
-      const regionInfo = getRegionInfo(issue.region);
-      await dingtalk.sendEscalation({
-        groupName: issue.group_name,
-        region: issue.region,
-        issueType: issue.issue_type,
-        openedAt: issue.opened_at,
-        durationMins: elapsedMs / 60000,
-        platform: regionInfo.platform
-      });
       escalateIssue.run(now, issue.id);
-      console.log(`[lifecycle] 🚨 2小时升级：${issue.group_name}`);
+      console.log(`[lifecycle] 🚨 2小时升级（仅标记）：${issue.group_name}`);
     }
   }
 }
@@ -225,3 +160,10 @@ async function tick() {
 
 console.log('[issue-lifecycle-tracker] 启动，每30秒扫描未闭环问题');
 tick();
+
+process.on('SIGINT', () => {
+    console.log('[issue-lifecycle-tracker] SIGINT 收到，正在优雅关闭...');
+    try { sourceDb.close(); } catch (_) {}
+    try { analyticsDb.close(); } catch (_) {}
+    process.exit(0);
+});

@@ -3,15 +3,26 @@
   "_schema": {
     "account": "数据库中 receiver_account 字段的值",
     "region": "中文区域名称（用于日报群名前缀，格式：XX区-群名）",
-    "platform": "wa | tg",
-    "owner": "区域主责运营人员（姓名与 WhatsApp 账号名保持一致）",
+    "platform": "wa | tg | tgu | teams",
+    "business_sector": "业务板块：直连供应商/语音直连供应商/设备供应商/客服/卡线",
+    "value_label": "群聊价值标签 L0/L1/L2/L3（缺省 L1，仅手动配置）",
+    "owner": "区域主责运营人员",
     "owner_dingtalk_id": "钉钉/企微 用户ID，P0告警时 @ 该人",
     "description": "备注说明"
   },
+  "_value_label_guide": {
+    "L0": "关键通道/高价值群 — 全量告警 + 日报重点呈现 + 周报评分",
+    "L1": "常规供应商/活跃群 — P0/P1 告警 + 日报纳入 + 周报评分（缺省值）",
+    "L2": "低优先级/偶发群 — 仅 P0 告警 + 日报沉默提醒 + 不纳入周报评分",
+    "L3": "观察/归档群 — 完全静默，不推送告警，仅存档"
+  },
+  "_group_overrides": {},
   "accounts": [
     {
       "account": "wa-oumei_wa",
       "region": "欧美区",
+      "business_sector": "直连供应商",
+      "value_label": "L1",
       "platform": "wa",
       "owner": "Jasmine-001",
       "owner_dingtalk_id": "",
@@ -20,6 +31,8 @@
     {
       "account": "wa-nanya_wa",
       "region": "南亚区",
+      "business_sector": "直连供应商",
+      "value_label": "L1",
       "platform": "wa",
       "owner": "Jessica",
       "owner_dingtalk_id": "",
@@ -28,6 +41,7 @@
     {
       "account": "tg-account1",
       "region": "Telegram区",
+      "value_label": "L1",
       "platform": "tg",
       "owner": "ITNIO~ DJ",
       "owner_dingtalk_id": "",
@@ -36,6 +50,8 @@
     {
       "account": "wa-yatai-wa",
       "region": "亚太区",
+      "business_sector": "直连供应商",
+      "value_label": "L1",
       "platform": "wa",
       "owner": "",
       "owner_dingtalk_id": "",
@@ -44,6 +60,8 @@
     {
       "account": "wa-yuyin_wa",
       "region": "语音",
+      "business_sector": "语音直连供应商",
+      "value_label": "L1",
       "platform": "wa",
       "owner": "",
       "owner_dingtalk_id": "",
@@ -52,6 +70,8 @@
     {
       "account": "wa-wa_oumei2",
       "region": "欧美区",
+      "business_sector": "直连供应商",
+      "value_label": "L1",
       "platform": "wa",
       "owner": "",
       "owner_dingtalk_id": "",
@@ -60,6 +80,7 @@
     {
       "account": "tgu-mason_text",
       "region": "tg群聊",
+      "value_label": "L1",
       "platform": "tgu",
       "owner": "",
       "owner_dingtalk_id": "",
@@ -67,7 +88,9 @@
     },
     {
       "account": "wa-wa_shebi",
-      "region": "设备技术",
+      "region": "WA设备技术",
+      "business_sector": "设备供应商",
+      "value_label": "L1",
       "platform": "wa",
       "owner": "",
       "owner_dingtalk_id": "",
@@ -76,15 +99,48 @@
     {
       "account": "tgu-tgu_supplier",
       "region": "TG-设备支持",
+      "business_sector": "设备供应商",
+      "value_label": "L1",
       "platform": "tgu",
       "owner": "",
       "owner_dingtalk_id": "",
       "description": "TG设备支持的群聊记录"
+    },
+    {
+      "account": "tgu-laffic_service",
+      "region": "TGlaffic客服",
+      "business_sector": "客服",
+      "value_label": "L1",
+      "platform": "tgu",
+      "owner": "",
+      "owner_dingtalk_id": "",
+      "description": ""
+    },
+    {
+      "account": "tgu-TG_kaxian",
+      "region": "TG卡线",
+      "business_sector": "卡线",
+      "value_label": "L1",
+      "platform": "tgu",
+      "owner": "",
+      "owner_dingtalk_id": "",
+      "description": "卡线和双向的业务"
+    },
+    {
+      "account": "wa-yuyin_wa_02",
+      "region": "语音",
+      "business_sector": "语音直连供应商",
+      "platform": "wa",
+      "owner": "",
+      "owner_dingtalk_id": "",
+      "description": "语音备用帐号"
     }
   ],
   "_add_new_account_example": {
     "account": "wa-yatai_wa",
     "region": "亚太区",
+    "business_sector": "直连供应商",
+    "value_label": "L1",
     "platform": "wa",
     "owner": "Louis",
     "owner_dingtalk_id": "",

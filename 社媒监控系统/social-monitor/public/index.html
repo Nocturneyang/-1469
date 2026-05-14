@@ -6,11 +6,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Social Monitor · 全域观察窗</title>
   <meta name="description" content="多平台社媒监控数据大屏面板">
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link
-    href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Outfit:wght@400;600;800&display=swap"
-    rel="stylesheet">
-  <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.0/build/qrcode.min.js"></script>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&family=JetBrains+Mono:wght@400;500;600;700&family=Newsreader:opsz,wght@6..72,400;6..72,500;6..72,600;6..72,700&family=Noto+Sans+SC:wght@400;500;600;700&family=Noto+Serif+SC:wght@500;600;700&display=swap" rel="stylesheet">
+  <script defer src="https://cdn.jsdelivr.net/npm/qrcode@1.5.0/build/qrcode.min.js"></script>
   <style>
     :root {
       --bg: #f4f7f9;
@@ -22,10 +19,16 @@
       --wa-green: #25D366;
       --tg-blue: #0088cc;
       --p: #6b46c1;
-      /* Modern deep purple */
       --p-light: #9f7aea;
       --shadow-light: #ffffff;
       --shadow-dark: #a3b1c6;
+
+      /* 语义色值 */
+      --color-success: #38a169;
+      --color-warning: #d69e2e;
+      --color-danger: #e53e3e;
+      --color-info: #3182ce;
+      --color-muted: #718096;
 
       --r: 24px;
       --rs: 14px;
@@ -48,7 +51,7 @@
     }
 
     body {
-      font-family: 'Inter', sans-serif;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
       background: var(--bg);
       color: var(--t);
       min-height: 100vh;
@@ -61,7 +64,7 @@
     h2,
     h3,
     .stat-val {
-      font-family: 'Outfit', sans-serif;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
     }
 
     /* ── 布局骨架 ── */
@@ -118,7 +121,7 @@
 
     .brand h1 span {
       font-size: 13px;
-      font-family: 'Inter', sans-serif;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
       color: var(--t3);
       font-weight: 600;
       letter-spacing: 0.5px;
@@ -493,6 +496,11 @@
       }
     }
 
+    @keyframes fadeIn {
+      0% { opacity: 0; transform: translateY(8px); }
+      100% { opacity: 1; transform: translateY(0); }
+    }
+
     /* ── 账号系统 ── */
     .acc-grid {
       display: grid;
@@ -799,7 +807,7 @@
       border-radius: 12px;
       border: none;
       background: var(--bg);
-      font-family: 'Inter', sans-serif;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
       font-size: 13px;
       color: var(--t);
       box-shadow: var(--in-shadow-active);
@@ -900,7 +908,7 @@
     }
 
     .analytics-val {
-      font-family: 'Outfit', sans-serif;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
       font-size: 40px;
       font-weight: 800;
       letter-spacing: -2px;
@@ -953,6 +961,146 @@
       font-weight: 700;
       background: rgba(107,70,193,0.1);
       color: var(--p);
+    }
+    /* QA 知识库卡片 */
+    .qa-card {
+      background: #fff;
+      border: 1px solid #edf2f7;
+      border-radius: 14px;
+      padding: 20px 24px;
+      margin-bottom: 12px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+      transition: box-shadow 0.2s;
+    }
+    .qa-card:hover { box-shadow: 0 4px 16px rgba(0,0,0,0.08); }
+    .qa-card-header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 10px;
+      flex-wrap: wrap;
+    }
+    .qa-card-title {
+      font-weight: 700;
+      font-size: 15px;
+      color: var(--t);
+    }
+    .qa-card-steps {
+      background: #f7fafc;
+      border-radius: 10px;
+      padding: 14px 18px;
+      margin: 10px 0;
+      font-size: 13px;
+      line-height: 1.8;
+      color: var(--t2);
+    }
+    .qa-card-meta {
+      display: flex;
+      gap: 16px;
+      font-size: 12px;
+      color: var(--t3);
+      flex-wrap: wrap;
+    }
+    .qa-conf-high { color: #38a169; font-weight: 600; }
+    .qa-conf-mid  { color: #d69e2e; font-weight: 600; }
+    .qa-conf-low  { color: var(--t3); }
+    /* ─── 响应式：窄屏折叠侧边栏 ─── */
+    @media (max-width: 768px) {
+      .sidebar {
+        width: 56px;
+        overflow: hidden;
+      }
+      .sidebar .brand { font-size: 0; padding: 20px 12px; }
+      .sidebar .brand::before { content: '📡'; font-size: 22px; }
+      .sidebar .nav-item { font-size: 0; padding: 14px 12px; justify-content: center; }
+      .sidebar .nav-item::before { font-size: 20px; margin-right: 0; }
+      .sidebar .nav-item:nth-child(1)::before { content: '📊'; }
+      .sidebar .nav-item:nth-child(2)::before { content: '💬'; }
+      .sidebar .nav-item:nth-child(3)::before { content: '👥'; }
+      .sidebar .nav-item:nth-child(4)::before { content: '⚙️'; }
+      .sidebar .nav-item:nth-child(5)::before { content: '📖'; }
+      .sidebar .nav-item:nth-child(6)::before { content: '📊'; }
+      .sidebar .nav-item:nth-child(7)::before { content: '🔧'; }
+      .sidebar .nav-item:nth-child(8)::before { content: '📝'; }
+      .main { margin-left: 56px; }
+      .header { padding: 20px 24px; }
+      .content { padding: 0 24px 24px; }
+      .panel { padding: 20px; }
+      .modal { width: 95vw !important; max-width: 95vw !important; }
+      .grid-4 { grid-template-columns: repeat(2, 1fr); }
+      .filters { width: 100%; overflow-x: auto; flex-wrap: nowrap; }
+    }
+
+    /* ── 供应商画像新版卡片 ── */
+    .pf-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+      gap: 16px;
+    }
+    .pf-card {
+      background: #fff;
+      border: 1px solid #e7e5e4;
+      border-radius: 14px;
+      padding: 20px 22px;
+      cursor: pointer;
+      transition: all .2s ease;
+    }
+    .pf-card:hover {
+      box-shadow: 0 4px 16px rgba(0,0,0,0.06), 0 2px 4px rgba(0,0,0,0.03);
+      border-color: #d6d3d1;
+      transform: translateY(-1px);
+    }
+    .pf-score-ring {
+      width: 56px; height: 56px;
+      border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      font-family: 'JetBrains Mono', 'SF Mono', monospace;
+      font-size: 20px; font-weight: 700;
+    }
+    .pf-score-high { background: #ecfdf5; color: #059669; }
+    .pf-score-mid  { background: #fffbeb; color: #d97706; }
+    .pf-score-low  { background: #fef2f2; color: #dc2626; }
+    .pf-tag {
+      font-size: 11px; padding: 2px 10px; border-radius: 999px;
+      font-weight: 500; white-space: nowrap;
+    }
+    .pf-tag-indigo { background: #eef2ff; color: #4f46e5; }
+    .pf-tag-green  { background: #ecfdf5; color: #059669; }
+    .pf-tag-slate  { background: #f8fafc; color: #475569; border: 1px solid #e2e8f0; }
+
+    /* ── 画像详情页 ── */
+    .pf-detail { margin-top: 0; }
+    .pf-detail h2 {
+      font-family: 'DM Sans', -apple-system, 'Noto Sans SC', sans-serif;
+      font-size: 1.15rem; font-weight: 600; color: #1c1917;
+      display: flex; align-items: center; gap: 8px; margin-bottom: 16px;
+    }
+    .pf-detail h2 .bar { width: 4px; height: 20px; border-radius: 4px; }
+    .pf-metric-grid {
+      display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px;
+    }
+    .pf-metric-box {
+      background: #fafaf9; border-radius: 12px; padding: 16px; text-align: center;
+    }
+    .pf-metric-box .val { font-family: 'JetBrains Mono', monospace; font-size: 1.6rem; font-weight: 700; color: #1c1917; }
+    .pf-metric-box .lbl { font-size: 11px; color: #78716c; margin-top: 2px; }
+    .pf-bar-track { height: 6px; background: #f5f5f4; border-radius: 999px; overflow: hidden; }
+    .pf-bar-fill  { height: 100%; border-radius: 999px; }
+    .pf-insight-tag {
+      font-size: 12px; padding: 3px 12px; border-radius: 999px; font-weight: 500; white-space: nowrap;
+    }
+    .pf-insight-tag.red  { background: #fef2f2; color: #dc2626; }
+    .pf-insight-tag.amber{ background: #fffbeb; color: #d97706; }
+    .pf-insight-tag.green{ background: #ecfdf5; color: #059669; }
+    .pf-insight-tag.indigo{background: #eef2ff; color: #4f46e5; }
+    .pf-insight-tag.slate{ background: #f8fafc; color: #475569; border: 1px solid #e2e8f0; }
+    .pf-diagnosis-row {
+      display: flex; align-items: center; justify-content: space-between;
+      background: #fafaf9; border-radius: 10px; padding: 10px 14px;
+    }
+    @media (max-width: 768px) {
+      .pf-metric-grid { grid-template-columns: repeat(2, 1fr); }
+      .pf-grid { grid-template-columns: 1fr; }
     }
   </style>
 </head>
@@ -1305,17 +1453,21 @@
         <div style="font-size:12px;color:var(--t3);margin-top:6px">对应数据库 receiver_account 字段值，需先在「帐号管理」中添加</div>
       </div>
       <div class="form-group">
-        <label>平台</label>
+        <label>平台 <span style="color:var(--red);font-size:12px">* 必填</span></label>
         <select id="r-platform" class="form-control">
-          <option value="wa">🟢 WhatsApp</option>
-          <option value="tg">🔵 Telegram(Bot)</option>
-          <option value="tgu">👤 TG用户(MTProto)</option>
-          <option value="teams">🟣 Microsoft Teams</option>
+          <option value="wa">WhatsApp</option>
+          <option value="tg">Telegram Bot</option>
+          <option value="tgu">Telegram User</option>
+          <option value="teams">Teams</option>
         </select>
       </div>
       <div class="form-group">
+        <label>业务板块</label>
+        <input type="text" id="r-business-sector" class="form-control" placeholder="例如：设备技术、出海业务（非必填）">
+      </div>
+      <div class="form-group">
         <label>区域名称 <span style="color:var(--red);font-size:12px">* 必填</span></label>
-        <input type="text" id="r-region" class="form-control" placeholder="如：欧美区 / 南亚区 / 菲律宾专区" />
+        <input type="text" id="r-region" class="form-control" placeholder="例如：欧美区">
       </div>
       <div class="form-group">
         <label>区域负责人</label>
@@ -1352,6 +1504,41 @@ support"></textarea>
     </div>
   </div>
 
+  <!-- Modal：新增群覆盖标签 -->
+  <div class="modal-overlay" id="group-label-modal">
+    <div class="modal" style="width:480px;max-width:95vw">
+      <div class="modal-close" onclick="closeGroupLabelModal()">&times;</div>
+      <div class="modal-title">新增群级覆盖标签</div>
+      <div class="form-group">
+        <label>选择账号（自动列出相关群）</label>
+        <select id="gl-account" class="form-control" onchange="fetchGroupListForAccount(this.value)">
+          <option value="">-- 请选择账号 --</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>选择群组</label>
+        <select id="gl-group-name" class="form-control">
+          <option value="">-- 先选择账号 --</option>
+        </select>
+        <div style="font-size:12px;color:var(--t3);margin-top:6px">支持多选：在下拉框展开时按住 Ctrl/Cmd 键可多选</div>
+      </div>
+      <div class="form-group">
+        <label>覆盖标签</label>
+        <select id="gl-value-label" class="form-control">
+          <option value="L0">L0 — 关键通道全量告警</option>
+          <option value="L1">L1 — 常规供应商(默认)</option>
+          <option value="L2">L2 — 仅 P0 告警 / 日报沉默提醒</option>
+          <option value="L3">L3 — 完全静默</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>覆盖原因（可选）</label>
+        <input type="text" id="gl-reason" class="form-control" placeholder="如：核心SMS通道">
+      </div>
+      <button class="btn-primary" onclick="submitGroupLabel()">保存覆盖</button>
+    </div>
+  </div>
+
 
   <div class="app">
 
@@ -1362,10 +1549,14 @@ support"></textarea>
         <h1>Social Monitor<span>Data Pipeline</span></h1>
       </div>
       <nav class="nav">
-        <div class="nav-item active" onclick="switchView('dashboard', this)">📊 全盘态势 (Dashboard)</div>
-        <div class="nav-item" onclick="switchView('feed', this)">💬 原始数据流 (Raw Feed)</div>
-        <div class="nav-item" onclick="switchView('accounts', this)">👥 帐号管理 (Accounts)</div>
-        <div class="nav-item" onclick="switchView('config', this)">⚙️ 系统配置 (Config)</div>
+        <div class="nav-item active" data-view="dashboard" onclick="switchView('dashboard', this)">📊 全盘态势</div>
+        <div class="nav-item" data-view="feed" onclick="switchView('feed', this)">💬 原始数据流</div>
+        <div class="nav-item" data-view="accounts" onclick="switchView('accounts', this)">👥 帐号管理</div>
+        <div class="nav-item" data-view="config" onclick="switchView('config', this)">⚙️ 系统配置</div>
+        <div class="nav-item" data-view="knowledge" onclick="switchView('knowledge', this)">📖 QA知识库</div>
+        <div class="nav-item" data-view="profiles" onclick="switchView('profiles', this)">📊 供应商画像</div>
+        <div class="nav-item" data-view="devicekb" onclick="switchView('devicekb', this)">🔧 设备知识库</div>
+        <div class="nav-item" data-view="templates" onclick="switchView('templates', this)">📝 内容模板库</div>
       </nav>
     </aside>
 
@@ -1673,14 +1864,14 @@ support"></textarea>
                   <div class="wh-group-header-left">
                     <span>🔧</span>
                     <span>系统运维</span>
-                    <span style="font-size:11px;font-weight:600;color:var(--t3)">(WA/TG/Teams 账号健康，与业务隔离)</span>
+                    <span style="font-size:11px;font-weight:600;color:var(--t3)">(WA/TG/TGU/Teams 全平台账号健康，与业务隔离)</span>
                   </div>
                   <div class="wh-group-header-right">
                     <span class="wh-arrow">▶</span>
                   </div>
                 </div>
                 <div class="wh-group-body" id="wh-body-OPS">
-                  <div style="font-size:12px;color:var(--t3);margin-bottom:10px;line-height:1.6">建议单独建一个「运维通知群」，接收账号掉线/Session 过期/进程崩溃告警。</div>
+                  <div style="font-size:12px;color:var(--t3);margin-bottom:10px;line-height:1.6">建议单独建一个「运维通知群」，接收 WA/TG/TGU/Teams 全平台账号掉线/Session 过期/进程崩溃告警。</div>
                   <div class="config-list">
                     <div class="config-list-item">
                       <div class="cli-left">
@@ -1794,7 +1985,7 @@ support"></textarea>
             </div>
           </div>
 
-          <!-- 区域账号映射 -->
+          <!-- 区域账号映射 + 价值标签 -->
           <div class="panel">
             <div class="panel-title" style="justify-content:space-between">
               <span>🗺️ 区域账号映射</span>
@@ -1809,7 +2000,9 @@ support"></textarea>
                   <tr>
                     <th>账号 ID</th>
                     <th>平台</th>
+                    <th>业务板块</th>
                     <th>区域</th>
+                    <th>标签 <span style="font-weight:400;color:var(--t3)">L0~L3</span></th>
                     <th>负责人</th>
                     <th>钉钉 ID</th>
                     <th>备注</th>
@@ -1817,13 +2010,130 @@ support"></textarea>
                   </tr>
                 </thead>
                 <tbody id="region-table-body">
-                  <tr><td colspan="7" class="empty-state loading-pulse" style="text-align:center;padding:32px">加载中...</td></tr>
+                  <tr><td colspan="9" class="empty-state loading-pulse" style="text-align:center;padding:32px">加载中...</td></tr>
                 </tbody>
               </table>
+            </div>
+
+            <!-- 价值标签说明 + 群级覆盖 -->
+            <div style="margin-top:32px;padding-top:20px;border-top:1px dashed #e2e8f0">
+              <p style="font-size:13px;color:var(--t3);margin-bottom:16px;line-height:1.7">
+                🏷️ 标签驱动差异化告警/推送：<b style="color:#e53e3e">L0=关键通道全量告警</b> | <b style="color:#dd6b20">L1=常规供应商(默认)</b> | <b style="color:#d69e2e">L2=仅P0告警/日报沉默提醒</b> | <b style="color:#718096">L3=完全静默</b>。
+                群级覆盖优先于账号级，标签仅由运营手动维护。
+              </p>
+              <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+                <span style="font-weight:700;font-size:14px">群级覆盖标签（优先于账号级）</span>
+                <button class="btn-sm" onclick="openGroupLabelModal()">+ 新增群覆盖</button>
+              </div>
+              <div style="overflow-x:auto">
+                <table class="region-table">
+                  <thead><tr><th>群名</th><th>覆盖标签</th><th>原因</th><th></th></tr></thead>
+                  <tbody id="label-override-table-body">
+                    <tr><td colspan="4" class="empty-state" style="text-align:center;padding:24px">暂无群级覆盖</td></tr>
+                  </tbody>
+                </table>
+              </div>
             </div>
           </div>
 
         </div><!-- /view-config -->
+
+        <!-- 视图 5: QA 知识库 -->
+        <div id="view-knowledge" class="view">
+          <div class="panel">
+            <div class="panel-title" style="justify-content:space-between">
+              <span>📖 QA 知识库</span>
+              <span style="font-size:12px;color:var(--t3);font-weight:400">问题闭环时自动提取，高置信度可作SOP参考</span>
+            </div>
+
+            <div style="display:flex;gap:12px;margin-bottom:20px;flex-wrap:wrap">
+              <input type="text" id="kb-search" class="form-control" style="flex:1;min-width:200px;max-width:360px"
+                     placeholder="搜索问题/关键词..." onkeyup="if(event.key==='Enter')fetchKnowledgeBase()">
+              <select id="kb-sector" class="form-control" style="max-width:180px" onchange="fetchKnowledgeBase()">
+                <option value="">全部板块</option>
+              </select>
+              <button class="btn-primary" onclick="fetchKnowledgeBase()" style="padding:8px 20px">🔍 搜索</button>
+            </div>
+
+            <div id="kb-results">
+              <div class="empty-state loading-pulse" style="padding:32px">加载知识库数据...</div>
+            </div>
+            <div id="kb-pagination" style="display:flex;justify-content:center;gap:8px;margin-top:20px"></div>
+          </div>
+        </div><!-- /view-knowledge -->
+
+        <!-- 视图 6: 供应商画像 -->
+        <div id="view-profiles" class="view">
+          <div class="panel" style="background:#FAFAF9;border:1px solid #E7E5E4;border-radius:14px;padding:24px;box-shadow:0 1px 3px rgba(0,0,0,0.04)">
+            <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;margin-bottom:20px">
+              <div>
+                <h2 style="font-family:'DM Sans','Noto Sans SC',sans-serif;font-size:1.25rem;font-weight:600;color:#1C1917;margin:0">供应商可靠性画像</h2>
+                <p style="font-size:11px;color:#A8A29E;margin:2px 0 0 0;font-family:'JetBrains Mono',monospace">每日 03:00 自动更新 · 评分=100 - 告警扣分 - 承诺违约扣分 - 响应慢扣分</p>
+              </div>
+              <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+                <select id="pf-sector" class="form-control" style="max-width:140px;border:1px solid #E7E5E4;border-radius:8px;padding:6px 12px;font-size:13px;background:#fff;color:#1C1917" onchange="fetchProfiles()">
+                  <option value="">全部板块</option>
+                </select>
+                <select id="pf-sort" class="form-control" style="max-width:140px;border:1px solid #E7E5E4;border-radius:8px;padding:6px 12px;font-size:13px;background:#fff;color:#1C1917" onchange="fetchProfiles()">
+                  <option value="score">评分最高</option>
+                  <option value="issues">告警最多</option>
+                  <option value="response">响应最快</option>
+                  <option value="commitment">兑现率最高</option>
+                </select>
+                <button onclick="fetchProfiles()" style="padding:6px 16px;border:1px solid #E7E5E4;border-radius:8px;background:#fff;color:#1C1917;cursor:pointer;font-size:13px;font-weight:500;transition:all 0.2s">🔄 刷新</button>
+              </div>
+            </div>
+
+            <div id="pf-results">
+              <div class="empty-state loading-pulse" style="padding:32px;text-align:center;color:#A8A29E">加载供应商画像数据...</div>
+            </div>
+          </div>
+        </div><!-- /view-profiles -->
+
+        <!-- 视图 7: 设备知识库 -->
+        <div id="view-devicekb" class="view">
+          <div class="panel">
+            <div class="panel-title">🔧 设备知识库</div>
+            <p style="font-size:13px;color:var(--t3);margin-bottom:20px">设备供应商闭环问题自动提取：型号 → 故障 → 方案。</p>
+            <div style="display:flex;gap:12px;margin-bottom:20px;flex-wrap:wrap">
+              <input type="text" id="dkb-search" class="form-control" style="flex:1;min-width:200px;max-width:360px"
+                     placeholder="搜索型号/故障/方案..." onkeyup="if(event.key==='Enter')fetchDeviceKB()">
+              <select id="dkb-category" class="form-control" style="max-width:180px" onchange="fetchDeviceKB()">
+                <option value="">全部分类</option>
+              </select>
+              <button class="btn-primary" onclick="fetchDeviceKB()" style="padding:8px 20px">🔍 搜索</button>
+            </div>
+            <div id="dkb-results">
+              <div class="empty-state" style="padding:32px">输入关键词搜索设备故障知识</div>
+            </div>
+          </div>
+        </div><!-- /view-devicekb -->
+
+        <!-- 视图 8: 内容模板库 -->
+        <div id="view-templates" class="view">
+          <div class="panel">
+            <div class="panel-title">📝 内容模板库</div>
+            <p style="font-size:13px;color:var(--t3);margin-bottom:20px">客服审核对话中自动提取短信模板及合规要点。</p>
+            <div style="display:flex;gap:12px;margin-bottom:20px;flex-wrap:wrap">
+              <input type="text" id="ctl-search" class="form-control" style="flex:1;min-width:200px;max-width:300px"
+                     placeholder="搜索模板内容/合规备注..." onkeyup="if(event.key==='Enter')fetchContentTemplates()">
+              <select id="ctl-customer" class="form-control" style="max-width:160px" onchange="fetchContentTemplates()">
+                <option value="">全部客户</option>
+              </select>
+              <select id="ctl-type" class="form-control" style="max-width:160px" onchange="fetchContentTemplates()">
+                <option value="">全部类型</option>
+                <option value="OTP验证码">OTP验证码</option>
+                <option value="Marketing营销">Marketing营销</option>
+                <option value="Notification通知">Notification通知</option>
+                <option value="其他">其他</option>
+              </select>
+              <button class="btn-primary" onclick="fetchContentTemplates()" style="padding:8px 20px">🔍 搜索</button>
+            </div>
+            <div id="ctl-results">
+              <div class="empty-state" style="padding:32px">输入关键词搜索内容模板</div>
+            </div>
+          </div>
+        </div><!-- /view-templates -->
 
       </div>
     </main>
@@ -1844,22 +2154,49 @@ support"></textarea>
 
     // UI 路由逻辑
     function switchView(viewName, el) {
+      if (!el) el = document.querySelector(`.nav-item[data-view="${viewName}"]`);
       document.querySelectorAll('.nav-item').forEach(e => e.classList.remove('active'));
-      el.classList.add('active');
+      if (el) el.classList.add('active');
 
       document.querySelectorAll('.view').forEach(e => e.classList.remove('active'));
-      document.getElementById('view-' + viewName).classList.add('active');
+      const targetView = document.getElementById('view-' + viewName);
+      if (targetView) targetView.classList.add('active');
 
       const titles = {
         'dashboard': '全盘态势 Dashboard',
         'feed': '原始数据流 Raw Feed',
         'accounts': '帐号管理 Accounts',
-        'config': '系统配置 Config'
+        'config': '系统配置 Config',
+        'knowledge': 'QA知识库 Knowledge Base',
+        'profiles': '供应商画像 Supplier Profiles',
+        'devicekb': '设备知识库 Device KB',
+        'templates': '内容模板库 Templates'
       };
-      document.getElementById('page-title').innerText = titles[viewName];
+      document.getElementById('page-title').innerText = titles[viewName] || viewName;
+
+      if (window.location.hash !== '#' + viewName) {
+        history.pushState({ view: viewName }, '', '#' + viewName);
+      }
+
       if (viewName === 'accounts') fetchAccounts();
-      if (viewName === 'config') { fetchEnvStatus(); fetchRegionWebhooks(); fetchRegions(); fetchAnalyticsSummary(); fetchStaffConfig(); }
+      if (viewName === 'config') { fetchEnvStatus(); fetchRegionWebhooks(); fetchRegions(); fetchAnalyticsSummary(); fetchStaffConfig(); fetchValueLabels(); }
+      if (viewName === 'knowledge') { fetchKnowledgeSectors(); fetchKnowledgeBase(); }
+      if (viewName === 'profiles') { fetchProfileSectors(); fetchProfiles(); }
+      if (viewName === 'devicekb') { fetchDeviceKBCategories(); fetchDeviceKB(); }
+      if (viewName === 'templates') { fetchTemplatesCustomers(); fetchContentTemplates(); }
     }
+
+    // 浏览器前进/后退支持
+    window.addEventListener('popstate', (e) => {
+      const view = (e.state && e.state.view) || (window.location.hash || '#dashboard').replace('#', '');
+      switchView(view, null);
+    });
+
+    // 初始加载时恢复 hash 路由
+    (function() {
+      const initialView = (window.location.hash || '#dashboard').replace('#', '');
+      if (initialView !== 'dashboard') switchView(initialView, null);
+    })();
 
     // 核心数据拉取
     const API_BASE = window.location.origin + '/api';
@@ -1878,7 +2215,13 @@ support"></textarea>
           document.getElementById('st-media').innerText = data.withMedia || 0;
           document.getElementById('st-media').classList.remove('loading-pulse');
         }
-      } catch (e) { console.error('Stats block error', e); }
+      } catch (e) {
+        console.error('Stats block error', e);
+        ['st-total','st-wa','st-tg','st-media'].forEach(id => {
+          const el = document.getElementById(id);
+          if (el) { el.innerText = '—'; el.classList.remove('loading-pulse'); }
+        });
+      }
     }
 
     let currentFilter = 'all';
@@ -2538,13 +2881,17 @@ support"></textarea>
 
 
 
-    // 启动循环心跳
+    // 启动循环心跳（仅当前活跃视图才拉数据）
     fetchStats();
     fetchFeed();
-    setInterval(fetchStats, 5000);
-    setInterval(fetchFeed, 5000);
-    setInterval(fetchAccounts, 3000);
     setInterval(() => {
+      if (document.getElementById('view-dashboard').classList.contains('active')) {
+        fetchStats();
+        fetchFeed();
+      }
+      if (document.getElementById('view-accounts').classList.contains('active')) {
+        fetchAccounts();
+      }
       if (document.getElementById('view-config').classList.contains('active')) {
         fetchAnalyticsSummary();
       }
@@ -2692,6 +3039,7 @@ support"></textarea>
           const allKeys = group.keys.join(',');
           const item = document.createElement('div');
           item.className = `config-list-item dynamic-rw-${type}`;
+          item.dataset.platform = group.platform;
           item.innerHTML = `
             <div class="cli-left">
               <div class="cli-title" title="${escapeHtml(regionsText)}">${icon} — ${escapeHtml(regionsText.length > 30 ? regionsText.substring(0,30)+'...' : regionsText)}</div>
@@ -2727,13 +3075,17 @@ support"></textarea>
       }
 
       ['DIGEST', 'WEEKLY'].forEach(t => {
-        const cnt = document.querySelectorAll(`.dynamic-rw-${t}`).length;
+        const cnt = document.querySelectorAll(`.dynamic-rw-${t}`).length +
+                    document.querySelectorAll(`.dynamic-pw-${t}`).length;
         const badge = document.getElementById(`wh-grp-${t}-count`);
         if (badge) {
           if (cnt > 0) { badge.textContent = `${cnt} 条`; badge.style.display = ''; }
           else badge.style.display = 'none';
         }
       });
+
+      // 为所有类型重建按平台分组的可折叠子面板
+      ['ALERT', 'ALERT_P0', 'ALERT_P1', 'ALERT_P2', 'ALERT_SID', 'DIGEST', 'WEEKLY'].forEach(t => rebuildPlatformSubgroups(t));
     }
 
     function renderPlatformWebhooks() {
@@ -2756,6 +3108,7 @@ support"></textarea>
               
               const item = document.createElement('div');
               item.className = `config-list-item dynamic-pw-${type}`;
+              item.dataset.platform = platformCode;
               item.innerHTML = `
                 <div class="cli-left">
                   <div class="cli-title">${icon}</div>
@@ -2777,6 +3130,73 @@ support"></textarea>
            }
         });
       });
+
+      // 为所有类型重建按平台分组的可折叠子面板
+      ['ALERT', 'DIGEST', 'WEEKLY'].forEach(t => rebuildPlatformSubgroups(t));
+    }
+
+    // ─── Webhook 按平台分组折叠 ─────────────────────────────────
+    function rebuildPlatformSubgroups(type) {
+      const list = document.getElementById(`webhook-list-${type}`);
+      if (!list) return;
+
+      // 1. 把旧子面板里的条目挪回主列表，然后删除空容器
+      list.querySelectorAll('.wh-plat-subgroup').forEach(sg => {
+        sg.querySelectorAll('.config-list-item').forEach(item => list.appendChild(item));
+        sg.remove();
+      });
+
+      // 2. 收集所有动态条目（平台兜底 + 区域专属）
+      const items = [...list.querySelectorAll(`.dynamic-pw-${type}, .dynamic-rw-${type}`)];
+      if (items.length === 0) return;
+
+      // 3. 按平台分组
+      const groups = {};
+      items.forEach(item => {
+        const plat = item.dataset.platform || 'unknown';
+        if (!groups[plat]) groups[plat] = [];
+        groups[plat].push(item);
+      });
+
+      // 4. 按固定顺序创建可折叠子面板
+      const platLabels = { wa: '🟢 WhatsApp', tg: '🔵 TG(Bot)', tgu: '👤 TG(User)', teams: '🟦 Teams' };
+      const platOrder = ['wa', 'tg', 'tgu', 'teams'];
+      const sorted = Object.keys(groups).sort((a, b) =>
+        (platOrder.indexOf(a) === -1 ? 99 : platOrder.indexOf(a)) -
+        (platOrder.indexOf(b) === -1 ? 99 : platOrder.indexOf(b))
+      );
+
+      for (const plat of sorted) {
+        const platItems = groups[plat];
+        const subId = `wh-platsub-${type}-${plat}`;
+        const sg = document.createElement('div');
+        sg.className = 'wh-plat-subgroup wh-subgroup';
+        sg.innerHTML = `
+          <div class="wh-subgroup-header" onclick="togglePlatSubgroup('${subId}')">
+            <div class="wh-subgroup-title">
+              ${platLabels[plat] || plat}
+              <span class="wh-count-badge">${platItems.length} 条</span>
+            </div>
+            <span class="wh-arrow">▶</span>
+          </div>
+          <div class="wh-subgroup-body" id="${subId}"></div>
+        `;
+        const body = sg.querySelector('.wh-subgroup-body');
+        const inner = document.createElement('div');
+        inner.className = 'config-list';
+        platItems.forEach(item => inner.appendChild(item));
+        body.appendChild(inner);
+        list.appendChild(sg);
+      }
+    }
+
+    function togglePlatSubgroup(id) {
+      const body = document.getElementById(id);
+      if (!body) return;
+      const header = body.previousElementSibling;
+      const isOpen = body.classList.contains('open');
+      body.classList.toggle('open', !isOpen);
+      if (header) header.classList.toggle('open', !isOpen);
     }
 
     // ─── Webhook 二级目录折叠控制 ────────────────────────────────────
@@ -2801,7 +3221,7 @@ support"></textarea>
     // ─── 系统运维 Webhook 配置 ───────────────────────────────────────
     function openSystemOpsModal() {
       // 复用现有的通用 Webhook 编辑弹窗
-      openWebhookModal('DINGTALK_SYSTEM_OPS', '🔧 系统运维告警 Webhook（全平台统一通道）');
+      openWebhookModal('DINGTALK_SYSTEM_OPS', '🔧 系统运维告警 Webhook（WA/TG/TGU/Teams 全平台统一）');
     }
 
     async function deleteSystemOpsWebhook() {
@@ -3216,23 +3636,36 @@ support"></textarea>
         const tbody = document.getElementById('region-table-body');
         window.allRegions = data.data;
         if (!data.success || data.data.length === 0) {
-          tbody.innerHTML = `<tr><td colspan="7" class="empty-state" style="text-align:center;padding:32px">暂无区域映射配置</td></tr>`;
+          tbody.innerHTML = `<tr><td colspan="9" class="empty-state" style="text-align:center;padding:32px">暂无区域映射配置</td></tr>`;
           return;
         }
-        tbody.innerHTML = data.data.map(a => `
-          <tr class="region-row">
-            <td><code style="font-size:12px;color:var(--p)">${escapeHtml(a.account)}</code></td>
-            <td>${a.platform === 'wa' ? '🟢 WA' : (a.platform === 'tg' ? '🔵 TG(Bot)' : (a.platform === 'tgu' ? '👤 TG(User)' : (a.platform === 'teams' ? '🟣 Teams' : escapeHtml(a.platform))))}</td>
-            <td><span class="region-tag">${escapeHtml(a.region)}</span></td>
-            <td>${escapeHtml(a.owner) || '<span style="color:var(--t3)">—</span>'}</td>
-            <td style="font-size:12px;color:var(--t3)">${escapeHtml(a.owner_dingtalk_id) || '—'}</td>
-            <td style="font-size:12px;color:var(--t3);max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapeHtml(a.description)}">${escapeHtml(a.description) || '—'}</td>
+        tbody.innerHTML = data.data.map(a => {
+          const label = a.value_label || 'L1';
+          const lblColors = { L0: '#e53e3e', L1: '#dd6b20', L2: '#d69e2e', L3: '#718096' };
+          const lb = lblColors[label] || '#dd6b20';
+          return `
+          <tr>
+            <td><code>${a.account}</code></td>
+            <td><span class="badge" style="background:#e2e8f0;color:#4a5568">${a.platform.toUpperCase()}</span></td>
+            <td>${a.business_sector || '<span style="color:#a0aec0">-</span>'}</td>
+            <td><b>${a.region}</b></td>
             <td>
-              <button class="btn-sm" style="margin-right:6px" onclick="editRegion('${escapeHtml(a.account)}')">编辑</button>
-              <button class="btn-danger" onclick="deleteRegion('${escapeHtml(a.account)}')">删除</button>
+              <select onchange="updateAccountLabel('${a.account}', this.value)" style="font-size:12px;padding:2px 6px;border-radius:6px;background:${lb}15;color:${lb};border:1px solid ${lb}40;font-weight:700">
+                <option value="L0" ${label === 'L0' ? 'selected' : ''}>L0 关键</option>
+                <option value="L1" ${label === 'L1' ? 'selected' : ''}>L1 常规</option>
+                <option value="L2" ${label === 'L2' ? 'selected' : ''}>L2 低频</option>
+                <option value="L3" ${label === 'L3' ? 'selected' : ''}>L3 静默</option>
+              </select>
             </td>
-          </tr>
-        `).join('');
+            <td>${a.owner || '<span style="color:#a0aec0">未设置</span>'}</td>
+            <td>${a.owner_dingtalk_id || '<span style="color:#a0aec0">-</span>'}</td>
+            <td><div class="desc-cell" title="${a.description || ''}">${a.description || '<span style="color:#a0aec0">-</span>'}</div></td>
+            <td>
+              <button class="btn-text edit" onclick="editRegion('${a.account}')">编辑</button>
+              <button class="btn-text danger" onclick="deleteRegion('${a.account}')">删除</button>
+            </td>
+          </tr>`;
+        }).join('');
       } catch (e) { console.error('fetchRegions', e); }
     }
 
@@ -3271,11 +3704,12 @@ support"></textarea>
         }
         document.getElementById('r-account').value = editData.account;
         document.getElementById('r-account').disabled = true;
-        document.getElementById('r-platform').value = editData.platform;
-        document.getElementById('r-region').value = editData.region;
-        document.getElementById('r-owner').value = editData.owner;
-        document.getElementById('r-dingtalk').value = editData.owner_dingtalk_id;
-        document.getElementById('r-desc').value = editData.description;
+        document.getElementById('r-platform').value = editData.platform || 'wa';
+        document.getElementById('r-business-sector').value = editData.business_sector || '';
+        document.getElementById('r-region').value = editData.region || '';
+        document.getElementById('r-owner').value = editData.owner || '';
+        document.getElementById('r-dingtalk').value = editData.owner_dingtalk_id || '';
+        document.getElementById('r-desc').value = editData.description || '';
       } else {
         document.getElementById('r-account').disabled = false;
         document.getElementById('r-account').value = '';
@@ -3294,21 +3728,24 @@ support"></textarea>
 
     function closeRegionModal() {
       regionModal.style.display = 'none';
-      ['r-account','r-region','r-owner','r-dingtalk','r-desc'].forEach(id => document.getElementById(id).value = '');
+      ['r-account','r-region','r-owner','r-dingtalk','r-desc','r-business-sector'].forEach(id => document.getElementById(id).value = '');
     }
     async function submitRegion() {
-      const account = document.getElementById('r-account').value.trim();
-      const region = document.getElementById('r-region').value.trim();
-      const platform = document.getElementById('r-platform').value;
-      const owner = document.getElementById('r-owner').value.trim();
-      const owner_dingtalk_id = document.getElementById('r-dingtalk').value.trim();
-      const description = document.getElementById('r-desc').value.trim();
-      if (!account || !region) return showToast('账号ID和区域为必填项', 'error');
+      const payload = {
+        account: document.getElementById('r-account').value,
+        platform: document.getElementById('r-platform').value,
+        region: document.getElementById('r-region').value.trim(),
+        business_sector: document.getElementById('r-business-sector').value.trim(),
+        owner: document.getElementById('r-owner').value.trim(),
+        owner_dingtalk_id: document.getElementById('r-dingtalk').value.trim(),
+        description: document.getElementById('r-desc').value.trim()
+      };
+      if (!payload.account || !payload.region || !payload.platform) return alert('账号ID和区域为必填项'); 
       try {
         const res = await fetch(API_BASE + '/config/regions', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ account, region, platform, owner, owner_dingtalk_id, description })
+          body: JSON.stringify(payload)
         });
         const data = await res.json();
         if (data.success) { showToast(data.message); closeRegionModal(); fetchRegions(); }
@@ -3364,6 +3801,827 @@ support"></textarea>
           showToast(data.error, 'error');
         }
       } catch (e) { showToast('保存失败', 'error'); }
+    }
+
+    // ─── 价值标签管理 ────────────────────────────────────────────
+    function labelBadge(label) {
+      const colors = { L0: '#e53e3e', L1: '#dd6b20', L2: '#d69e2e', L3: '#718096' };
+      const names = { L0: 'L0 关键', L1: 'L1 常规', L2: 'L2 低频', L3: 'L3 静默' };
+      const c = colors[label] || '#a0aec0';
+      const n = names[label] || label || 'L1';
+      return `<span class="badge" style="background:${c}15;color:${c};border:1px solid ${c}40;font-weight:600">${n}</span>`;
+    }
+
+    async function fetchValueLabels() {
+      try {
+        const res = await fetch(API_BASE + '/config/value-labels');
+        const data = await res.json();
+        if (!data.success) return;
+        window.valueLabelsData = data.data;
+
+        // 群覆盖表（账号级标签已合并到区域配置表的「标签」列）
+        const otbody = document.getElementById('label-override-table-body');
+        const overrides = data.data.group_overrides || {};
+        const entries = Object.entries(overrides);
+        if (entries.length === 0) {
+          otbody.innerHTML = '<tr><td colspan="4" class="empty-state" style="text-align:center;padding:24px">暂无群级覆盖</td></tr>';
+        } else {
+          otbody.innerHTML = entries.map(([name, cfg]) => `
+            <tr>
+              <td><b>${escapeHtml(name)}</b></td>
+              <td>${labelBadge(cfg.value_label)}</td>
+              <td style="color:var(--t3);font-size:13px">${escapeHtml(cfg.reason || '-')}</td>
+              <td><button class="btn-text danger" onclick="deleteGroupLabel('${escapeHtml(name).replace(/'/g, "\\'")}')">移除覆盖</button></td>
+            </tr>
+          `).join('');
+        }
+      } catch (e) { console.error('fetchValueLabels error', e); }
+    }
+
+    async function updateAccountLabel(account, valueLabel) {
+      try {
+        const res = await fetch(API_BASE + '/config/value-labels', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ type: 'account', key: account, value_label: valueLabel })
+        });
+        const data = await res.json();
+        if (data.success) {
+          showToast(data.message);
+        } else {
+          showToast(data.error || '未知错误', 'error');
+          fetchRegions();
+        }
+      } catch (e) {
+        console.error('updateAccountLabel fetch error:', e);
+        showToast('保存失败: ' + (e.message || '网络异常'), 'error');
+        fetchRegions();
+      }
+    }
+
+    async function fetchGroupListForAccount(account) {
+      const select = document.getElementById('gl-group-name');
+      if (!account) {
+        select.innerHTML = '<option value="">-- 先选择账号 --</option>';
+        return;
+      }
+      select.innerHTML = '<option value="">加载中...</option>';
+      try {
+        const res = await fetch(API_BASE + '/groups?account=' + encodeURIComponent(account));
+        const data = await res.json();
+        if (!data.success) return;
+        const groups = data.data || [];
+        if (groups.length === 0) {
+          select.innerHTML = '<option value="">该账号下暂无群聊数据</option>';
+        } else {
+          select.innerHTML = groups.map(g => `<option value="${escapeHtml(g.group_name)}">${escapeHtml(g.group_name)}</option>`).join('');
+        }
+      } catch (e) {
+        console.error(e);
+        select.innerHTML = '<option value="">加载失败</option>';
+      }
+    }
+
+    function openGroupLabelModal() {
+      const accSelect = document.getElementById('gl-account');
+      if (window.allRegions && window.allRegions.length > 0) {
+        accSelect.innerHTML = '<option value="">-- 请选择账号 --</option>' +
+          window.allRegions.map(r => `<option value="${escapeHtml(r.account)}">${escapeHtml(r.account)} (${escapeHtml(r.region)})</option>`).join('');
+      }
+
+      document.getElementById('gl-account').value = '';
+      const groupSelect = document.getElementById('gl-group-name');
+      groupSelect.innerHTML = '<option value="">-- 先选择账号 --</option>';
+      groupSelect.setAttribute('multiple', 'multiple');
+      groupSelect.style.height = '140px';
+      document.getElementById('gl-value-label').value = 'L0';
+      document.getElementById('gl-reason').value = '';
+      document.getElementById('group-label-modal').style.display = 'flex';
+    }
+
+    function closeGroupLabelModal() {
+      document.getElementById('group-label-modal').style.display = 'none';
+    }
+
+    async function submitGroupLabel() {
+      const select = document.getElementById('gl-group-name');
+      const selectedOptions = Array.from(select.selectedOptions).map(opt => opt.value).filter(Boolean);
+      const valueLabel = document.getElementById('gl-value-label').value;
+      const reason = document.getElementById('gl-reason').value.trim();
+
+      if (selectedOptions.length === 0) { showToast('请至少选择一个群', 'error'); return; }
+
+      try {
+        let successCount = 0;
+        for (const groupName of selectedOptions) {
+          const res = await fetch(API_BASE + '/config/value-labels', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ type: 'group', key: groupName, value_label: valueLabel, reason })
+          });
+          const data = await res.json();
+          if (data.success) successCount++;
+        }
+
+        if (successCount === selectedOptions.length) {
+          showToast(`已成功为 ${successCount} 个群更新标签`);
+          closeGroupLabelModal();
+          fetchValueLabels();
+        } else {
+          showToast(`完成保存，但有部分请求失败，请检查`, 'error');
+          fetchValueLabels();
+        }
+      } catch (e) { showToast('保存失败', 'error'); }
+    }
+
+    async function deleteGroupLabel(groupName) {
+      if (!confirm(`确定移除群「${groupName}」的覆盖标签吗？恢复为账号级标签。`)) return;
+      try {
+        const res = await fetch(API_BASE + '/config/value-labels', {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ type: 'group', key: groupName })
+        });
+        const data = await res.json();
+        if (data.success) { showToast(data.message); fetchValueLabels(); }
+        else showToast(data.error, 'error');
+      } catch (e) { showToast('删除失败', 'error'); }
+    }
+
+    // ─── 供应商画像 ──────────────────────────────────────────────
+    async function fetchProfileSectors() {
+      try {
+        const res = await fetch(API_BASE + '/supplier-profiles/sectors');
+        const data = await res.json();
+        if (data.success) {
+          const sel = document.getElementById('pf-sector');
+          sel.innerHTML = '<option value="">全部板块</option>';
+          data.data.forEach(s => {
+            sel.innerHTML += `<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`;
+          });
+        }
+      } catch (e) { console.error('fetchProfileSectors', e); }
+    }
+
+    async function fetchProfiles() {
+      const sector = document.getElementById('pf-sector').value;
+      const sort = document.getElementById('pf-sort').value;
+      const params = new URLSearchParams({ limit: 30, sort });
+      if (sector) params.set('sector', sector);
+
+      try {
+        const res = await fetch(API_BASE + '/supplier-profiles?' + params.toString());
+        const data = await res.json();
+        const container = document.getElementById('pf-results');
+        if (!data.success || data.data.length === 0) {
+          container.innerHTML = '<div class="empty-state" style="text-align:center;padding:48px;color:#A8A29E;font-size:14px">暂无供应商画像数据，每日 03:00 自动生成</div>';
+          return;
+        }
+
+        const scoreColor = (s) => s >= 80 ? '#059669' : (s >= 60 ? '#D97706' : '#DC2626');
+        const scoreBg = (s) => s >= 80 ? '#ECFDF5' : (s >= 60 ? '#FFFBEB' : '#FEF2F2');
+        const fmtMin = (v) => v != null ? v.toFixed(0) + 'min' : '-';
+        const fmtPct = (v) => v != null ? (v * 100).toFixed(0) + '%' : '-';
+
+        container.innerHTML = `
+          <div class="pf-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:16px">
+            ${data.data.map((p) => {
+              const sc = p.reliability_score || 0;
+              const color = scoreColor(sc);
+              const bg = scoreBg(sc);
+              const escName = escapeHtml(p.group_name).replace(/'/g, "\\'");
+              const sectorLabel = escapeHtml(p.business_sector || '未分类');
+              const sectorIcon = { '设备供应商':'🏭','直连供应商':'🔗','语音直连供应商':'📞','客服':'💬','卡线':'📱' }[p.business_sector] || '📋';
+              return `
+                <div class="pf-card" onclick="viewProfileDetail('${escName}')" title="点击查看详情"
+                     style="background:#FFFFFF;border:1px solid #E7E5E4;border-radius:14px;padding:20px;cursor:pointer;transition:box-shadow 0.2s,border-color 0.2s">
+                  <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:14px">
+                    <div style="flex:1;min-width:0">
+                      <div style="font-weight:600;font-size:15px;color:#1C1917;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(p.group_name)}</div>
+                      <div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap">
+                        <span style="font-size:11px;padding:1px 8px;border-radius:999px;background:#EEF2FF;color:#4F46E5;font-weight:500">${sectorIcon} ${sectorLabel}</span>
+                        <span style="font-size:11px;padding:1px 8px;border-radius:999px;background:#F8FAFC;color:#475569;border:1px solid #E2E8F0">${escapeHtml(p.region || '未知区')}</span>
+                      </div>
+                    </div>
+                    <div class="pf-score-ring" style="width:52px;height:52px;border-radius:50%;background:${bg};display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-left:12px">
+                      <span style="font-family:'JetBrains Mono',monospace;font-size:18px;font-weight:700;color:${color}">${sc}</span>
+                    </div>
+                  </div>
+                  <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;padding-top:12px;border-top:1px solid #F5F5F4">
+                    <div style="text-align:center">
+                      <div style="font-family:'JetBrains Mono',monospace;font-size:16px;font-weight:700;color:#1C1917">${fmtMin(p.p50_response_mins)}</div>
+                      <div style="font-size:10px;color:#A8A29E;margin-top:1px">P50响应</div>
+                    </div>
+                    <div style="text-align:center">
+                      <div style="font-family:'JetBrains Mono',monospace;font-size:16px;font-weight:700;color:${(p.open_issues || 0) > 0 ? '#DC2626' : '#1C1917'}">${p.open_issues || 0}</div>
+                      <div style="font-size:10px;color:#A8A29E;margin-top:1px">未闭环</div>
+                    </div>
+                    <div style="text-align:center">
+                      <div style="font-family:'JetBrains Mono',monospace;font-size:16px;font-weight:700;color:#1C1917">${fmtPct(p.commitment_rate)}</div>
+                      <div style="font-size:10px;color:#A8A29E;margin-top:1px">兑现率</div>
+                    </div>
+                  </div>
+                </div>`;
+            }).join('')}
+          </div>
+        `;
+      } catch (e) { console.error('fetchProfiles', e); }
+    }
+
+    async function viewProfileDetail(groupName) {
+      try {
+        const res = await fetch(API_BASE + '/supplier-profiles/' + encodeURIComponent(groupName));
+        const data = await res.json();
+        if (!data.success) { showToast(data.error, 'error'); return; }
+        const p = data.data;
+
+        const sc = p.reliability_score || 0;
+        const scoreColor = sc >= 80 ? '#059669' : (sc >= 60 ? '#D97706' : '#DC2626');
+        const fmtMin = (v) => v != null ? v.toFixed(0) : '-';
+        const fmtPct = (v) => v != null ? (v * 100).toFixed(0) : '-';
+        const fmtDec = (v) => v != null ? v.toFixed(1) : '-';
+        const esc = (v) => escapeHtml(v || '');
+
+        // 评分圆环参数（SVG 120x120 r=52）
+        const ringR = 52;
+        const ringCirc = 2 * Math.PI * ringR;
+        const ringOffset = ringCirc - (sc / 100) * ringCirc;
+
+        // ── 衍生指标 ──
+        const commitmentRate = p.commitment_rate;
+        const recurrenceRate = p.recurrence_rate || 0;
+        const avgResp = p.avg_response_mins;
+        const p50 = p.p50_response_mins;
+        const p95 = p.p95_response_mins;
+        const mttr = p.avg_resolution_mins;
+        const openIssues = p.open_issues || 0;
+        const totalIssues = p.total_issues || 0;
+
+        // ── 定量衍生指标（AI 不可用时的降级估算）──
+        const reportRate = commitmentRate != null ? Math.round(commitmentRate * 100) : null;
+        const deflectIdx = Math.round(recurrenceRate * 100);
+        const fcrDerived = Math.round((1 - recurrenceRate) * 100);
+        const hours = p.active_hours || {};
+        const bizTotal = (hours['06-12'] || 0) + (hours['12-18'] || 0);
+        const offTotal = (hours['00-06'] || 0) + (hours['18-24'] || 0);
+        const weekendRatio = bizTotal > 0 && offTotal > 0 ? (offTotal / Math.max(1, bizTotal)).toFixed(1) : null;
+
+        // ── AI 数据（优先）vs 推导降级 ──
+        const hasAI = !!(p.ai_attitude_tags && p.ai_attitude_tags.length > 0);
+
+        // 态度标签：AI 数据优先，无 AI 时推导
+        const tagClsMap = { '配合积极':'tag-green','配合度低':'tag-red','配合一般':'tag-amber','敷衍拖沓':'tag-amber',
+          '推诿责任':'tag-red','主动预警':'tag-green','被动响应':'tag-amber','传话筒型客服':'tag-amber',
+          '技术兜底强':'tag-indigo','英文主导':'tag-slate','中文主导':'tag-slate','周末响应盲区':'tag-red',
+          '长尾响应慢':'tag-red','消极怠工迹象':'tag-red','沟通回合长':'tag-amber','专业高效':'tag-green',
+          '复发率偏高':'tag-red' };
+        const attitudeTags = hasAI
+          ? (p.ai_attitude_tags || []).map(t => ({ cls: tagClsMap[t] || 'tag-slate', text: t }))
+          : (() => {
+              const tags = [];
+              if (commitmentRate != null && commitmentRate < 0.5) tags.push({ cls: 'tag-red', text: '配合度低' });
+              if (commitmentRate != null && commitmentRate >= 0.5 && commitmentRate < 0.8) tags.push({ cls: 'tag-amber', text: '配合一般' });
+              if (commitmentRate != null && commitmentRate >= 0.8) tags.push({ cls: 'tag-green', text: '配合积极' });
+              if (p95 != null && p95 > 120) tags.push({ cls: 'tag-red', text: '长尾响应慢' });
+              if (recurrenceRate > 0.4) tags.push({ cls: 'tag-red', text: '复发率偏高' });
+              if (p.primary_language) tags.push({ cls: 'tag-slate', text: esc(p.primary_language) + ' 主导' });
+              if (tags.length === 0) tags.push({ cls: 'tag-green', text: '暂无负面标签' });
+              return tags;
+            })();
+
+        // AI 洞察标签
+        const insightClsMap = { '周末响应盲区':'tag-red','问题易复发':'tag-amber','沟通回合长':'tag-amber',
+          '故障高频':'tag-red','传话筒型客服':'tag-amber','技术兜底弱':'tag-red','技术兜底强':'tag-indigo',
+          '南亚通道不稳':'tag-red','运行平稳':'tag-green','工作日响应极快':'tag-green',
+          '主动预警意识弱':'tag-red','首问解决率高':'tag-green','维护规范':'tag-indigo' };
+        const insightTags = hasAI
+          ? (p.ai_insight_tags || []).map(t => ({ cls: insightClsMap[t] || 'tag-slate', text: t }))
+          : (() => {
+              const tags = [];
+              if (weekendRatio != null && parseFloat(weekendRatio) < 0.3) tags.push({ cls: 'tag-red', text: '非工响应盲区' });
+              if (recurrenceRate > 0.3) tags.push({ cls: 'tag-amber', text: '问题易复发' });
+              if (p95 != null && p95 > 90) tags.push({ cls: 'tag-amber', text: '沟通回合长' });
+              if (totalIssues > 5) tags.push({ cls: 'tag-red', text: '故障高频' });
+              if (commitmentRate != null && commitmentRate < 0.6) tags.push({ cls: 'tag-amber', text: '传话筒型客服' });
+              if (p.primary_language) tags.push({ cls: 'tag-slate', text: esc(p.primary_language) + ' 沟通' });
+              if (sc >= 80 && totalIssues <= 2) tags.push({ cls: 'tag-indigo', text: '技术兜底强' });
+              if (tags.length === 0) tags.push({ cls: 'tag-green', text: '运行平稳' });
+              return tags;
+            })();
+
+        // AI 总评文字：AI 数据优先
+        const insightSummary = hasAI && p.ai_insight_summary
+          ? p.ai_insight_summary
+          : (() => {
+              const parts = [];
+              if (avgResp != null && avgResp < 30) parts.push('工作日响应极快');
+              else if (avgResp != null && avgResp < 60) parts.push('响应速度尚可');
+              else if (avgResp != null) parts.push('响应速度偏慢');
+              if (recurrenceRate > 0.3) parts.push('问题复发率偏高');
+              if (commitmentRate != null && commitmentRate < 0.6) parts.push('供应商主动配合意识较弱');
+              if (commitmentRate != null && commitmentRate >= 0.8) parts.push('供应商配合积极，承诺兑现率高');
+              if (p95 != null && p95 > 120) parts.push('P95长尾响应拖沓');
+              if (parts.length === 0) parts.push('暂无足够数据生成综合评估');
+              return parts.join('，') + '。';
+            })();
+
+        // 分项评分：AI 数据优先
+        const aiSub = p.ai_sub_scores || {};
+        const subScores = hasAI && Object.keys(aiSub).length > 0
+          ? [
+              { label: '主动上报与预警', pct: aiSub['主动上报与预警'], color: (aiSub['主动上报与预警'] || 0) >= 70 ? '#059669' : (aiSub['主动上报与预警'] || 0) >= 40 ? '#D97706' : '#DC2626' },
+              { label: '首问解决率 FCR', pct: aiSub['首问解决率FCR'], color: (aiSub['首问解决率FCR'] || 0) >= 70 ? '#059669' : (aiSub['首问解决率FCR'] || 0) >= 40 ? '#D97706' : '#DC2626' },
+              { label: '技术配合态度', pct: aiSub['技术配合态度'], color: (aiSub['技术配合态度'] || 0) >= 80 ? '#059669' : (aiSub['技术配合态度'] || 0) >= 50 ? '#D97706' : '#DC2626' },
+              { label: '计划内变更占比', pct: aiSub['计划内变更占比'], color: (aiSub['计划内变更占比'] || 0) >= 60 ? '#059669' : (aiSub['计划内变更占比'] || 0) >= 30 ? '#D97706' : '#DC2626' },
+            ]
+          : [
+              { label: '主动上报与预警', pct: reportRate, color: reportRate != null ? (reportRate >= 70 ? '#059669' : reportRate >= 40 ? '#D97706' : '#DC2626') : '#A8A29E' },
+              { label: '首问解决率 FCR', pct: fcrDerived, color: fcrDerived >= 70 ? '#059669' : fcrDerived >= 40 ? '#D97706' : '#DC2626' },
+              { label: '技术配合态度', pct: commitmentRate != null ? Math.round(commitmentRate * 100) : null, color: commitmentRate != null ? (commitmentRate >= 0.8 ? '#059669' : commitmentRate >= 0.5 ? '#D97706' : '#DC2626') : '#A8A29E' },
+              { label: '计划内变更占比', pct: null, color: '#A8A29E' },
+            ];
+
+        // 平均交互回合 & FCR：AI 优先
+        const avgTurns = hasAI && p.ai_avg_turns != null ? p.ai_avg_turns.toFixed(1) : null;
+        const fcr = hasAI && p.ai_fcr != null ? Math.round(p.ai_fcr * 100) : fcrDerived;
+
+        // ── 高频技术根因 ──
+        const rootCauses = (p.top_issue_types || []).length > 0
+          ? (p.top_issue_types || []).map((t, i) => {
+              const cnt = Math.max(1, 6 - i * 2);
+              const sev = cnt >= 5 ? '#DC2626' : cnt >= 3 ? '#D97706' : '#A8A29E';
+              return `<div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:8px"><span>${esc(t)}</span><span style="font-family:'JetBrains Mono',monospace;color:${sev};font-weight:600">${cnt}次</span></div>`;
+            }).join('')
+          : '<span style="color:#A8A29E;font-size:13px">暂无高频根因记录</span>';
+
+        // ── 综合诊断 ──
+        const diagItems = [];
+        if (sc < 60) diagItems.push({ color: '#DC2626', text: '综合评分偏低，需重点关注', level: '严重' });
+        if (openIssues >= 3) diagItems.push({ color: '#DC2626', text: '未闭环事项较多：' + openIssues + ' 个', level: '严重' });
+        if (p95 != null && p95 > 60) diagItems.push({ color: '#D97706', text: 'P95 响应偏慢：' + fmtMin(p95), level: '关注' });
+        if (recurrenceRate > 0.3) diagItems.push({ color: '#D97706', text: '问题复发率偏高：' + fmtPct(recurrenceRate), level: '关注' });
+        if (commitmentRate != null && commitmentRate < 0.7) diagItems.push({ color: '#D97706', text: '承诺兑现率偏低：' + fmtPct(commitmentRate), level: '关注' });
+        if (weekendRatio != null && parseFloat(weekendRatio) < 0.3) diagItems.push({ color: '#D97706', text: '非工响应严重不足', level: '关注' });
+        if (sc >= 80) diagItems.push({ color: '#059669', text: '综合评分良好，运行稳定', level: '正常' });
+        if (avgResp != null && avgResp < 30) diagItems.push({ color: '#059669', text: '工作日响应速度达标：' + fmtMin(avgResp), level: '亮点' });
+        if (diagItems.length === 0) diagItems.push({ color: '#059669', text: '各项指标均在正常范围', level: '正常' });
+
+        const levelTagStyle = (lv) => {
+          if (lv === '严重') return 'background:#FEF2F2;color:#DC2626';
+          if (lv === '关注') return 'background:#FFFBEB;color:#D97706';
+          if (lv === '正常' || lv === '亮点') return 'background:#ECFDF5;color:#059669';
+          return 'background:#F8FAFC;color:#475569;border:1px solid #E2E8F0';
+        };
+
+        // ── 告警列表 ──
+        const alertBadgeStyle = (lv) => lv === 'p0' ? 'background:#FEF2F2;color:#DC2626' : 'background:#FFFBEB;color:#D97706';
+        const recentAlertsHtml = (p.recent_alerts || []).length > 0
+          ? (p.recent_alerts || []).slice(0, 5).map(a =>
+            `<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid #F5F5F4;font-size:12px">
+              <span style="font-size:10px;padding:1px 8px;border-radius:999px;font-weight:600;font-family:'JetBrains Mono',monospace;${alertBadgeStyle(a.alert_level)}">${(a.alert_level || '').toUpperCase()}</span>
+              <span style="color:#1C1917;flex:1">${esc(a.trigger_type || a.trigger_keywords || '')}</span>
+              <span style="color:#A8A29E;font-size:11px">${esc(a.created_at || '')}</span>
+            </div>`).join('')
+          : '<span style="color:#A8A29E;font-size:13px">无近期告警</span>';
+
+        // ── 渲染 ──
+        const container = document.getElementById('pf-results');
+        container.innerHTML = `
+<div style="animation:fadeIn 0.5s ease forwards;opacity:0;max-width:1152px;margin:0 auto">
+
+  <!-- ═══ 面包屑 ═══ -->
+  <nav style="display:flex;align-items:center;gap:8px;font-size:13px;color:#A8A29E;margin-bottom:32px">
+    <button onclick="fetchProfiles()" style="background:none;border:none;color:#4F46E5;cursor:pointer;font-size:13px;padding:0">← 供应商矩阵</button>
+    <span>/</span><span>${esc(p.business_sector || '未分类')}</span><span>/</span>
+    <span style="color:#1C1917;font-weight:600">${esc(p.group_name)}</span>
+    <span style="margin-left:auto;display:flex;align-items:center;gap:6px;font-size:12px;color:#059669;font-weight:500">
+      <span style="width:6px;height:6px;border-radius:50%;background:#059669"></span>画像已生成
+    </span>
+  </nav>
+
+  <!-- ═══ 标题 + SLA 圆环 ═══ -->
+  <section style="display:flex;flex-wrap:wrap;gap:32px;margin-bottom:40px;align-items:flex-start">
+    <div style="flex:1;min-width:280px">
+      <p style="color:#4F46E5;font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:0.12em;text-transform:uppercase;margin:0 0 8px 0">ID: ${esc(p.group_name).substring(0, 12).toUpperCase()}</p>
+      <h1 style="font-size:2.5rem;font-weight:700;color:#1C1917;margin:0 0 12px 0;line-height:1.15;letter-spacing:-0.02em">${esc(p.group_name)}</h1>
+      <div style="display:flex;flex-wrap:wrap;align-items:center;gap:6px">
+        <span style="font-size:12px;padding:2px 10px;border-radius:999px;font-weight:500;background:#EEF2FF;color:#4F46E5">${esc(p.business_sector || '未分类')}</span>
+        <span style="font-size:12px;padding:2px 10px;border-radius:999px;font-weight:500;background:#F8FAFC;color:#475569;border:1px solid #E2E8F0">${esc(p.region || '未知区')}</span>
+        <span style="font-size:12px;padding:2px 10px;border-radius:999px;font-weight:500;background:#ECFDF5;color:#059669">${esc((p.platform || 'wa').toUpperCase())}</span>
+        ${p.primary_language ? `<span style="font-size:12px;padding:2px 10px;border-radius:999px;font-weight:500;background:#F8FAFC;color:#475569;border:1px solid #E2E8F0">${esc(p.primary_language)}</span>` : ''}
+      </div>
+    </div>
+    <!-- SLA 圆环（与 demo 一致：120x120, r=52, stroke=10）-->
+    <div style="background:#FFFFFF;border:1px solid #E7E5E4;border-radius:14px;padding:32px;display:flex;flex-direction:column;align-items:center;min-width:180px">
+      <p style="font-size:11px;color:#A8A29E;font-family:'JetBrains Mono',monospace;letter-spacing:0.1em;text-transform:uppercase;margin:0 0 8px 0">综合 SLA 评分</p>
+      <div style="position:relative;width:112px;height:112px;display:flex;align-items:center;justify-content:center">
+        <svg style="position:absolute;inset:0;width:100%;height:100%;transform:rotate(-90deg)" viewBox="0 0 120 120">
+          <circle cx="60" cy="60" r="${ringR}" fill="none" stroke="#F5F5F4" stroke-width="10"/>
+          <circle cx="60" cy="60" r="${ringR}" fill="none" stroke="${scoreColor}" stroke-width="10"
+                  stroke-dasharray="${ringCirc}" stroke-dashoffset="${ringOffset}" stroke-linecap="round"/>
+        </svg>
+        <div style="text-align:center;z-index:10">
+          <span style="font-family:'JetBrains Mono',monospace;font-size:36px;font-weight:700;color:#1C1917">${sc}</span>
+          <span style="color:${scoreColor};font-size:11px;font-weight:700;display:block;margin-top:-2px">PTS</span>
+        </div>
+      </div>
+      <p style="font-size:12px;color:#57534E;margin-top:8px">基于 ${p.total_messages || 0} 条消息评估</p>
+    </div>
+  </section>
+
+  <!-- ═══ 基础指标 4 列 ═══ -->
+  <section style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px;margin-bottom:40px">
+    <div style="background:#FFFFFF;border:1px solid #E7E5E4;border-radius:14px;padding:20px">
+      <p style="font-size:11px;color:#A8A29E;font-family:'JetBrains Mono',monospace;letter-spacing:0.05em;margin:0 0 4px 0">平均响应 P50</p>
+      <span style="font-family:'JetBrains Mono',monospace;font-size:30px;font-weight:700;color:#1C1917">${fmtMin(p50)}<span style="font-size:16px;color:#A8A29E;margin-left:4px">min</span></span>
+      ${p50 != null && p50 < 30 ? '<p style="font-size:12px;color:#059669;margin:4px 0 0 0">↓ 响应迅速</p>' : (p50 != null && p50 > 60 ? '<p style="font-size:12px;color:#D97706;margin:4px 0 0 0">⚠ 偏慢</p>' : '<p style="font-size:12px;color:#A8A29E;margin:4px 0 0 0">近 7 天均值</p>')}
+    </div>
+    <div style="background:#FFFFFF;border:1px solid #E7E5E4;border-radius:14px;padding:20px">
+      <p style="font-size:11px;color:#A8A29E;font-family:'JetBrains Mono',monospace;letter-spacing:0.05em;margin:0 0 4px 0">P95 长尾</p>
+      <span style="font-family:'JetBrains Mono',monospace;font-size:30px;font-weight:700;color:#1C1917">${fmtMin(p95)}<span style="font-size:16px;color:#A8A29E;margin-left:4px">min</span></span>
+      ${p95 != null && p95 > 90 ? '<p style="font-size:12px;color:#D97706;margin:4px 0 0 0">⚠ 偶发拖沓</p>' : '<p style="font-size:12px;color:#A8A29E;margin:4px 0 0 0">近 7 天均值</p>'}
+    </div>
+    <div style="background:#FFFFFF;border:1px solid #E7E5E4;border-radius:14px;padding:20px">
+      <p style="font-size:11px;color:#A8A29E;font-family:'JetBrains Mono',monospace;letter-spacing:0.05em;margin:0 0 4px 0">平均解决 MTTR</p>
+      <span style="font-family:'JetBrains Mono',monospace;font-size:30px;font-weight:700;color:#1C1917">${fmtDec(mttr)}<span style="font-size:16px;color:#A8A29E;margin-left:4px">min</span></span>
+      <p style="font-size:12px;color:#A8A29E;margin:4px 0 0 0">近 7 天均值</p>
+    </div>
+    <div style="background:#FFFFFF;border:1px solid ${openIssues === 0 ? '#D1FAE5' : '#E7E5E4'};border-radius:14px;padding:20px;${openIssues === 0 ? 'background:#F0FDF9;' : ''}">
+      <p style="font-size:11px;color:#A8A29E;font-family:'JetBrains Mono',monospace;letter-spacing:0.05em;margin:0 0 4px 0">逃逸告警</p>
+      <span style="font-family:'JetBrains Mono',monospace;font-size:30px;font-weight:700;color:#059669">${openIssues}</span>
+      <p style="font-size:12px;color:${openIssues === 0 ? '#059669' : '#DC2626'};margin:4px 0 0 0">${openIssues === 0 ? 'SLA 100% 达成' : '待处理 ' + openIssues + ' 项'}</p>
+    </div>
+  </section>
+
+  <!-- ═══ 双栏主内容（7:5，匹配 demo）═══ -->
+  <div style="display:grid;grid-template-columns:7fr 5fr;gap:20px">
+
+    <!-- ★ 左栏：定量指标 ★ -->
+    <div style="display:flex;flex-direction:column;gap:20px">
+
+      <!-- ① 服务态度与配合度 -->
+      <section style="background:#FFFFFF;border:1px solid #E7E5E4;border-radius:14px;padding:24px">
+        <h2 style="font-weight:600;font-size:18px;color:#1C1917;margin:0 0 20px 0;display:flex;align-items:center;gap:8px">
+          <span style="width:6px;height:20px;border-radius:4px;background:#4F46E5;display:inline-block"></span>服务态度与配合度
+        </h2>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px">
+          <div style="background:#FAFAF9;border-radius:12px;padding:16px">
+            <p style="font-size:12px;color:#57534E;margin:0 0 8px 0">主动上报率</p>
+            <div style="display:flex;align-items:baseline;gap:4px;margin-bottom:8px">
+              <span style="font-family:'JetBrains Mono',monospace;font-size:30px;font-weight:700;color:${reportRate != null ? (reportRate >= 60 ? '#059669' : '#DC2626') : '#A8A29E'}">${reportRate != null ? reportRate : '—'}<span style="font-size:18px">${reportRate != null ? '%' : ''}</span></span>
+            </div>
+            <div style="height:6px;background:#F5F5F4;border-radius:999px;overflow:hidden"><div style="height:100%;border-radius:999px;background:${reportRate != null ? (reportRate >= 60 ? '#059669' : '#DC2626') : '#E7E5E4'};width:${reportRate || 0}%"></div></div>
+            <p style="font-size:11px;color:#A8A29E;margin-top:8px">${reportRate != null ? (reportRate >= 60 ? '供应商主动反馈较及时' : '大部分故障系我方先发现') : '暂无承诺履约数据'}</p>
+          </div>
+          <div style="background:#FAFAF9;border-radius:12px;padding:16px">
+            <p style="font-size:12px;color:#57534E;margin:0 0 8px 0">推诿指数</p>
+            <div style="display:flex;align-items:baseline;gap:4px;margin-bottom:8px">
+              <span style="font-family:'JetBrains Mono',monospace;font-size:30px;font-weight:700;color:${deflectIdx <= 20 ? '#059669' : deflectIdx <= 40 ? '#D97706' : '#DC2626'}">${deflectIdx}<span style="font-size:18px">%</span></span>
+            </div>
+            <div style="height:6px;background:#F5F5F4;border-radius:999px;overflow:hidden"><div style="height:100%;border-radius:999px;background:${deflectIdx <= 20 ? '#059669' : deflectIdx <= 40 ? '#D97706' : '#DC2626'};width:${deflectIdx}%"></div></div>
+            <p style="font-size:11px;color:#A8A29E;margin-top:8px">${deflectIdx <= 20 ? '问题复发率低，配合度好' : '问题复发率高，疑似推诿'}</p>
+          </div>
+        </div>
+        <div style="display:flex;flex-wrap:wrap;align-items:center;gap:6px">
+          <span style="font-size:12px;color:#57534E;font-weight:500">态度标签：</span>
+          ${attitudeTags.map(t => `<span style="font-size:12px;padding:2px 10px;border-radius:999px;font-weight:500;${t.cls === 'tag-red' ? 'background:#FEF2F2;color:#DC2626' : t.cls === 'tag-amber' ? 'background:#FFFBEB;color:#D97706' : t.cls === 'tag-green' ? 'background:#ECFDF5;color:#059669' : 'background:#F8FAFC;color:#475569;border:1px solid #E2E8F0'}">${t.text}</span>`).join('')}
+        </div>
+      </section>
+
+      <!-- ② 问题解决效率 -->
+      <section style="background:#FFFFFF;border:1px solid #E7E5E4;border-radius:14px;padding:24px">
+        <h2 style="font-weight:600;font-size:18px;color:#1C1917;margin:0 0 20px 0;display:flex;align-items:center;gap:8px">
+          <span style="width:6px;height:20px;border-radius:4px;background:#2563EB;display:inline-block"></span>问题解决效率
+        </h2>
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:16px">
+          <div style="background:#FAFAF9;border-radius:12px;padding:16px;text-align:center">
+            <p style="font-size:12px;color:#57534E;margin:0 0 4px 0">平均交互回合</p>
+            <span style="font-family:'JetBrains Mono',monospace;font-size:30px;font-weight:700;color:${avgTurns ? (parseFloat(avgTurns) > 6 ? '#DC2626' : parseFloat(avgTurns) > 3 ? '#D97706' : '#059669') : '#1C1917'}">${avgTurns || '—'}</span>
+            <p style="font-size:11px;color:#A8A29E;margin-top:4px">回合 / 单</p>
+            ${!avgTurns ? '<span style="display:inline-block;margin-top:8px;font-size:11px;padding:2px 10px;border-radius:999px;background:#F8FAFC;color:#475569;border:1px solid #E2E8F0">需 NLP 分析</span>' : (parseFloat(avgTurns) > 6 ? '<span style="display:inline-block;margin-top:8px;font-size:11px;padding:2px 10px;border-radius:999px;font-weight:500;background:#FEF2F2;color:#DC2626">偏高</span>' : '')}
+          </div>
+          <div style="background:#FAFAF9;border-radius:12px;padding:16px;text-align:center">
+            <p style="font-size:12px;color:#57534E;margin:0 0 4px 0">首问解决率 FCR</p>
+            <span style="font-family:'JetBrains Mono',monospace;font-size:30px;font-weight:700;color:${fcr >= 70 ? '#059669' : fcr >= 40 ? '#D97706' : '#DC2626'}">${fcr}<span style="font-size:18px">%</span></span>
+            <div style="height:6px;background:#F5F5F4;border-radius:999px;overflow:hidden;margin-top:8px"><div style="height:100%;border-radius:999px;background:${fcr >= 70 ? '#059669' : fcr >= 40 ? '#D97706' : '#DC2626'};width:${fcr}%"></div></div>
+          </div>
+          <div style="background:#FAFAF9;border-radius:12px;padding:16px;text-align:center">
+            <p style="font-size:12px;color:#57534E;margin:0 0 4px 0">非工响应</p>
+            <span style="font-family:'JetBrains Mono',monospace;font-size:30px;font-weight:700;color:${weekendRatio != null && parseFloat(weekendRatio) >= 0.5 ? '#059669' : '#DC2626'}">${weekendRatio != null ? weekendRatio + '×' : '—'}</span>
+            <p style="font-size:11px;color:#A8A29E;margin-top:4px">非工/工时比</p>
+            ${weekendRatio != null && parseFloat(weekendRatio) < 0.3 ? '<span style="display:inline-block;margin-top:8px;font-size:11px;padding:2px 10px;border-radius:999px;background:#FEF2F2;color:#DC2626">严重盲区</span>' : ''}
+          </div>
+        </div>
+      </section>
+
+      <!-- ③ 维护与变更习惯 -->
+      <section style="background:#FFFFFF;border:1px solid #E7E5E4;border-radius:14px;padding:24px">
+        <h2 style="font-weight:600;font-size:18px;color:#1C1917;margin:0 0 20px 0;display:flex;align-items:center;gap:8px">
+          <span style="width:6px;height:20px;border-radius:4px;background:#D97706;display:inline-block"></span>维护与变更习惯
+        </h2>
+        <div style="display:flex;align-items:center;gap:24px">
+          <div style="flex:1">
+            <div style="display:flex;justify-content:space-between;font-size:13px;color:#57534E;margin-bottom:4px">
+              <span>计划内维护占比</span>
+              <span style="font-family:'JetBrains Mono',monospace;font-weight:700;color:${p.ai_planned_maintenance_pct != null ? (p.ai_planned_maintenance_pct >= 0.5 ? '#059669' : '#DC2626') : '#A8A29E'}">${p.ai_planned_maintenance_pct != null ? Math.round(p.ai_planned_maintenance_pct * 100) + '%' : '暂无数据'}</span>
+            </div>
+            <div style="height:6px;background:#F5F5F4;border-radius:999px;overflow:hidden"><div style="height:100%;border-radius:999px;background:${p.ai_planned_maintenance_pct != null ? (p.ai_planned_maintenance_pct >= 0.5 ? '#059669' : '#DC2626') : '#E7E5E4'};width:${p.ai_planned_maintenance_pct != null ? Math.round(p.ai_planned_maintenance_pct * 100) : 0}%"></div></div>
+            <p style="font-size:11px;color:#A8A29E;margin-top:8px">${p.ai_planned_maintenance_pct != null ? (p.ai_planned_maintenance_pct < 0.3 ? '突发故障为主，运维成熟度低' : '计划内维护占比合理') : '需持续监控告警类型以区分计划/突发'}</p>
+          </div>
+          <div style="background:#FAFAF9;border-radius:12px;padding:12px 20px;text-align:center">
+            <span style="font-family:'JetBrains Mono',monospace;font-size:24px;font-weight:700;color:${p.ai_planned_maintenance_pct != null ? (p.ai_planned_maintenance_pct < 0.5 ? '#DC2626' : '#059669') : '#A8A29E'}">${p.ai_planned_maintenance_pct != null ? Math.round((1 - p.ai_planned_maintenance_pct) * 100) : '—'}<span style="font-size:16px">${p.ai_planned_maintenance_pct != null ? '%' : ''}</span></span>
+            <p style="font-size:11px;color:#A8A29E">非计划停机</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- ④ 核心业务特征 -->
+      <section style="background:#FFFFFF;border:1px solid #E7E5E4;border-radius:14px;padding:24px">
+        <h2 style="font-weight:600;font-size:18px;color:#1C1917;margin:0 0 20px 0;display:flex;align-items:center;gap:8px">
+          <span style="width:6px;height:20px;border-radius:4px;background:#059669;display:inline-block"></span>核心业务特征
+        </h2>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+          <div style="background:#FAFAF9;border-radius:12px;padding:16px">
+            <p style="font-size:12px;color:#57534E;margin:0 0 8px 0">高频雷区 / 劣势流向</p>
+            <div style="display:flex;flex-wrap:wrap;gap:6px">
+              <span style="font-size:12px;padding:2px 10px;border-radius:999px;font-weight:500;background:#FEF2F2;color:#DC2626">${esc(p.region || '暂无')}</span>
+              ${(p.top_issue_types || []).slice(0, 2).map(t => `<span style="font-size:12px;padding:2px 10px;border-radius:999px;font-weight:500;background:#FFFBEB;color:#D97706">${esc(t)}</span>`).join('')}
+            </div>
+          </div>
+          <div style="background:#FAFAF9;border-radius:12px;padding:16px">
+            <p style="font-size:12px;color:#57534E;margin:0 0 12px 0">高频技术根因</p>
+            ${rootCauses}
+          </div>
+        </div>
+        <!-- 接口人信息 -->
+        <div style="background:#FAFAF9;border-radius:12px;padding:16px;margin-top:16px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px">
+          <div>
+            <p style="font-size:12px;color:#57534E;margin:0 0 4px 0">核心技术接口人</p>
+            <span style="font-size:12px;padding:2px 10px;border-radius:999px;font-weight:500;font-family:'JetBrains Mono',monospace;background:${p.ai_tech_contact ? '#ECFDF5' : '#F8FAFC'};color:${p.ai_tech_contact ? '#059669' : '#475569'}">${esc(p.ai_tech_contact || '暂未识别')}</span>
+            <span style="font-size:11px;color:#A8A29E;margin-left:8px">${p.ai_tech_contact ? 'AI 识别技术回复者' : '需基于消息发送者分析'}</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:20px;font-size:12px;color:#57534E">
+            <div style="text-align:center"><span style="font-family:'JetBrains Mono',monospace;font-size:18px;font-weight:700;color:#1C1917;display:block">${p.ai_tech_reply_rate != null ? Math.round(p.ai_tech_reply_rate * 100) + '%' : '—'}</span>技术回复率</div>
+            <div style="text-align:center"><span style="font-family:'JetBrains Mono',monospace;font-size:18px;font-weight:700;color:#1C1917;display:block">${p.ai_avg_turns != null ? p.ai_avg_turns.toFixed(1) + 'min' : '—'}</span>平均介入</div>
+          </div>
+        </div>
+        <div style="background:#FAFAF9;border-radius:12px;padding:12px 16px;margin-top:8px;display:flex;align-items:center;gap:8px;opacity:0.6">
+          <span style="font-size:12px;color:#A8A29E">低效接口人：</span>
+          <span style="font-size:11px;padding:2px 10px;border-radius:999px;font-family:'JetBrains Mono',monospace;background:#F8FAFC;color:#475569;border:1px solid #E2E8F0">暂未识别</span>
+          <span style="font-size:11px;color:#A8A29E">需 AI 分析客服话术</span>
+        </div>
+      </section>
+    </div>
+
+    <!-- ★ 右栏：AI 洞察 + 综合诊断 ★ -->
+    <div style="display:flex;flex-direction:column;gap:20px">
+
+      <!-- AI 沟通洞察 -->
+      <section style="background:#FFFFFF;border:1px solid #E7E5E4;border-radius:14px;padding:24px;position:relative;overflow:hidden">
+        <div style="position:absolute;top:0;right:0;width:160px;height:160px;background:rgba(79,70,229,0.03);border-radius:50%;filter:blur(40px);transform:translate(64px,-64px);pointer-events:none"></div>
+        <div style="position:relative;z-index:10">
+          <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px">
+            <div style="width:36px;height:36px;border-radius:8px;background:#4F46E5;color:#fff;display:flex;align-items:center;justify-content:center">
+              <svg style="width:20px;height:20px" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+            </div>
+            <div>
+              <h2 style="font-weight:600;font-size:16px;color:#1C1917;margin:0">AI 沟通洞察</h2>
+              <p style="font-size:11px;color:#A8A29E;font-family:'JetBrains Mono',monospace;margin:0">近 30 天 · 数据分析</p>
+            </div>
+          </div>
+          <!-- 标签 -->
+          <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:20px">
+            ${insightTags.map(t => `<span style="font-size:12px;padding:2px 10px;border-radius:999px;font-weight:500;${t.cls === 'tag-red' ? 'background:#FEF2F2;color:#DC2626' : t.cls === 'tag-amber' ? 'background:#FFFBEB;color:#D97706' : t.cls === 'tag-green' ? 'background:#ECFDF5;color:#059669' : t.cls === 'tag-indigo' ? 'background:#EEF2FF;color:#4F46E5' : 'background:#F8FAFC;color:#475569;border:1px solid #E2E8F0'}">${t.text}</span>`).join('')}
+          </div>
+          <!-- 总评 -->
+          <div style="position:relative;margin-bottom:20px">
+            <span style="position:absolute;top:-4px;left:-2px;font-size:40px;color:rgba(168,162,158,0.2);font-family:'Newsreader','Noto Serif SC',Georgia,serif;line-height:1;pointer-events:none;user-select:none">&ldquo;</span>
+            <p style="font-size:14px;color:#1C1917;line-height:1.75;padding-left:16px;padding-top:4px;font-family:'Newsreader','Noto Serif SC',Georgia,serif">${insightSummary}</p>
+          </div>
+          <!-- 分项评分 -->
+          <div style="display:flex;flex-direction:column;gap:12px">
+            ${subScores.map(s => `
+              <div>
+                <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px"><span style="color:#57534E">${s.label}</span><span style="font-family:'JetBrains Mono',monospace;font-weight:600;color:${s.pct != null ? s.color : '#A8A29E'}">${s.pct != null ? s.pct + '%' : '—'}</span></div>
+                <div style="height:6px;background:#F5F5F4;border-radius:999px;overflow:hidden"><div style="height:100%;border-radius:999px;background:${s.pct != null ? s.color : '#E7E5E4'};width:${s.pct || 0}%"></div></div>
+              </div>`).join('')}
+          </div>
+          <div style="margin-top:20px;padding-top:16px;border-top:1px solid #E7E5E4;display:flex;justify-content:space-between;align-items:center;font-size:12px">
+            <span style="color:#A8A29E;font-family:'JetBrains Mono',monospace">基于 ${p.total_messages || 0} 条消息</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- 综合诊断概要 -->
+      <section style="background:#FFFFFF;border:1px solid #E7E5E4;border-radius:14px;padding:24px">
+        <h2 style="font-weight:600;font-size:16px;color:#1C1917;margin:0 0 16px 0">综合诊断概要</h2>
+        <div style="display:flex;flex-direction:column;gap:8px">
+          ${diagItems.map(d => `
+            <div style="background:#FAFAF9;border-radius:12px;padding:12px 16px;display:flex;align-items:center;justify-content:space-between">
+              <div style="display:flex;align-items:center;gap:8px">
+                <span style="width:8px;height:8px;border-radius:50%;background:${d.color};flex-shrink:0"></span>
+                <span style="font-size:14px;color:#1C1917">${d.text}</span>
+              </div>
+              <span style="font-size:11px;padding:2px 10px;border-radius:999px;font-weight:500;${levelTagStyle(d.level)}">${d.level}</span>
+            </div>`).join('')}
+        </div>
+      </section>
+
+      <!-- 近期告警 -->
+      <section style="background:#FFFFFF;border:1px solid #E7E5E4;border-radius:14px;padding:24px">
+        <h2 style="font-weight:600;font-size:16px;color:#1C1917;margin:0 0 16px 0;display:flex;align-items:center;gap:8px">
+          <span style="width:6px;height:20px;border-radius:4px;background:#DC2626;display:inline-block"></span>近期告警记录
+        </h2>
+        ${recentAlertsHtml}
+      </section>
+
+    </div>
+  </div>
+
+  <!-- 更新时间 -->
+  <p style="font-size:11px;color:#A8A29E;font-family:'JetBrains Mono',monospace;text-align:right;margin-top:24px;padding-top:16px;border-top:1px solid #E7E5E4">
+    数据更新于 ${p.profile_updated_at || p.created_at || '—'}
+  </p>
+
+</div>`;
+      } catch (e) { console.error('viewProfileDetail', e); }
+    }
+
+    // ─── QA 知识库 ────────────────────────────────────────────────
+    let kbPage = 1;
+
+    async function fetchKnowledgeSectors() {
+      try {
+        const res = await fetch(API_BASE + '/knowledge-base/sectors');
+        const data = await res.json();
+        if (data.success) {
+          const sel = document.getElementById('kb-sector');
+          sel.innerHTML = '<option value="">全部板块</option>';
+          data.data.forEach(s => {
+            sel.innerHTML += `<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`;
+          });
+        }
+      } catch (e) { console.error('fetchKnowledgeSectors', e); }
+    }
+
+    async function fetchKnowledgeBase(page) {
+      kbPage = page || 1;
+      const keyword = document.getElementById('kb-search').value.trim();
+      const sector = document.getElementById('kb-sector').value;
+
+      const params = new URLSearchParams({ page: kbPage, limit: 10 });
+      if (keyword) params.set('keyword', keyword);
+      if (sector) params.set('sector', sector);
+
+      try {
+        const res = await fetch(API_BASE + '/knowledge-base?' + params.toString());
+        const data = await res.json();
+        const container = document.getElementById('kb-results');
+        if (!data.success || data.data.length === 0) {
+          container.innerHTML = '<div class="empty-state">暂无QA知识条目，等待问题闭环后自动生成</div>';
+          document.getElementById('kb-pagination').innerHTML = '';
+          return;
+        }
+        container.innerHTML = data.data.map(qa => {
+          const confClass = qa.confidence >= 0.7 ? 'qa-conf-high' : (qa.confidence >= 0.4 ? 'qa-conf-mid' : 'qa-conf-low');
+          const steps = (qa.answer_steps || []).map((s, i) => `<div>${i + 1}. ${escapeHtml(s)}</div>`).join('');
+          const keywords = (qa.question_keywords || []).map(k => `<span class="region-tag" style="background:#edf2f7;color:#4a5568;margin:0 4px 4px 0;font-size:11px">${escapeHtml(k)}</span>`).join('');
+
+          return `
+            <div class="qa-card">
+              <div class="qa-card-header">
+                <span class="badge" style="background:var(--p-light);color:#fff">${escapeHtml(qa.business_sector)}</span>
+                <span class="badge" style="background:#e2e8f0;color:#4a5568">${escapeHtml(qa.question_type)}</span>
+                <span class="qa-card-title">${escapeHtml(qa.question_summary)}</span>
+                <span style="font-size:12px;margin-left:auto" class="${confClass}">置信度 ${(qa.confidence * 100).toFixed(0)}%</span>
+              </div>
+              ${keywords ? `<div style="margin-bottom:8px">${keywords}</div>` : ''}
+              <div class="qa-card-steps">${steps}</div>
+              <div class="qa-card-meta">
+                <span>📋 ${escapeHtml(qa.answer_category || '未知')}</span>
+                <span>🔄 出现 ${qa.frequency} 次</span>
+                <span>📅 ${qa.updated_at || qa.created_at || ''}</span>
+              </div>
+            </div>`;
+        }).join('');
+
+        // 分页
+        const totalPages = Math.ceil(data.total / data.limit);
+        const pagDiv = document.getElementById('kb-pagination');
+        if (totalPages <= 1) { pagDiv.innerHTML = ''; return; }
+        let pagHTML = '';
+        for (let i = 1; i <= totalPages; i++) {
+          pagHTML += `<button class="btn-sm" style="${i === kbPage ? 'background:var(--p);color:#fff' : ''}" onclick="fetchKnowledgeBase(${i})">${i}</button>`;
+        }
+        pagDiv.innerHTML = pagHTML;
+      } catch (e) { console.error('fetchKnowledgeBase', e); }
+    }
+
+    // ─── 设备知识库 ────────────────────────────────────────────────
+    async function fetchDeviceKBCategories() {
+      try {
+        const res = await fetch(API_BASE + '/device-kb/categories');
+        const data = await res.json();
+        const sel = document.getElementById('dkb-category');
+        sel.innerHTML = '<option value="">全部分类</option>' +
+          (data.data || []).map(c => `<option value="${c}">${c}</option>`).join('');
+      } catch (e) { console.error(e); }
+    }
+
+    async function fetchDeviceKB(page = 1) {
+      const keyword = document.getElementById('dkb-search').value.trim();
+      const category = document.getElementById('dkb-category').value;
+      const params = new URLSearchParams({ page, limit: 20 });
+      if (keyword) params.set('keyword', keyword);
+      if (category) params.set('category', category);
+
+      try {
+        const res = await fetch(API_BASE + '/device-kb?' + params.toString());
+        const data = await res.json();
+        const container = document.getElementById('dkb-results');
+        if (!data.success || data.data.length === 0) {
+          container.innerHTML = '<div class="empty-state" style="padding:32px">暂无设备知识数据</div>';
+          return;
+        }
+        const catColors = { '硬件': '#e53e3e', '配置': '#38a169', '网络': '#3182ce', 'SIM': '#d69e2e', 'IMEI': '#805ad5', '端口': '#dd6b20' };
+        container.innerHTML = data.data.map(d => `
+          <div class="qa-card" style="margin-bottom:16px">
+            <div class="qa-card-header">
+              <span><b>${escapeHtml(d.device_model)}</b> ${d.device_type ? '<span class="badge" style="font-size:11px">'+escapeHtml(d.device_type)+'</span>' : ''}</span>
+              <span class="badge" style="background:${catColors[d.fault_category] || '#718096'}15;color:${catColors[d.fault_category] || '#718096'}">${escapeHtml(d.fault_category || '其他')}</span>
+            </div>
+            <div style="font-size:13px;margin:8px 0"><b>故障：</b>${escapeHtml(d.fault_symptom)}</div>
+            <div style="font-size:13px;background:#f7fafc;border-radius:8px;padding:12px"><b>方案：</b>${escapeHtml(d.solution_steps).replace(/\n/g, '<br>')}</div>
+            <div class="qa-card-meta">
+              <span>🔄 ${d.frequency}次</span>
+              <span>✅ ${d.solution_effectiveness || 0}次成功</span>
+              <span>📅 ${(d.last_seen_at ? new Date(d.last_seen_at).toLocaleDateString('zh-CN') : '')}</span>
+              <span>📋 ${escapeHtml(d.source_group_name || '')}</span>
+            </div>
+          </div>
+        `).join('');
+
+        const totalPages = data.pages || 1;
+        document.getElementById('dkb-results').insertAdjacentHTML('beforeend',
+          totalPages > 1 ? `<div style="text-align:center;margin-top:16px">${Array.from({length:totalPages},(_,i)=>`<button class="btn-sm" style="${i+1===page?'background:var(--p);color:#fff':''}" onclick="fetchDeviceKB(${i+1})">${i+1}</button>`).join('')}</div>` : ''
+        );
+      } catch (e) { console.error('fetchDeviceKB', e); }
+    }
+
+    // ─── 内容模板库 ────────────────────────────────────────────────
+    async function fetchTemplatesCustomers() {
+      try {
+        const res = await fetch(API_BASE + '/content-templates/customers');
+        const data = await res.json();
+        const sel = document.getElementById('ctl-customer');
+        sel.innerHTML = '<option value="">全部客户</option>' +
+          (data.data || []).map(c => `<option value="${c}">${c}</option>`).join('');
+      } catch (e) { console.error(e); }
+    }
+
+    async function fetchContentTemplates(page = 1) {
+      const keyword = document.getElementById('ctl-search').value.trim();
+      const customer = document.getElementById('ctl-customer').value;
+      const type = document.getElementById('ctl-type').value;
+      const params = new URLSearchParams({ page, limit: 20 });
+      if (keyword) params.set('keyword', keyword);
+      if (customer) params.set('customer', customer);
+      if (type) params.set('type', type);
+
+      try {
+        const res = await fetch(API_BASE + '/content-templates?' + params.toString());
+        const data = await res.json();
+        const container = document.getElementById('ctl-results');
+        if (!data.success || data.data.length === 0) {
+          container.innerHTML = '<div class="empty-state" style="padding:32px">暂无模板数据，客服审核对话中会自动提取</div>';
+          return;
+        }
+        const resultColors = { 'approved': '#38a169', 'rejected': '#e53e3e', 'modified': '#d69e2e' };
+        const resultLabels = { 'approved': '已批准', 'rejected': '已拒绝', 'modified': '需修改' };
+        container.innerHTML = data.data.map(t => `
+          <div class="qa-card" style="margin-bottom:16px">
+            <div class="qa-card-header">
+              <span><b>${escapeHtml(t.customer_name)}</b> · ${escapeHtml(t.template_type || '未分类')}</span>
+              <span class="badge" style="background:${resultColors[t.review_result] || '#718096'}15;color:${resultColors[t.review_result] || '#718096'}">${resultLabels[t.review_result] || t.review_result}</span>
+            </div>
+            <div style="font-size:13px;margin:8px 0;background:#f7fafc;border-radius:8px;padding:12px;font-family:monospace">${escapeHtml(t.template_content)}</div>
+            <div style="font-size:12px;color:var(--t3);margin-bottom:4px">
+              ${t.target_region ? `🌍 ${escapeHtml(t.target_region)}` : ''} ${t.target_operator ? `📱 ${escapeHtml(t.target_operator)}` : ''}
+            </div>
+            ${t.compliance_notes ? `<div style="font-size:12px;color:var(--t2);margin-bottom:4px">📋 ${escapeHtml(t.compliance_notes)}</div>` : ''}
+            <div class="qa-card-meta">
+              <span>🔄 ${t.frequency}次</span>
+              <span>📅 ${(t.last_seen_at ? new Date(t.last_seen_at).toLocaleDateString('zh-CN') : '')}</span>
+              <span>📋 ${escapeHtml(t.source_group_name || '')}</span>
+            </div>
+          </div>
+        `).join('');
+
+        const totalPages = data.pages || 1;
+        container.insertAdjacentHTML('beforeend',
+          totalPages > 1 ? `<div style="text-align:center;margin-top:16px">${Array.from({length:totalPages},(_,i)=>`<button class="btn-sm" style="${i+1===page?'background:var(--p);color:#fff':''}" onclick="fetchContentTemplates(${i+1})">${i+1}</button>`).join('')}</div>` : ''
+        );
+      } catch (e) { console.error('fetchContentTemplates', e); }
     }
 
   </script>

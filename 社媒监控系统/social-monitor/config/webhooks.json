@@ -1,5 +1,6 @@
 {
-  "_comment": "钉钉机器人 Webhook 配置。每个维度可绑定不同机器人推送到不同群组。",
+  "_naming_convention": "键名格式：{TYPE}_{platform}_{region}_{sector}。TYPE: ALERT/DIGEST/WEEKLY, platform: wa/tg/tgu/teams, region: 与 account-regions.json 的 region 字段一致, sector: 与 business_sector 字段一致（可选，4段精准匹配优先于3段区域兜底）",
+  "_match_priority": "1. TYPE_platform_region_sector（最精确）→ 2. TYPE_platform_region → 3. TYPE_platform → 4. ENV 全局变量兜底",
   "SYSTEM_OPS": {
     "_note": "系统运维告警通道 — 账号掉线、Session 过期、进程崩溃等。推荐单独建一个运维通知群。",
     "url": "",
@@ -10,60 +11,69 @@
       "env_key": "DINGTALK_ALERT, 按平台可通过 DINGTALK_ALERT_WA, DINGTALK_ALERT_TG 分解",
       "description": "🚨 告警群机器人 — 实时P0/P1告警、SID变更通知、问题超时升级",
       "target_group": "供应商监控-告警群",
-      "dimensions": [
-        "维度1-实时告警",
-        "维度2-问题跟进超时推送"
-      ],
       "note": "建议开启钉钉「仅接受该机器人消息」，避免群内消息干扰"
     },
     "digest": {
       "env_key": "DINGTALK_DIGEST, 按平台可通过 DINGTALK_DIGEST_WA, DINGTALK_DIGEST_TG 分解",
       "description": "📋 日报群机器人 — 每天09:00推送前一日各群汇总 + 未闭环事项",
       "target_group": "供应商监控-日报群",
-      "dimensions": [
-        "维度3-每日日报"
-      ],
       "note": "可与运营团队日常群合并，日报频率固定不打扰"
     },
     "weekly": {
       "env_key": "DINGTALK_WEEKLY, 按平台可通过 DINGTALK_WEEKLY_WA, DINGTALK_WEEKLY_TG 分解",
       "description": "📊 周报群机器人 — 每周一09:00推送供应商可靠性评分报告",
       "target_group": "供应商监控-管理周报群",
-      "dimensions": [
-        "维度4-供应商可靠性评分"
-      ],
       "note": "建议邀请管理层进群，作为供应商续签/评级决策参考"
     }
   },
   "_add_robot_guide": [
     "1. 在钉钉群内添加「自定义」机器人，复制 Webhook URL",
-    "2. 在 .env 文件中填写对应的 DINGTALK_* 变量",
-    "3. 若需分平台推送，在 .env 中给特定平台定义后缀，如 DINGTALK_ALERT_WA 或 DINGTALK_DIGEST_TG（未配置时默认取无后缀的通用配置）",
-    "4. 在 robots 对象中新增一条配置描述",
-    "5. 在对应分析脚本中引用 process.env.DINGTALK_XXX"
+    "2. 在下方添加对应键名，或配置 ENV 变量 DINGTALK_DIGEST_wa_欧美区 等",
+    "3. 键名格式：{TYPE}_{platform}_{region} 或 {TYPE}_{platform}_{region}_{sector}"
   ],
   "DIGEST_wa_欧美区": {
+    "_comment": "直连供应商 · 欧美区（Jasmine-001 主责）",
     "url": "https://oapi.dingtalk.com/robot/send?access_token=afa608f1591a6cc2edc4989fe0bc2b6121affef37b9d8c1a9517a3b26a75dd63",
     "secret": "SECcc9dcc889de80edd983ea85266bc891b4399886ffefc9b8c15871bf4fb3d73b1"
   },
   "DIGEST_wa_南亚区": {
+    "_comment": "直连供应商 · 南亚区（Jessica 主责）",
     "url": "https://oapi.dingtalk.com/robot/send?access_token=cea78a68a99a9be30d6f5859c37402403c97ce825b1d5953da18bacabf828c27",
     "secret": "SEC8eaf52ea370fba9d80a252f9d52c44fd73a326babbdc0d8d3ae560869a08110a"
   },
   "DIGEST_wa_亚太区": {
+    "_comment": "直连供应商 · 亚太区",
     "url": "https://oapi.dingtalk.com/robot/send?access_token=985c7d8837a7a355d90b70662338e5bbb1d90620612c097c4e7d5217c3876833",
     "secret": "SEC05b3ba6fee22c287c9fa12c8344d822a2bdda391a8551b277f5587366f2c984c"
   },
   "DIGEST_wa_语音": {
-    "url": "https://oapi.dingtalk.com/robot/send?access_token=581010776788369394a284f25caf92d3562b7654b0b3e5525ef427430949bd50",
-    "secret": "SECb0d401f0d5a1f95cde8c13b642cc1467da74af975c064d342bba8f322f1b8247"
+    "url": "https://oapi.dingtalk.com/robot/send?access_token=7fa885ffe91ff3aff40a1e0f254010fd90f217786c17a05b9b41f6bac91ecc47",
+    "secret": "SEC0c5a4d05a30076d13530c8c18cc4cf1a4e48b515382db0ccdcedb57c895ce608"
   },
-  "ALERT_wa_语音": {
-    "url": "https://oapi.dingtalk.com/robot/send?access_token=581010776788369394a284f25caf92d3562b7654b0b3e5525ef427430949bd50",
-    "secret": "SECb0d401f0d5a1f95cde8c13b642cc1467da74af975c064d342bba8f322f1b8247"
-  },
-  "DIGEST_wa_设备技术": {
+  "DIGEST_tgu_TG-设备支持": {
     "url": "https://oapi.dingtalk.com/robot/send?access_token=0aa5e1fa141ea61c9cae116b24a9bb017cd08ed6cac9ad6cef21a4b29a011e33",
-    "secret": ""
+    "secret": "SECf7948e554cd2b6692b6965a491b550f3c26f6e71cba113576cbde9a6bbbb20f5"
+  },
+  "DIGEST_wa_WA设备技术": {
+    "url": "https://oapi.dingtalk.com/robot/send?access_token=0aa5e1fa141ea61c9cae116b24a9bb017cd08ed6cac9ad6cef21a4b29a011e33",
+    "secret": "SECf7948e554cd2b6692b6965a491b550f3c26f6e71cba113576cbde9a6bbbb20f5"
+  },
+  "DIGEST_tgu_TGlaffic客服": {
+    "_comment": "客服 · Telegram laffic 客服群",
+    "url": "https://oapi.dingtalk.com/robot/send?access_token=c4c42bd6bf97edb93cee7006f86cc0b3a4e97167bb7e4f36d52fb69c02e18088",
+    "secret": "SECea71b759b4cd3ab7e1ba1eaf790f1152d0eeeb2a8e5e1657b331165a3b8c7bb1"
+  },
+  "DIGEST_tgu_TG卡线": {
+    "_comment": "卡线 · Telegram 卡线和双向业务",
+    "url": "https://oapi.dingtalk.com/robot/send?access_token=8fd4cb19fc17f7fb1335a5cab44365f395522de037c8575ece56623a404b59d2",
+    "secret": "SECd6b897d760322e0e550a444b964c1df0c064f7d825cbfff3a2e7693dce0c97d7"
+  },
+  "ALERT_P2_wa_语音": {
+    "url": "https://oapi.dingtalk.com/robot/send?access_token=7fa885ffe91ff3aff40a1e0f254010fd90f217786c17a05b9b41f6bac91ecc47",
+    "secret": "SEC0c5a4d05a30076d13530c8c18cc4cf1a4e48b515382db0ccdcedb57c895ce608"
+  },
+  "ALERT_P1_wa_语音": {
+    "url": "https://oapi.dingtalk.com/robot/send?access_token=7fa885ffe91ff3aff40a1e0f254010fd90f217786c17a05b9b41f6bac91ecc47",
+    "secret": "SEC0c5a4d05a30076d13530c8c18cc4cf1a4e48b515382db0ccdcedb57c895ce608"
   }
 }

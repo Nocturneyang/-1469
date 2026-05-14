@@ -24,29 +24,81 @@ const sessionPath = path.join(__dirname, '..', `whatsapp-session-${accountName}`
 
 // Mark as initializing only if no existing record (avoid overwriting 'authenticated')
 if (updateAccountStatus) {
-    const { db: _db } = require('../db/database');
-    const existing = _db.prepare('SELECT status FROM accounts WHERE id = ?').get(`wa-${accountName}`);
-    if (!existing) {
-        updateAccountStatus(`wa-${accountName}`, 'whatsapp', 'initializing');
-    } else if (existing.status === 'disconnected') {
-        updateAccountStatus(`wa-${accountName}`, 'whatsapp', 'initializing');
+    try {
+        const { db: _db } = require('../db/database');
+        const existing = _db.prepare('SELECT status FROM accounts WHERE id = ?').get(`wa-${accountName}`);
+        if (!existing || existing.status === 'disconnected' || existing.status === 'qr') {
+            updateAccountStatus(`wa-${accountName}`, 'whatsapp', 'initializing');
+        }
+    } catch (e) {
+        console.error('[WA] Status check error:', e.message);
     }
+}
+
+// ─── WebVersion 缓存兜底 ────────────────────────────────────────
+const CACHE_DIR = path.join(__dirname, '..', '.wwebjs_cache');
+const CACHE_FILE = path.join(CACHE_DIR, 'wa-version.html');
+const REMOTE_HTML_URL = 'https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/2.2412.54.html';
+
+function ensureCacheDir() {
+  if (!fs.existsSync(CACHE_DIR)) fs.mkdirSync(CACHE_DIR, { recursive: true });
+}
+
+function tryUpdateCache() {
+  const https = require('https');
+  return new Promise((resolve) => {
+    https.get(REMOTE_HTML_URL, { timeout: 15000 }, (res) => {
+      if (res.statusCode !== 200) { resolve(false); return; }
+      let data = '';
+      res.on('data', (chunk) => data += chunk);
+      res.on('end', () => {
+        if (data.length > 1000) {
+          try { ensureCacheDir(); fs.writeFileSync(CACHE_FILE, data, 'utf8'); } catch (_) {}
+          console.log('[WA] WebVersion HTML 缓存已更新');
+          resolve(true);
+        } else {
+          resolve(false);
+        }
+      });
+    }).on('error', () => resolve(false)).on('timeout', function() { this.destroy(); resolve(false); });
+  });
+}
+
+function getWebVersionConfig() {
+  ensureCacheDir();
+  // 优先使用本地缓存（存在且不过期 — 7天内有效）
+  if (fs.existsSync(CACHE_FILE)) {
+    const stat = fs.statSync(CACHE_FILE);
+    const cacheAge = Date.now() - stat.mtimeMs;
+    if (cacheAge < 7 * 24 * 3600 * 1000) {
+      return { type: 'local', localPath: CACHE_FILE };
+    }
+  }
+  // 尝试从远程更新缓存，同步等待 5 秒
+  // 注：Client 构造时不支持 async，这里尽力而为
+  tryUpdateCache().then((ok) => {
+    if (!ok) console.warn('[WA] 远程 HTML 更新失败，将使用远程直连');
+  });
+  // 有缓存文件就用（即使过期），否则回退远程
+  if (fs.existsSync(CACHE_FILE)) {
+    return { type: 'local', localPath: CACHE_FILE };
+  }
+  return { type: 'remote', remotePath: REMOTE_HTML_URL };
 }
 
 const client = new Client({
     authStrategy: new LocalAuth({ dataPath: sessionPath }),
-    webVersionCache: {
-        type: 'remote',
-        remotePath: 'https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/2.2412.54.html'
-    },
+    webVersionCache: getWebVersionConfig(),
     puppeteer: {
         headless: true,
+        protocolTimeout: 60000,
         args: [
             '--no-sandbox', 
             '--disable-setuid-sandbox', 
             '--disable-dev-shm-usage', 
             '--disable-gpu',
-            '--user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+            '--disable-extensions',
+            '--user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
         ]
     }
 });
@@ -147,17 +199,24 @@ client.on('message_create', async (message) => {
     try {
         // 先跳过各种明显非正常的纯状态/系统类或无用协议类型的消息，保护后续调用
         if (!message || !message.from) return;
-        const skipTypes = ['e2e_notification', 'protocol', 'gp2', 'notification_template', 'call_log', 'revoked'];
+        const skipTypes = ['e2e_notification', 'protocol', 'gp2', 'notification_template', 'call_log', 'revoked', 'chat_event'];
         if (skipTypes.includes(message.type)) return;
 
-        const chat = await message.getChat();
+        const chat = await message.getChat().catch(err => {
+            console.error(`[WA] Failed to get chat for message ${message.id.id}:`, err.message);
+            return null;
+        });
         if (!chat || !chat.isGroup) return; // Only process group messages
 
         let contact;
-        if (message.fromMe && client.info && client.info.wid) {
-            contact = await client.getContactById(client.info.wid._serialized).catch(() => null);
-        } else {
-            contact = await message.getContact().catch(() => null);
+        try {
+            if (message.fromMe && client.info && client.info.wid) {
+                contact = await client.getContactById(client.info.wid._serialized).catch(() => null);
+            } else {
+                contact = await message.getContact().catch(() => null);
+            }
+        } catch (contactErr) {
+            console.error(`[WA] Error getting contact in ${chat.name || 'Unknown Group'}:`, contactErr.message);
         }
 
         // 如果是系统消息或获取不到，回退保护

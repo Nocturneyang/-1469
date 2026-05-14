@@ -5,53 +5,7 @@
  * - UI 查询时只返回 '已配置' / '未配置'，不回显原文
  * - 频控参数也从 .env 中读写（TG_WARMUP_SECONDS_{NAME} 等）
  */
-const path = require('path');
-const fs = require('fs');
-
-const ENV_PATH = path.join(__dirname, '..', '.env');
-
-// ─── 底层：读取整个 .env 为 key-value map ────────────────────────────────────
-function readEnvFile() {
-    if (!fs.existsSync(ENV_PATH)) return {};
-    const lines = fs.readFileSync(ENV_PATH, 'utf8').split('\n');
-    const map = {};
-    for (const line of lines) {
-        const trimmed = line.trim();
-        if (!trimmed || trimmed.startsWith('#')) continue;
-        const eqIdx = trimmed.indexOf('=');
-        if (eqIdx === -1) continue;
-        const key = trimmed.slice(0, eqIdx).trim();
-        const val = trimmed.slice(eqIdx + 1).trim();
-        map[key] = val;
-    }
-    return map;
-}
-
-// ─── 底层：原子写入单个 key 到 .env（追加或替换）────────────────────────────
-function writeEnvKey(key, value) {
-    let content = fs.existsSync(ENV_PATH) ? fs.readFileSync(ENV_PATH, 'utf8') : '';
-    const regex = new RegExp(`^(${key}=.*)$`, 'm');
-    const newLine = `${key}=${value}`;
-    if (regex.test(content)) {
-        content = content.replace(regex, newLine);
-    } else {
-        // 追加到文件末尾
-        content = content.trimEnd() + '\n' + newLine + '\n';
-    }
-    fs.writeFileSync(ENV_PATH, content, 'utf8');
-    // 同步更新当前进程的 process.env
-    process.env[key] = value;
-}
-
-// ─── 删除 .env 中的某个 key ──────────────────────────────────────────────────
-function deleteEnvKey(key) {
-    if (!fs.existsSync(ENV_PATH)) return;
-    let content = fs.readFileSync(ENV_PATH, 'utf8');
-    const regex = new RegExp(`^${key}=.*\n?`, 'm');
-    content = content.replace(regex, '');
-    fs.writeFileSync(ENV_PATH, content, 'utf8');
-    delete process.env[key];
-}
+const { readEnvFile, writeEnvKeys } = require('./env-config');
 
 // ─── Session String ──────────────────────────────────────────────────────────
 
@@ -72,7 +26,7 @@ function getSession(accountName) {
  */
 function saveSession(accountName, sessionString) {
     const key = `TG_USER_SESSION_${accountName.toUpperCase()}`;
-    writeEnvKey(key, sessionString);
+    writeEnvKeys({ [key]: sessionString });
     console.log(`[SessionStore] Session saved for account: ${accountName}`);
 }
 
@@ -82,7 +36,7 @@ function saveSession(accountName, sessionString) {
  */
 function revokeSession(accountName) {
     const key = `TG_USER_SESSION_${accountName.toUpperCase()}`;
-    deleteEnvKey(key);
+    writeEnvKeys({ [key]: '' });
     console.log(`[SessionStore] Session revoked for account: ${accountName}`);
 }
 
@@ -142,7 +96,7 @@ function saveRateLimit(accountName, config) {
     for (const [param, val] of Object.entries(config)) {
         if (param in RATELIMIT_DEFAULTS) {
             const key = `TG_${param.toUpperCase()}_${name}`;
-            writeEnvKey(key, String(val));
+            writeEnvKeys({ [key]: String(val) });
         }
     }
     console.log(`[SessionStore] Rate limit config saved for account: ${accountName}`);

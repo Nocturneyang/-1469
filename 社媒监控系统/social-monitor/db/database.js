@@ -2,8 +2,10 @@ const Database = require('better-sqlite3');
 const path = require('path');
 const fs = require('fs');
 
-const dbPath = path.join(__dirname, 'database.sqlite');
-const mediaDir = path.join(__dirname, '..', 'media');
+const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '..');
+const dbPath = path.join(DATA_DIR, 'db', 'database.sqlite');
+const mediaDir = path.join(DATA_DIR, 'media');
+const REGION_CONFIG_PATH = path.join(DATA_DIR, 'config', 'account-regions.json');
 
 // Ensure media directory exists
 if (!fs.existsSync(mediaDir)) {
@@ -15,7 +17,28 @@ const db = new Database(dbPath);
 // Enable WAL mode for better concurrency performance
 db.pragma('journal_mode = WAL');
 
-// Initialize schema
+// ... [schema setup] ...
+
+// Helper function to read business_sector from JSON
+let _cachedRegions = null;
+let _lastCacheTime = 0;
+function getBusinessSector(receiverAccount) {
+    try {
+        const now = Date.now();
+        if (!_cachedRegions || now - _lastCacheTime > 60000) {
+            const config = JSON.parse(fs.readFileSync(REGION_CONFIG_PATH, 'utf8'));
+            _cachedRegions = Object.fromEntries(config.accounts.map(a => [a.account, a]));
+            _lastCacheTime = now;
+        }
+        
+        const info = _cachedRegions[receiverAccount];
+                     
+        return info ? (info.business_sector || null) : null;
+    } catch (e) {
+        return null;
+    }
+}
+
 function initSchema() {
     db.exec(`
         CREATE TABLE IF NOT EXISTS messages (
@@ -50,11 +73,19 @@ function initSchema() {
     // Migration: Add is_synced column if it doesn't exist (for existing databases)
     try {
         const tableInfo = db.prepare("PRAGMA table_info(messages)").all();
+        
         const columnExists = tableInfo.some(col => col.name === 'is_synced');
         if (!columnExists) {
             db.exec("ALTER TABLE messages ADD COLUMN is_synced INTEGER DEFAULT 0");
             console.log('Migrated database: added is_synced column and index');
         }
+
+        const businessSectorExists = tableInfo.some(col => col.name === 'business_sector');
+        if (!businessSectorExists) {
+            db.exec("ALTER TABLE messages ADD COLUMN business_sector TEXT");
+            console.log('Migrated database: added business_sector column');
+        }
+
         db.exec("CREATE INDEX IF NOT EXISTS idx_messages_is_synced ON messages(is_synced)");
     } catch (err) {
         console.error('Migration error:', err.message);
@@ -68,15 +99,19 @@ function saveMessage(data) {
     try {
         const stmt = db.prepare(`
             INSERT INTO messages (
-                platform, receiver_account, message_id, group_id, group_name, sender_id, sender_name,
+                platform, receiver_account, business_sector, message_id, group_id, group_name, sender_id, sender_name,
                 content, has_media, media_path, timestamp, raw_data, created_at
             ) VALUES (
-                @platform, @receiver_account, @message_id, @group_id, @group_name, @sender_id, @sender_name,
+                @platform, @receiver_account, @business_sector, @message_id, @group_id, @group_name, @sender_id, @sender_name,
                 @content, @has_media, @media_path, @timestamp, @raw_data, datetime('now')
             )
             ON CONFLICT(platform, message_id) DO NOTHING
         `);
-        return stmt.run({ receiver_account: 'default', ...data });
+
+        // dynamically look up business_sector if not provided directly
+        const bs = data.business_sector !== undefined ? data.business_sector : getBusinessSector(data.receiver_account);
+
+        return stmt.run({ receiver_account: 'default', business_sector: bs, ...data });
     } catch (err) {
         console.error('Error saving message:', err.message);
         return null;

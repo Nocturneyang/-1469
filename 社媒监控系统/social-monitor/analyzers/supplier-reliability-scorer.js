@@ -20,16 +20,16 @@ const cron = require('node-cron');
 const dingtalk = require('../lib/dingtalk');
 const aiClient = require('../lib/ai-client');
 
-const ROOT = path.resolve(__dirname, '..');
+const ROOT = process.env.DATA_DIR || path.resolve(__dirname, '..');
 
 const analyticsDb = new Database(path.join(ROOT, 'db', 'analytics.sqlite'));
 analyticsDb.pragma('journal_mode = WAL');
 
 const insertSnapshot = analyticsDb.prepare(`
   INSERT INTO reliability_snapshots (
-    week_start, group_name, region, total_issues,
+    week_start, group_name, region, business_sector, total_issues,
     commitment_rate, proactive_rate, reliability_score, still_open
-  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 `);
 
 // ─── 区域配置 ────────────────────────────────────────────────────
@@ -41,10 +41,17 @@ const REGION_MAP = Object.fromEntries(
 );
 
 function getRegionLabel(receiverAccount) {
-  const info = REGION_MAP[`wa-${receiverAccount}`] ||
-               REGION_MAP[`tg-${receiverAccount}`] ||
-               REGION_MAP[receiverAccount];
-  return info || { region: '未知区', platform: 'wa' };
+  const info = REGION_MAP[receiverAccount];
+  return info || { region: '未知区', business_sector: null, platform: 'wa' };
+}
+
+function getValueLabel(receiverAccount, groupName) {
+  // 群级别覆盖优先
+  if (groupName && accountConfig._group_overrides?.[groupName]?.value_label) {
+    return accountConfig._group_overrides[groupName].value_label;
+  }
+  const info = REGION_MAP[receiverAccount];
+  return (info && info.value_label) || 'L1';
 }
 
 // ─── 时间工具 ─────────────────────────────────────────────────────
@@ -117,8 +124,13 @@ async function generateWeeklyReliabilityReport() {
   
   for (const s of stats) {
     const regionInfo = getRegionLabel(s.receiver_account);
+
+    // L3 群不纳入周报评分
+    const label = getValueLabel(s.receiver_account, s.group_name);
+    if (label === 'L3') continue;
+
     const platform = regionInfo.platform || 'wa';
-    
+
     s.score = calcReliabilityScore(s);
     s.proactive_rate = null; // 暂无计算逻辑，留空
     
@@ -130,6 +142,7 @@ async function generateWeeklyReliabilityReport() {
       range.dateStr,
       s.group_name,
       s.region || regionInfo.region || '未知区',
+      regionInfo.business_sector || null,
       s.total_issues,
       s.commitment_rate,
       s.proactive_rate,
@@ -255,3 +268,9 @@ if (process.argv.includes('--now')) {
   console.log('[supplier-scorer] 手动触发...');
   generateWeeklyReliabilityReport().catch(console.error);
 }
+
+process.on('SIGINT', () => {
+    console.log('[supplier-scorer] SIGINT 收到，正在优雅关闭...');
+    try { analyticsDb.close(); } catch (_) {}
+    process.exit(0);
+});

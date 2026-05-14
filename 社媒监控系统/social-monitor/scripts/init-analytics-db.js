@@ -13,7 +13,7 @@ const path = require('path');
 const fs = require('fs');
 const Database = require('better-sqlite3');
 
-const ROOT = path.resolve(__dirname, '..');
+const ROOT = process.env.DATA_DIR || path.resolve(__dirname, '..');
 const ANALYTICS_DB_PATH = path.join(ROOT, 'db', 'analytics.sqlite');
 const SCHEMA_PATH = path.join(__dirname, 'analytics-schema.sql');
 

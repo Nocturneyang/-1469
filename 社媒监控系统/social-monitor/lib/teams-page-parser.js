@@ -18,7 +18,7 @@ const SELECTORS = {
     loginPage: 'input[type="email"], [data-tid="login-btn"]',
     
     // 主界面已加载
-    mainApp: '[data-tid="app-layout"], [data-tid="app-wrapper"], .app-wrapper',
+    mainApp: '[data-tid="app-layout"], [data-tid="app-wrapper"], .app-wrapper, #app, #teams-app-div, #teams-app, [data-tid="chat-list"], [aria-label="Chat"], [data-tid="left-rail-chat-button"]',
     
     // 左侧 Chat 列表
     chatList: '[data-tid="chat-list"], [aria-label="Chat list"], [data-tid="left-rail-chat-button"]',

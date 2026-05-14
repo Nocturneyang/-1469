@@ -37,19 +37,25 @@ const { sendAlert, sendAccountAlert } = require('../lib/dingtalk');
 
 // ─── 配置读取 ────────────────────────────────────────────────────────────────
 const accountName = process.env.TG_ACCOUNT_NAME || 'default';
-const apiId = parseInt(process.env.TG_API_ID || '0', 10);
-const apiHash = process.env.TG_API_HASH || '';
+const accountKey = accountName.toUpperCase().replace(/-/g, '_');
+
+// 优先读取账号专属环境变量 TG_API_ID_{NAME} / TG_API_HASH_{NAME}，其次通用变量
+const apiId = parseInt(
+    process.env[`TG_API_ID_${accountKey}`] ||
+    process.env.TG_API_ID || '0', 10
+);
+const apiHash =
+    process.env[`TG_API_HASH_${accountKey}`] ||
+    process.env.TG_API_HASH || '';
 
 if (!apiId || !apiHash) {
     console.warn(`⚠️ [TGUser:${accountName}] TG_API_ID or TG_API_HASH not configured. Worker idle.`);
-    // 保持进程存活，等待配置
     setInterval(() => { }, 3600000);
     return;
 }
 
 // 频控参数
 const rateCfg = getRateLimit(accountName);
-const accountKey = accountName.toUpperCase().replace(/-/g, '_');
 const WARMUP_SECONDS = parseInt(process.env[`TG_WARMUP_SECONDS_${accountKey}`] || process.env.TG_WARMUP_SECONDS || String(rateCfg.warmup_seconds), 10);
 const ENABLE_BACKFILL = (process.env[`TG_ENABLE_BACKFILL_${accountKey}`] || process.env.TG_ENABLE_BACKFILL || String(rateCfg.enable_backfill)) !== 'false';
 const BACKFILL_DAYS = parseInt(process.env[`TG_BACKFILL_DAYS_${accountKey}`] || process.env.TG_BACKFILL_DAYS || String(rateCfg.backfill_days), 10);
@@ -92,7 +98,8 @@ async function main() {
         global[`tgu_client_${accountName}`] = client;
         global[`tgu_session_${accountName}`] = session;
 
-        // 等待登录完成：优先检查文件信号（跨进程），兼容全局变量（同进程）
+        // 等待登录完成：优先检查文件信号（跨进程），兼容全局变量（同进程），
+        // 兜底：若 Session 已写入 .env（登录成功但白名单步骤被跳过），也自动放行
         while (true) {
             if (global[`tgu_logged_in_${accountName}`]) break;
             try {
@@ -100,6 +107,12 @@ async function main() {
                 const statusObj = JSON.parse(statusRaw);
                 if (statusObj.status === 'login_complete') break;
             } catch (_) { }
+            // 兜底检测：Session 已存在则说明登录已完成，跳过白名单步骤直接放行
+            const envSession = getSession(accountName);
+            if (envSession) {
+                console.log(`[TGUser:${accountName}] Session detected in store (whitelist step may have been skipped). Auto-proceeding...`);
+                break;
+            }
             await sleep(2000);
         }
         // 当收到放行信号，说明 UI 已保存完毕，重新加载环境变量

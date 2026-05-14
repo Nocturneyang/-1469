@@ -6,9 +6,12 @@ const { db } = require('./db/database');
 
 // Configuration
 const SYNC_URL = process.env.SYNC_URL || "https://nwp-service.tyhsys.com/api/v1/social-monitor/messages/sync";
-// Default token provided in the integration guide
-const DEFAULT_TOKEN = "eyJ0eXAiOiJKV1QiLCJhbGciOiJSUzI1NiIsImp0aSI6ImQyZWE2YjdiNzc4OWNhZjFiNzJjZmVjZGVlMDNjMWQyYWZmNWMwYzUwMDdlOTk1YjU0N2NmYzdkMTlkMTgxMThhNWQyZTJiZWFkNWIxOTIwIn0.eyJhdWQiOiIxIiwianRpIjoiZDJlYTZiN2I3Nzg5Y2FmMWI3MmNmZWNkZWUwM2MxZDJhZmY1YzBjNTAwN2U5OTViNTQ3Y2ZjN2QxOWQxODExOGE1ZDJlMmJlYWQ1YjE5MjAiLCJpYXQiOjE3NzYxNTQ1MjQsIm5iZiI6MTc3NjE1NDUyNCwiZXhwIjoxODA3NjkwNTI0LCJzdWIiOiIxIiwic2NvcGVzIjpbXX0.MWCHHUwXh1BHiNofA6YkyK2aBRI0_Ej5Q7-AS1qQ8kEa-0vSDjB6MKX7kvgOKqzISOrb0wISHXRp48BzmHwO__PKQmfpUgnSTDg9ONRb4C8CZCN4sSH8HG7Y-eRvDGiwJXgkQmfrh9ungBDnrQUf0Tng4ud2Mx9jgVpx74mAVEHdz9sz1CPhzHZmTgSHaAPtQHwqiFQoQjfzXOATc0JsOvAjrLTTrpu5EagIAJrXqIgLuN7TjdTbEqj-HBuEK84VyvYbDZdG00mnO1nXsVH5EzJgFenZjeXmC6N0czWa9ZJR7OC9_CGaGzJzyLMvITTflBYIgZrk7YfEzrS7Epn2zWcDxXrYt6IJS-vyQp_TD5mQYc4SpvWHLUKp0Po-VPYFRBj8zabpH80KOnI8Y8i4DNDnaafBuJoWVzTyMCG3AdtC5t5J-IWksz6a47EPJBmc_u6NPvDaHFwycbFP1JzjFkLKkziXTUGDw6sV9uVz5AXe2h-58MiWu8MECA-lt6MIfilCUeh85TqEphBS3yK9sh-VVDEqgLhTVu0hL6L-ILZses2dioDBLsd8Td6aOpHUsAo-xkHGIjpeK8t6O2p8pfhLtzBsEU2wDg9y22sqrDP654yCkRC-A3YAyc7rZui_mjH45MMJLmcfPlbsW3lXSK85CzREIrILk_G5EgpDTEk";
-const SYNC_TOKEN = process.env.SYNC_TOKEN || DEFAULT_TOKEN;
+const SYNC_TOKEN = process.env.SYNC_TOKEN;
+
+if (!SYNC_TOKEN) {
+    console.error('[Sync Agent] FATAL: SYNC_TOKEN 环境变量未配置，无法启动同步。请在 .env 中配置 SYNC_TOKEN。');
+    process.exit(1);
+}
 // Base64 传输会显著膨胀请求体积，限制每批 50 条防止网络包过大
 const BATCH_SIZE = 50;
 
@@ -117,4 +120,10 @@ console.log(`[Sync Agent] Batch size: ${BATCH_SIZE}`);
 
 // 初次启动立即跑一次
 syncMessagesToCenter();
+
+process.on('SIGINT', () => {
+    console.log('[Sync Agent] SIGINT 收到，正在优雅关闭...');
+    try { db.close(); } catch (_) {}
+    process.exit(0);
+});
 
