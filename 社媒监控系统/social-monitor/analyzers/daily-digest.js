@@ -513,33 +513,40 @@ function formatDigest(summaries, silentGroups, range, allOpenIssues, trend, regi
   return lines.join('\n');
 }
 
-// ─── Cron 调度 ────────────────────────────────────────────────────
-// 每天 09:00 Asia/Shanghai 触发
-cron.schedule('0 9 * * *', async () => {
-  try {
-    await generateDailyDigest();
-  } catch (err) {
-    console.error('[daily-digest] 生成失败:', err.message);
+module.exports = {
+  generateDailyDigest,
+  formatDigest,
+};
+
+if (require.main === module) {
+  // ─── Cron 调度 ────────────────────────────────────────────────────
+  // 每天 09:00 Asia/Shanghai 触发
+  cron.schedule('0 9 * * *', async () => {
+    try {
+      await generateDailyDigest();
+    } catch (err) {
+      console.error('[daily-digest] 生成失败:', err.message);
+    }
+  }, { timezone: 'Asia/Shanghai' });
+
+  console.log('[daily-digest] 已启动，定时任务：每天 09:00 (Asia/Shanghai) 触发');
+
+  // 支持命令行手动触发：node analyzers/daily-digest.js --now
+  if (process.argv.includes('--now')) {
+    console.log('[daily-digest] 手动触发...');
+    generateDailyDigest().then(() => {
+      console.log('[daily-digest] 手动推送完成，关闭临时进程');
+      process.exit(0);
+    }).catch((err) => {
+      console.error(err);
+      process.exit(1);
+    });
   }
-}, { timezone: 'Asia/Shanghai' });
 
-console.log('[daily-digest] 已启动，定时任务：每天 09:00 (Asia/Shanghai) 触发');
-
-// 支持命令行手动触发：node analyzers/daily-digest.js --now
-if (process.argv.includes('--now')) {
-  console.log('[daily-digest] 手动触发...');
-  generateDailyDigest().then(() => {
-    console.log('[daily-digest] 手动推送完成，关闭临时进程');
-    process.exit(0);
-  }).catch((err) => {
-    console.error(err);
-    process.exit(1);
+  process.on('SIGINT', () => {
+      console.log('[daily-digest] SIGINT 收到，正在优雅关闭...');
+      try { sourceDb.close(); } catch (_) {}
+      try { analyticsDb.close(); } catch (_) {}
+      process.exit(0);
   });
 }
-
-process.on('SIGINT', () => {
-    console.log('[daily-digest] SIGINT 收到，正在优雅关闭...');
-    try { sourceDb.close(); } catch (_) {}
-    try { analyticsDb.close(); } catch (_) {}
-    process.exit(0);
-});

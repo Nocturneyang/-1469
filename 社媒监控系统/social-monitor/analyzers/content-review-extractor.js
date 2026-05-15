@@ -247,12 +247,18 @@ function tick() {
   setTimeout(tick, 60000); // 1分钟轮询一次
 }
 
-console.log('[content-review-extractor] 启动，轮询间隔: 60s');
-tick();
+module.exports = {
+  processMessages,
+};
 
-process.on('SIGINT', () => {
-    console.log('[content-review-extractor] SIGINT 收到，正在优雅关闭...');
-    try { sourceDb.close(); } catch (_) {}
-    try { analyticsDb.close(); } catch (_) {}
-    process.exit(0);
-});
+if (require.main === module) {
+  console.log('[content-review-extractor] 启动，轮询间隔: 60s');
+  tick();
+
+  process.on('SIGINT', () => {
+      console.log('[content-review-extractor] SIGINT 收到，正在优雅关闭...');
+      try { sourceDb.close(); } catch (_) {}
+      try { analyticsDb.close(); } catch (_) {}
+      process.exit(0);
+  });
+}

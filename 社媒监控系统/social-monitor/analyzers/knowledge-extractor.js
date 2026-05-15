@@ -393,24 +393,30 @@ async function tick() {
   setTimeout(tick, SCAN_INTERVAL);
 }
 
-console.log('[knowledge-extractor] 启动，每60秒扫描新闭环问题');
-tick();
+module.exports = {
+  processNewlyClosedIssues,
+};
 
-// 支持手动触发 --now
-if (process.argv.includes('--now')) {
-  console.log('[knowledge-extractor] 手动触发一次全量提取...');
-  processNewlyClosedIssues().then(() => {
-    console.log('[knowledge-extractor] 手动提取完成');
-    process.exit(0);
-  }).catch((err) => {
-    console.error(err);
-    process.exit(1);
+if (require.main === module) {
+  console.log('[knowledge-extractor] 启动，每60秒扫描新闭环问题');
+  tick();
+
+  // 支持手动触发 --now
+  if (process.argv.includes('--now')) {
+    console.log('[knowledge-extractor] 手动触发一次全量提取...');
+    processNewlyClosedIssues().then(() => {
+      console.log('[knowledge-extractor] 手动提取完成');
+      process.exit(0);
+    }).catch((err) => {
+      console.error(err);
+      process.exit(1);
+    });
+  }
+
+  process.on('SIGINT', () => {
+      console.log('[knowledge-extractor] SIGINT 收到，正在优雅关闭...');
+      try { sourceDb.close(); } catch (_) {}
+      try { analyticsDb.close(); } catch (_) {}
+      process.exit(0);
   });
 }
-
-process.on('SIGINT', () => {
-    console.log('[knowledge-extractor] SIGINT 收到，正在优雅关闭...');
-    try { sourceDb.close(); } catch (_) {}
-    try { analyticsDb.close(); } catch (_) {}
-    process.exit(0);
-});

@@ -251,26 +251,33 @@ function formatReport(stats, range, aiInsight, regionName = null) {
   return lines.join('\n');
 }
 
-// ─── Cron 调度 ────────────────────────────────────────────────────
-// 每周一 09:00 Asia/Shanghai 触发
-cron.schedule('0 9 * * 1', async () => {
-  try {
-    await generateWeeklyReliabilityReport();
-  } catch (err) {
-    console.error('[supplier-scorer] 生成失败:', err.message);
+module.exports = {
+  generateWeeklyReliabilityReport,
+  formatReport,
+};
+
+if (require.main === module) {
+  // ─── Cron 调度 ────────────────────────────────────────────────────
+  // 每周一 09:00 Asia/Shanghai 触发
+  cron.schedule('0 9 * * 1', async () => {
+    try {
+      await generateWeeklyReliabilityReport();
+    } catch (err) {
+      console.error('[supplier-scorer] 生成失败:', err.message);
+    }
+  }, { timezone: 'Asia/Shanghai' });
+
+  console.log('[supplier-scorer] 已启动，定时任务：每周一 09:00 (Asia/Shanghai) 触发');
+
+  // 支持命令行手动触发：node analyzers/supplier-reliability-scorer.js --now
+  if (process.argv.includes('--now')) {
+    console.log('[supplier-scorer] 手动触发...');
+    generateWeeklyReliabilityReport().catch(console.error);
   }
-}, { timezone: 'Asia/Shanghai' });
 
-console.log('[supplier-scorer] 已启动，定时任务：每周一 09:00 (Asia/Shanghai) 触发');
-
-// 支持命令行手动触发：node analyzers/supplier-reliability-scorer.js --now
-if (process.argv.includes('--now')) {
-  console.log('[supplier-scorer] 手动触发...');
-  generateWeeklyReliabilityReport().catch(console.error);
+  process.on('SIGINT', () => {
+      console.log('[supplier-scorer] SIGINT 收到，正在优雅关闭...');
+      try { analyticsDb.close(); } catch (_) {}
+      process.exit(0);
+  });
 }
-
-process.on('SIGINT', () => {
-    console.log('[supplier-scorer] SIGINT 收到，正在优雅关闭...');
-    try { analyticsDb.close(); } catch (_) {}
-    process.exit(0);
-});

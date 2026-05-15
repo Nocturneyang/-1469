@@ -687,13 +687,20 @@ async function tick() {
   setTimeout(tick, getPollingInterval());
 }
 
-// ─── 启动 ────────────────────────────────────────────────────────
-console.log('[supplier-analyzer] 启动，分时轮询：高峰15s / 普通30s / 低谷60s');
-tick();
+module.exports = {
+  processNewMessages,
+  getPollingInterval,
+};
 
-process.on('SIGINT', () => {
-    console.log('[supplier-analyzer] SIGINT 收到，正在优雅关闭...');
-    try { sourceDb.close(); } catch (_) {}
-    try { analyticsDb.close(); } catch (_) {}
-    process.exit(0);
-});
+if (require.main === module) {
+  // ─── 启动 ────────────────────────────────────────────────────────
+  console.log('[supplier-analyzer] 启动，分时轮询：高峰15s / 普通30s / 低谷60s');
+  tick();
+
+  process.on('SIGINT', () => {
+      console.log('[supplier-analyzer] SIGINT 收到，正在优雅关闭...');
+      try { sourceDb.close(); } catch (_) {}
+      try { analyticsDb.close(); } catch (_) {}
+      process.exit(0);
+  });
+}

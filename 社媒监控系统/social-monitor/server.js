@@ -3,9 +3,102 @@ const cors = require('cors');
 const path = require('path');
 const { db } = require('./db/database');
 const fs = require('fs');
+const jwt = require('jsonwebtoken');
+const bcrypt = require('bcryptjs');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+const JWT_SECRET = process.env.JWT_SECRET || 'social-monitor-fallback-secret';
+
+// ─── 认证中间件 (Auth Middleware) ──────────────────────────────────
+function authenticateToken(req, res, next) {
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+
+    if (!token) return res.status(401).json({ success: false, error: 'Unauthorized (Token missing)' });
+
+    jwt.verify(token, JWT_SECRET, (err, user) => {
+        if (err) return res.status(403).json({ success: false, error: 'Forbidden (Token invalid or expired)' });
+        req.user = user;
+        next();
+    });
+}
+
+function requireAdmin(req, res, next) {
+    if (req.user && req.user.role === 'admin') {
+        next();
+    } else {
+        res.status(403).json({ success: false, error: 'Forbidden (Admin access required)' });
+    }
+}
+
+// ─── 登录接口 (Auth Routes) ──────────────────────────────────────
+app.use(cors());
+app.use(express.json());
+
+app.post('/api/auth/login', (req, res) => {
+    const { username, password } = req.body;
+    if (!username || !password) {
+        return res.status(400).json({ success: false, error: '请输入用户名和密码' });
+    }
+
+    try {
+        const user = db.prepare("SELECT * FROM users WHERE username = ?").get(username);
+        if (!user) {
+            return res.status(401).json({ success: false, error: '用户名或密码不正确' });
+        }
+
+        const validPassword = bcrypt.compareSync(password, user.password_hash);
+        if (!validPassword) {
+            return res.status(401).json({ success: false, error: '用户名或密码不正确' });
+        }
+
+        // 签发 JWT
+        const token = jwt.sign(
+            { id: user.id, username: user.username, role: user.role },
+            JWT_SECRET,
+            { expiresIn: '24h' }
+        );
+
+        // 更新最后登录时间
+        db.prepare("UPDATE users SET last_login = datetime('now') WHERE id = ?").run(user.id);
+
+        res.json({
+            success: true,
+            token,
+            user: { id: user.id, username: user.username, role: user.role }
+        });
+    } catch (err) {
+        console.error('Login Error:', err);
+        res.status(500).json({ success: false, error: '服务器内部错误' });
+    }
+});
+
+app.get('/api/auth/me', authenticateToken, (req, res) => {
+    res.json({ success: true, user: req.user });
+});
+
+// ─── 统一 API 权限控制 (Global API Auth Middleware) ────────────────
+app.use((req, res, next) => {
+    // 拦截 /api 开头且尚未被处理的请求（如 /api/auth/login 和 /api/auth/me 在上面已被处理）
+    if (req.path.startsWith('/api')) {
+        return authenticateToken(req, res, () => {
+            const adminRoutes = [
+                '/api/accounts/logout',
+                '/api/accounts/relogin',
+                '/api/accounts/create',
+                '/api/accounts/delete',
+                '/api/config',
+                '/api/tg-user'
+            ];
+            if (adminRoutes.some(prefix => req.path.startsWith(prefix))) {
+                return requireAdmin(req, res, next);
+            }
+            next();
+        });
+    }
+    next();
+});
 
 // ─── 复用 analytics DB 只读连接 ────────────────────────────────
 const ANALYTICS_PATH = path.join(process.env.DATA_DIR || __dirname, 'db', 'analytics.sqlite');

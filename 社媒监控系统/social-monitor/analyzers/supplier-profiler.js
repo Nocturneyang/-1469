@@ -380,33 +380,39 @@ async function generateProfiles() {
   console.log(`[supplier-profiler] 画像计算完成，共 ${groups.length} 个供应商`);
 }
 
-// ─── Cron 调度 ────────────────────────────────────────────────────
-// 每天凌晨 03:00 Asia/Shanghai 触发
-cron.schedule('0 3 * * *', async () => {
-  try {
-    await generateProfiles();
-  } catch (err) {
-    console.error('[supplier-profiler] 生成失败:', err.message);
+module.exports = {
+  generateProfiles,
+};
+
+if (require.main === module) {
+  // ─── Cron 调度 ────────────────────────────────────────────────────
+  // 每天凌晨 03:00 Asia/Shanghai 触发
+  cron.schedule('0 3 * * *', async () => {
+    try {
+      await generateProfiles();
+    } catch (err) {
+      console.error('[supplier-profiler] 生成失败:', err.message);
+    }
+  }, { timezone: 'Asia/Shanghai' });
+
+  console.log('[supplier-profiler] 已启动，定时任务：每天 03:00 (Asia/Shanghai) 触发');
+
+  // 支持手动触发 --now
+  if (process.argv.includes('--now')) {
+    console.log('[supplier-profiler] 手动触发...');
+    generateProfiles().then(() => {
+      console.log('[supplier-profiler] 手动计算完成');
+      process.exit(0);
+    }).catch((err) => {
+      console.error(err);
+      process.exit(1);
+    });
   }
-}, { timezone: 'Asia/Shanghai' });
 
-console.log('[supplier-profiler] 已启动，定时任务：每天 03:00 (Asia/Shanghai) 触发');
-
-// 支持手动触发 --now
-if (process.argv.includes('--now')) {
-  console.log('[supplier-profiler] 手动触发...');
-  generateProfiles().then(() => {
-    console.log('[supplier-profiler] 手动计算完成');
+  process.on('SIGINT', () => {
+    console.log('[supplier-profiler] SIGINT 收到，正在优雅关闭...');
+    try { sourceDb.close(); } catch (_) {}
+    try { analyticsDb.close(); } catch (_) {}
     process.exit(0);
-  }).catch((err) => {
-    console.error(err);
-    process.exit(1);
   });
 }
-
-process.on('SIGINT', () => {
-  console.log('[supplier-profiler] SIGINT 收到，正在优雅关闭...');
-  try { sourceDb.close(); } catch (_) {}
-  try { analyticsDb.close(); } catch (_) {}
-  process.exit(0);
-});

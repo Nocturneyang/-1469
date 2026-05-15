@@ -68,7 +68,30 @@ function initSchema() {
             qr_code TEXT,
             updated_at DATETIME DEFAULT (datetime('now'))
         );
+
+        CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT UNIQUE NOT NULL,
+            password_hash TEXT NOT NULL,
+            role TEXT NOT NULL DEFAULT 'viewer',
+            created_at DATETIME DEFAULT (datetime('now'))
+        );
     `);
+
+    // Setup initial admin if users table is empty
+    try {
+        const count = db.prepare("SELECT COUNT(*) as count FROM users").get().count;
+        if (count === 0) {
+            const bcrypt = require('bcryptjs');
+            // 'admin123' as default password
+            const salt = bcrypt.genSaltSync(10);
+            const hash = bcrypt.hashSync('admin123', salt);
+            db.prepare("INSERT INTO users (username, password_hash, role) VALUES (?, ?, ?)").run('admin', hash, 'admin');
+            console.log('Migrated database: created default admin user (admin / admin123)');
+        }
+    } catch (err) {
+        console.error('Error auto-provisioning admin:', err.message);
+    }
 
     // Migration: Add is_synced column if it doesn't exist (for existing databases)
     try {

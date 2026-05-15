@@ -158,12 +158,18 @@ async function tick() {
   setTimeout(tick, SCAN_INTERVAL);
 }
 
-console.log('[issue-lifecycle-tracker] 启动，每30秒扫描未闭环问题');
-tick();
+module.exports = {
+  scanIssues,
+};
 
-process.on('SIGINT', () => {
-    console.log('[issue-lifecycle-tracker] SIGINT 收到，正在优雅关闭...');
-    try { sourceDb.close(); } catch (_) {}
-    try { analyticsDb.close(); } catch (_) {}
-    process.exit(0);
-});
+if (require.main === module) {
+  console.log('[issue-lifecycle-tracker] 启动，每30秒扫描未闭环问题');
+  tick();
+
+  process.on('SIGINT', () => {
+      console.log('[issue-lifecycle-tracker] SIGINT 收到，正在优雅关闭...');
+      try { sourceDb.close(); } catch (_) {}
+      try { analyticsDb.close(); } catch (_) {}
+      process.exit(0);
+  });
+}
