@@ -9,7 +9,6 @@
     "prestart": "npm run build",
     "start": "node server.js",
     "deploy": "npm run build && npx pm2 restart ui-server",
-    "postinstall": "cd frontend && npm install --registry=https://registry.npmmirror.com",
     "test": "node ../tools/test_stage01_validation.js"
   },
   "keywords": [],
