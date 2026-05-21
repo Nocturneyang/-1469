@@ -1,2 +1,5 @@
 name: social-monitor
 description: Social Media Monitoring System
+build:
+  type: docker
+  dockerfile: Dockerfile
