@@ -133,7 +133,8 @@
       "platform": "wa",
       "owner": "",
       "owner_dingtalk_id": "",
-      "description": "语音备用帐号"
+      "description": "语音备用帐号",
+      "value_label": "L1"
     }
   ],
   "_add_new_account_example": {

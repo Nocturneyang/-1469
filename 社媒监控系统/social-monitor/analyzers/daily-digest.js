@@ -398,7 +398,19 @@ function formatDigest(summaries, silentGroups, range, allOpenIssues, trend, regi
 
   lines.push(`## ${platformTitle} 供应商群消息汇总`);
   lines.push(`${range.dateStr} 09:00 日报${regionLabel ? ' · ' + regionLabel + '专区' : ''}`);
-  lines.push('');
+  
+  // 添加网站超链接（优先使用环境变量，否则使用生产环境默认域名）
+  const webBaseUrl = process.env.WEB_BASE_URL || 'https://social-monitor.tyhark.com';
+  if (webBaseUrl) {
+    const linkParams = new URLSearchParams();
+    if (regionLabel) linkParams.set('region', regionLabel);
+    linkParams.set('date', range.dateStr);
+    const digestUrl = `${webBaseUrl}/daily-digest?${linkParams.toString()}`;
+    lines.push(`[📱 查看网站详情](${digestUrl})`);
+    lines.push('');
+  } else {
+    lines.push('');
+  }
 
   // ── 趋势速览 ──
   if (trend) {

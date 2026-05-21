@@ -22,9 +22,10 @@ const axios = require('axios');
 const dingtalk = require('./dingtalk');
 
 // ─── 读取配置 ────────────────────────────────────────────────────
-const OPENAI_API_KEY = process.env.OPENAI_API_KEY || '';
-const OPENAI_BASE_URL = (process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1').replace(/\/$/, '');
-const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-4o-mini';
+// 支持 OPENAI_* 和 ANTHROPIC_* 两种命名，OPENAI_* 优先（.env文件配置）
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY || process.env.ANTHROPIC_API_KEY || '';
+const OPENAI_BASE_URL = (process.env.OPENAI_BASE_URL || process.env.ANTHROPIC_BASE_URL || 'https://api.openai.com/v1').replace(/\/$/, '');
+const OPENAI_MODEL = process.env.OPENAI_MODEL || process.env.ANTHROPIC_MODEL || 'gpt-4o-mini';
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
 
 const MAX_MSGS_PER_CALL = 20;

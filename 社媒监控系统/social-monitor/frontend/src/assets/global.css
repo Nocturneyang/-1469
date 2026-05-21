@@ -1,0 +1,313 @@
+/* ── 全局 CSS 变量（对齐 public/index.html 原版设计）── */
+:root {
+  --bg: #f4f7f9;
+  --bg-gradient: #ffffff;
+  --t: #2d3748;
+  --t2: #4a5568;
+  --t3: #718096;
+  --red: #fc8181;
+  --wa-green: #25D366;
+  --tg-blue: #0088cc;
+  --p: #6b46c1;
+  --p-light: #9f7aea;
+  --shadow-light: #ffffff;
+  --shadow-dark: #a3b1c6;
+
+  --color-success: #38a169;
+  --color-warning: #d69e2e;
+  --color-danger: #e53e3e;
+  --color-info: #3182ce;
+  --color-muted: #718096;
+
+  --r: 24px;
+  --rs: 14px;
+
+  --out-shadow: 0 4px 16px rgba(0,0,0,0.06);
+  --out-shadow-hover: 0 8px 24px rgba(0,0,0,0.1);
+  --in-shadow: inset 0 2px 4px rgba(0,0,0,0.04);
+  --in-shadow-active: inset 0 2px 6px rgba(0,0,0,0.08);
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html {
+  scrollbar-width: thin;
+  scrollbar-color: var(--t3) transparent;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, 'Noto Sans SC', sans-serif;
+  background: var(--bg);
+  color: var(--t);
+  min-height: 100vh;
+  overflow-x: hidden;
+  font-size: 15px;
+  line-height: 1.6;
+}
+
+h1, h2, h3, .stat-val {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, 'Noto Sans SC', sans-serif;
+}
+
+/* ── 通用组件样式 ── */
+.panel {
+  background: var(--bg);
+  border-radius: var(--r);
+  box-shadow: var(--out-shadow);
+  padding: 36px;
+  transition: all .4s ease;
+  margin-bottom: 32px;
+}
+
+.panel:hover {
+  box-shadow: var(--out-shadow-hover);
+}
+
+.panel-title {
+  font-size: 18px;
+  font-weight: 800;
+  color: var(--t2);
+  text-transform: uppercase;
+  letter-spacing: 1.5px;
+  margin-bottom: 28px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.grid-4 {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 32px;
+}
+
+.stat-card {
+  border-radius: var(--r);
+  background: #ffffff;
+  border: 1px solid #edf2f7;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.02);
+  padding: 32px 24px;
+  text-align: center;
+  position: relative;
+  overflow: hidden;
+}
+
+.stat-lbl {
+  font-size: 14px;
+  color: var(--t2);
+  font-weight: 700;
+  margin-bottom: 12px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+.stat-val {
+  font-size: 48px;
+  font-weight: 800;
+  letter-spacing: -2px;
+  color: var(--t);
+  line-height: 1.1;
+}
+
+.color-p .stat-val { color: var(--p); }
+.color-wa .stat-val { color: var(--wa-green); }
+.color-tg .stat-val { color: var(--tg-blue); }
+.color-m .stat-val { color: var(--color-info); }
+
+/* ── 筛选按钮组 ── */
+.filters {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 28px;
+  flex-wrap: wrap;
+}
+
+.f-btn {
+  padding: 12px 24px;
+  border-radius: 30px;
+  border: none;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--t2);
+  background: var(--bg);
+  box-shadow: var(--out-shadow);
+  transition: all .3s ease;
+}
+
+.f-btn:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--out-shadow-hover);
+}
+
+.f-btn.active {
+  color: #fff;
+  background: var(--p);
+  box-shadow: 0 4px 12px rgba(107, 70, 193, 0.4);
+}
+
+/* ── 消息卡片 ── */
+.msg-card {
+  display: flex;
+  gap: 20px;
+  padding: 24px 28px;
+  border-radius: var(--r);
+  background: #ffffff;
+  border: 1px solid #edf2f7;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.02);
+  margin-bottom: 16px;
+  transition: all .3s ease;
+}
+
+.msg-card:hover {
+  box-shadow: var(--out-shadow-hover);
+  transform: translateY(-2px);
+}
+
+.msg-avatar {
+  width: 48px;
+  height: 48px;
+  border-radius: 14px;
+  box-shadow: var(--in-shadow-active);
+  flex-shrink: 0;
+  background: var(--bg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 22px;
+}
+
+.m-body { flex: 1; min-width: 0; }
+
+.m-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.m-group { font-size: 16px; font-weight: 800; color: var(--t); }
+
+.m-sender {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--p);
+  background: rgba(107, 70, 193, 0.1);
+  padding: 4px 12px;
+  border-radius: 12px;
+}
+
+.m-time { font-size: 13px; font-weight: 600; color: var(--t3); }
+
+.m-text {
+  font-size: 15px;
+  color: var(--t2);
+  line-height: 1.6;
+  word-break: break-word;
+}
+
+.m-media {
+  margin-top: 12px;
+  padding: 10px 16px;
+  background: rgba(107, 70, 193, 0.06);
+  border-radius: 10px;
+  font-size: 13px;
+  color: var(--p);
+  font-weight: 600;
+}
+
+/* ── 空状态 ── */
+.empty-state {
+  text-align: center;
+  padding: 48px 24px;
+  color: var(--t3);
+  font-size: 15px;
+  font-weight: 600;
+}
+
+/* ── 加载脉冲动画 ── */
+.loading-pulse {
+  animation: loadPulse 1.5s ease-in-out infinite;
+}
+
+@keyframes loadPulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+@keyframes pulse {
+  0% { box-shadow: 0 0 0 0 rgba(37, 211, 102, 0.7); }
+  70% { box-shadow: 0 0 0 10px rgba(37, 211, 102, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(37, 211, 102, 0); }
+}
+
+/* ── 表单控件 ── */
+.form-control {
+  padding: 10px 16px;
+  border: 1px solid #e2e8f0;
+  border-radius: var(--rs);
+  font-size: 14px;
+  background: #fff;
+  color: var(--t);
+  outline: none;
+  transition: border-color .2s;
+}
+
+.form-control:focus {
+  border-color: var(--p);
+  box-shadow: 0 0 0 3px rgba(107, 70, 193, 0.1);
+}
+
+.btn-primary {
+  padding: 10px 24px;
+  background: var(--p);
+  color: #fff;
+  border: none;
+  border-radius: var(--rs);
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all .2s;
+}
+
+.btn-primary:hover {
+  background: var(--p-light);
+  transform: translateY(-1px);
+}
+
+/* ── 账号卡片网格 ── */
+.acc-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 24px;
+}
+
+/* ── 分页 ── */
+.pagination {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 20px;
+}
+
+.pagination button {
+  padding: 6px 14px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #fff;
+  color: var(--t2);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  transition: all .2s;
+}
+
+.pagination button:hover { border-color: var(--p); color: var(--p); }
+.pagination button.active { background: var(--p); color: #fff; border-color: var(--p); }
+.pagination button:disabled { opacity: 0.4; cursor: not-allowed; }

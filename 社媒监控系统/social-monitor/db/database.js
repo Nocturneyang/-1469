@@ -74,23 +74,50 @@ function initSchema() {
             username TEXT UNIQUE NOT NULL,
             password_hash TEXT NOT NULL,
             role TEXT NOT NULL DEFAULT 'viewer',
-            created_at DATETIME DEFAULT (datetime('now'))
+            created_at DATETIME DEFAULT (datetime('now')),
+            last_login DATETIME
         );
     `);
 
-    // Setup initial admin if users table is empty
+    // Migration: Add last_login to users if missing
+    try {
+        const tableInfo = db.prepare("PRAGMA table_info(users)").all();
+        const colExists = tableInfo.some(col => col.name === 'last_login');
+        if (!colExists) {
+            db.exec("ALTER TABLE users ADD COLUMN last_login DATETIME");
+        }
+    } catch (e) {
+        console.error('Migration error for users table:', e.message);
+    }
+
+    // Setup initial admin and view users if users table is empty
     try {
         const count = db.prepare("SELECT COUNT(*) as count FROM users").get().count;
         if (count === 0) {
             const bcrypt = require('bcryptjs');
-            // 'admin123' as default password
+            // 'admin123' as default password for admin
             const salt = bcrypt.genSaltSync(10);
-            const hash = bcrypt.hashSync('admin123', salt);
-            db.prepare("INSERT INTO users (username, password_hash, role) VALUES (?, ?, ?)").run('admin', hash, 'admin');
-            console.log('Migrated database: created default admin user (admin / admin123)');
+            const adminHash = bcrypt.hashSync('admin123', salt);
+            db.prepare("INSERT INTO users (username, password_hash, role) VALUES (?, ?, ?)").run('admin', adminHash, 'admin');
+            
+            // 'view' as default password for view user
+            const viewHash = bcrypt.hashSync('view', salt);
+            db.prepare("INSERT INTO users (username, password_hash, role) VALUES (?, ?, ?)").run('view', viewHash, 'view');
+            
+            console.log('Migrated database: created default admin user (admin / admin123) and view user (view / view)');
+        } else {
+            // Check if view user exists, if not create it
+            const viewUser = db.prepare("SELECT id FROM users WHERE username = ?").get('view');
+            if (!viewUser) {
+                const bcrypt = require('bcryptjs');
+                const salt = bcrypt.genSaltSync(10);
+                const viewHash = bcrypt.hashSync('view', salt);
+                db.prepare("INSERT INTO users (username, password_hash, role) VALUES (?, ?, ?)").run('view', viewHash, 'view');
+                console.log('Migrated database: created default view user (view / view)');
+            }
         }
     } catch (err) {
-        console.error('Error auto-provisioning admin:', err.message);
+        console.error('Error auto-provisioning users:', err.message);
     }
 
     // Migration: Add is_synced column if it doesn't exist (for existing databases)
