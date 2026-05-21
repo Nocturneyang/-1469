@@ -8,3 +8,4 @@ whatsapp-session-*/
 .wwebjs_cache/
 *.png
 .DS_Store
+frontend/dist
