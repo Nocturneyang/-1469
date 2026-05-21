@@ -378,7 +378,7 @@ const deleteAccount = async (id) => {
     await ElMessageBox.confirm('系统将停止 PM2 节点进程并销毁数据，确定删除吗？', '危险警告', {
       type: 'error', confirmButtonText: '删除'
     })
-    const res = await api.post('/api/accounts/delete', { id })
+    const res = await api.delete('/api/accounts/' + id)
     if (res.success) {
       ElMessage.success('节点环境已销毁')
       fetchAccounts()
