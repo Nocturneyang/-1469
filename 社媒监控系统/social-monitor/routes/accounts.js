@@ -10,6 +10,56 @@ function createAccountsRouter({ safeWriteEcosystem }) {
     router.get('/', (req, res) => {
         try {
             const accounts = db.prepare(`SELECT * FROM accounts ORDER BY updated_at DESC`).all();
+            
+            // Add running status assessment for each account
+            accounts.forEach(acc => {
+                // Find the latest message for this account
+                const latestMsg = db.prepare(`
+                    SELECT created_at FROM messages
+                    WHERE receiver_account = ?
+                    ORDER BY created_at DESC LIMIT 1
+                `).get(acc.id);
+                
+                acc.latest_msg_time = latestMsg ? latestMsg.created_at : null;
+                
+                // Perform status assessment
+                if (['authenticated', 'monitoring', 'warmup'].includes(acc.status)) {
+                    if (!acc.latest_msg_time) {
+                        acc.health_assessment = '就绪 (待命)';
+                        acc.health_color = '#25D366'; // WhatsApp Green
+                    } else {
+                        // Calculate time difference
+                        const now = new Date();
+                        const formattedStr = acc.latest_msg_time.replace(' ', 'T') + 'Z';
+                        const lastMsgDate = new Date(formattedStr);
+                        const diffHrs = (now - lastMsgDate) / (1000 * 60 * 60);
+                        
+                        if (diffHrs < 2) {
+                            acc.health_assessment = '极佳 (活跃中)';
+                            acc.health_color = '#25D366'; // WhatsApp Green
+                        } else if (diffHrs < 8) {
+                            acc.health_assessment = '健康 (空闲中)';
+                            acc.health_color = '#3182CE'; // Blue
+                        } else if (diffHrs < 24) {
+                            acc.health_assessment = '正常 (超过2小时无新消息)';
+                            acc.health_color = '#4A5568'; // Gray
+                        } else {
+                            acc.health_assessment = '警告 (超24h无消息，检查连接/群动态)';
+                            acc.health_color = '#DD6B20'; // Orange
+                        }
+                    }
+                } else if (acc.status === 'qr') {
+                    acc.health_assessment = acc.platform === 'teams' ? '等待网页授权' : '等待扫码';
+                    acc.health_color = '#E53E3E'; // Red
+                } else if (acc.status === 'initializing') {
+                    acc.health_assessment = '正在初始化...';
+                    acc.health_color = '#DD6B20'; // Orange
+                } else {
+                    acc.health_assessment = '已停止/未连接';
+                    acc.health_color = '#718096'; // Muted Gray
+                }
+            });
+
             res.json({ success: true, data: accounts });
         } catch (err) {
             console.error('Accounts DB Error:', err);
@@ -81,9 +131,10 @@ function createAccountsRouter({ safeWriteEcosystem }) {
 
     router.delete('/:id', (req, res) => {
         const { id } = req.params;
+        console.log('[DELETE ACCOUNT] Request to delete:', id);
         if (!id) return res.status(400).json({ success: false, error: 'Missing account id' });
         if (!/^(wa|tg|tgu|teams)-[a-zA-Z0-9_-]+$/.test(id)) return res.status(400).json({ success: false, error: 'Invalid account id format' });
-        
+
         try {
             let workerName = '';
             let accName = '';
@@ -115,44 +166,51 @@ function createAccountsRouter({ safeWriteEcosystem }) {
             const ecoPath = path.join(process.env.DATA_DIR || path.join(__dirname, '..'), 'ecosystem.config.js');
             if (fs.existsSync(ecoPath)) {
                 let eco = fs.readFileSync(ecoPath, 'utf8');
-                const regex = new RegExp(`\\s*\\{\\s*name:\\s*["']${workerName}["'][\\s\\S]*?\\},`, 'g');
-                if (regex.test(eco)) {
-                    eco = eco.replace(regex, '');
-                    safeWriteEcosystem(eco);
-                }
+                // 匹配整个配置块（包括可能的逗号），使用更精确的正则
+                const regex = new RegExp(`\\s*\\{\\s*name:\\s*["']${workerName}["'][\\s\\S]*?\\}(\\s*,)?\\s*`, 'g');
+                console.log(`[DELETE ACCOUNT] Before replace, eco length: ${eco.length}`);
+                eco = eco.replace(regex, '');
+                console.log(`[DELETE ACCOUNT] After replace, eco length: ${eco.length}`);
+                safeWriteEcosystem(eco);
             }
 
             exec(`npx pm2 delete ${workerName}`, (error) => {
                 if (error) console.log(`Notice: Could not delete PM2 process ${workerName} (may already be stopped).`);
-                exec('npx pm2 save');
+                exec('npx pm2 save', (err) => {
+                    if (err) console.error('[DELETE ACCOUNT] PM2 save failed:', err);
+                    else console.log('[DELETE ACCOUNT] PM2 save succeeded');
+                });
             });
 
             res.json({ success: true, message: 'Account permanently deleted.' });
         } catch (err) {
-            console.error('Delete Error:', err);
+            console.error('[DELETE ACCOUNT] Error:', err);
             res.status(500).json({ success: false, error: err.message });
         }
     });
 
     router.post('/create', (req, res) => {
         const { platform, id, token } = req.body;
+        console.log('[CREATE ACCOUNT] Request:', { platform, id, token });
         if (!platform || !id) return res.status(400).json({ success: false, error: 'Missing platform or id' });
+        const trimmedId = id.trim();
+        console.log('[CREATE ACCOUNT] Trimmed ID:', trimmedId, 'Regex test:', /^[a-zA-Z0-9_-]+$/.test(trimmedId));
         if (platform === 'telegram' && !token) return res.status(400).json({ success: false, error: 'Missing Bot Token for Telegram' });
-        if (!/^[a-zA-Z0-9_-]+$/.test(id)) return res.status(400).json({ success: false, error: 'ID must be alphanumeric' });
+        if (!/^[a-zA-Z0-9_-]+$/.test(trimmedId)) return res.status(400).json({ success: false, error: 'ID 只能包含字母、数字、下划线和横线' });
         if (token && !/^[a-zA-Z0-9_:.-]+$/.test(token)) return res.status(400).json({ success: false, error: 'Invalid token format' });
 
         try {
             let workerName, scriptPath, spawnEnv;
             if (platform === 'whatsapp') {
-                workerName = `worker-wa-${id}`;
+                workerName = `worker-wa-${trimmedId}`;
                 scriptPath = './workers/worker-wa.js';
-                spawnEnv = { PATH: process.env.PATH, HOME: process.env.HOME, NODE_ENV: 'production', ACCOUNT_NAME: id };
-                db.prepare(`INSERT OR REPLACE INTO accounts (id, platform, status) VALUES (?, 'whatsapp', 'initializing')`).run('wa-' + id);
+                spawnEnv = { PATH: process.env.PATH, HOME: process.env.HOME, NODE_ENV: 'production', ACCOUNT_NAME: trimmedId };
+                db.prepare(`INSERT OR REPLACE INTO accounts (id, platform, status) VALUES (?, 'whatsapp', 'initializing')`).run('wa-' + trimmedId);
             } else {
-                workerName = `worker-tg-${id}`;
+                workerName = `worker-tg-${trimmedId}`;
                 scriptPath = './workers/worker-tg.js';
-                spawnEnv = { PATH: process.env.PATH, HOME: process.env.HOME, NODE_ENV: 'production', TG_ACCOUNT_NAME: id, TG_BOT_TOKEN: token };
-                db.prepare(`INSERT OR REPLACE INTO accounts (id, platform, status) VALUES (?, 'telegram', 'initializing')`).run('tg-' + id);
+                spawnEnv = { PATH: process.env.PATH, HOME: process.env.HOME, NODE_ENV: 'production', TG_ACCOUNT_NAME: trimmedId, TG_BOT_TOKEN: token };
+                db.prepare(`INSERT OR REPLACE INTO accounts (id, platform, status) VALUES (?, 'telegram', 'initializing')`).run('tg-' + trimmedId);
             }
 
             const ecoPath = path.join(process.env.DATA_DIR || path.join(__dirname, '..'), 'ecosystem.config.js');
@@ -164,10 +222,11 @@ function createAccountsRouter({ safeWriteEcosystem }) {
       name: "${workerName}",
       script: "${scriptPath}",
       max_memory_restart: '1G',
+      cron_restart: '0 4 * * *',
       instances: 1,
       autorestart: true,
       watch: false,
-      env: { NODE_ENV: "production", ACCOUNT_NAME: "${id}" }
+      env: { NODE_ENV: "production", ACCOUNT_NAME: "${trimmedId}" }
     },\n    // --- Web UI Server ---`;
                 } else {
                     insertStr = `    {
@@ -176,7 +235,7 @@ function createAccountsRouter({ safeWriteEcosystem }) {
       instances: 1,
       autorestart: true,
       watch: false,
-      env: { NODE_ENV: "production", TG_ACCOUNT_NAME: "${id}", TG_BOT_TOKEN: "${token}" }
+      env: { NODE_ENV: "production", TG_ACCOUNT_NAME: "${trimmedId}", TG_BOT_TOKEN: "${token}" }
     },\n    // --- Web UI Server ---`;
                 }
                 if (eco.includes('// --- Web UI Server ---') && !eco.includes(workerName)) {

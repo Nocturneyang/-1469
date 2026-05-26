@@ -386,7 +386,7 @@ async function validateP0WithContext(msg, keyword) {
 
   const prompt = buildP0ContextPrompt(msg, keyword, contextMsgs);
   try {
-    const text = await aiClient.callAI(prompt);
+    const text = await aiClient.callAI(prompt, { tier: 'fast' });
     const result = aiClient.extractJSON(text);
     const final = result || { is_genuine_alert: true, reason: 'AI解析失败，默认放行', severity: 'p0' };
     p0ValidationCache.set(cacheKey, { ts: Date.now(), result: final });

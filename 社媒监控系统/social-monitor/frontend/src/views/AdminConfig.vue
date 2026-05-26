@@ -69,7 +69,9 @@
       :envConfig="envConfig"
       :loading="loading"
       :readonly="!authStore.isAdmin"
-      @save="saveEnvVars"
+      @save-env="handleSaveAiEnv"
+      @delete-env="handleDeleteAiEnv"
+      @test-ai="testAiConfig"
     />
 
     <ValueLabelConfig
@@ -319,6 +321,57 @@ const handleClearEnv = async (key) => {
   }
 }
 
+const handleSaveAiEnv = async ({ key, value }) => {
+  try {
+    if (!key) return
+    if (!value) {
+      ElMessage.error('配置值不能为空，如需删除请点击删除')
+      return
+    }
+    const payload = {}
+    payload[key] = value
+    const res = await api.post('/api/config/env', payload)
+    if (res.success) {
+      ElMessage.success('AI 配置已保存')
+      fetchConfig()
+    } else {
+      ElMessage.error(res.error || '保存失败')
+    }
+  } catch (e) {
+    ElMessage.error('保存失败')
+  }
+}
+
+const handleDeleteAiEnv = async (key) => {
+  try {
+    await ElMessageBox.confirm(`确定删除 ${key} 配置吗？`, '警告', { type: 'warning' })
+    const payload = {}
+    payload[key] = ''
+    const res = await api.post('/api/config/env', payload)
+    if (res.success) {
+      ElMessage.success('AI 配置已删除')
+      fetchConfig()
+    } else {
+      ElMessage.error(res.error || '删除失败')
+    }
+  } catch (e) {
+    if (e !== 'cancel') ElMessage.error('删除失败')
+  }
+}
+
+const testAiConfig = async () => {
+  try {
+    const res = await api.get('/api/ai/test')
+    if (res.success) {
+      ElMessage.success(`AI 接口正常：${res.reply || 'OK'} (${res.latencyMs}ms)`)
+    } else {
+      ElMessage.error(`AI 接口异常：${res.status || ''} ${res.error || '测试失败'}`)
+    }
+  } catch (e) {
+    ElMessage.error('AI 接口测试失败')
+  }
+}
+
 const handleDeleteRegionWh = async (whKey) => {
   try {
     await ElMessageBox.confirm(`确定删除区域配置 ${whKey} 吗？`, '警告', { type: 'warning' })
@@ -335,27 +388,6 @@ const handleDeleteRegionWh = async (whKey) => {
 const handleAddRegionWh = (type) => {
   if (webhookConfigRef.value) {
     webhookConfigRef.value.openRegionModal(type)
-  }
-}
-
-const saveEnvVars = async () => {
-  try {
-    await ElMessageBox.confirm('修改环境变量并保存到 .env 文件中？(保存后系统将重新启动)', '警告', {
-      confirmButtonText: '确定修改',
-      cancelButtonText: '取消',
-      type: 'warning'
-    })
-
-    // Convert reactive obj to standard dict
-    const payload = { ...envConfig.value }
-    const res = await api.post('/api/config/env', payload)
-
-    if (res.success) {
-      ElMessage.success('环境变量更新成功，后端服务进行重启重载配置...')
-      setTimeout(() => fetchConfig(), 4000)
-    }
-  } catch (e) {
-    if (e !== 'cancel') ElMessage.error('保存环境变量失败')
   }
 }
 

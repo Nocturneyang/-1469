@@ -5,7 +5,9 @@ const path = require('path');
 const router = express.Router();
 
 const ANALYTICS_PATH = path.join(process.env.DATA_DIR || path.join(__dirname, '..'), 'db', 'analytics.sqlite');
+const SOURCE_DB_PATH = path.join(process.env.DATA_DIR || path.join(__dirname, '..'), 'db', 'database.sqlite');
 let _analyticsDb = null;
+let _sourceDb = null;
 
 function getAnalyticsDb() {
     if (_analyticsDb) return _analyticsDb;
@@ -16,6 +18,19 @@ function getAnalyticsDb() {
         return _analyticsDb;
     } catch (e) {
         console.error('[server] 无法打开 analytics.sqlite:', e.message);
+        return null;
+    }
+}
+
+function getSourceDb() {
+    if (_sourceDb) return _sourceDb;
+    if (!fs.existsSync(SOURCE_DB_PATH)) return null;
+    try {
+        const Database = require('better-sqlite3');
+        _sourceDb = new Database(SOURCE_DB_PATH, { readonly: true });
+        return _sourceDb;
+    } catch (e) {
+        console.error('[server] 无法打开 database.sqlite:', e.message);
         return null;
     }
 }
@@ -35,14 +50,17 @@ router.get('/analytics/summary', (req, res) => {
         
         let digestCount = 0;
         try {
-            digestCount = adb.prepare("SELECT COUNT(*) AS c FROM daily_digest").get()?.c || 0;
+            digestCount = adb.prepare("SELECT COUNT(*) AS c FROM daily_digests").get()?.c || 0;
         } catch (e) {
             // Table doesn't exist, keep as 0
         }
         
         let groupsCovered = 0;
         try {
-            groupsCovered = adb.prepare("SELECT COUNT(DISTINCT group_name) AS c FROM messages WHERE group_name IS NOT NULL").get()?.c || 0;
+            const sdb = getSourceDb();
+            if (sdb) {
+                groupsCovered = sdb.prepare("SELECT COUNT(DISTINCT group_name) AS c FROM messages WHERE group_name IS NOT NULL AND group_name != ''").get()?.c || 0;
+            }
         } catch (e) {
             // Table doesn't exist, keep as 0
         }

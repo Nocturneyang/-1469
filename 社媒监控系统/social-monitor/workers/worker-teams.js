@@ -15,7 +15,7 @@
 require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
-const { saveMessage, updateAccountStatus } = require('../db/database');
+const { saveMessage, updateAccountStatus, db } = require('../db/database');
 const { sendAccountAlert } = require('../lib/dingtalk');
 const sessionStore = require('../lib/teams-session-store');
 const parser = require('../lib/teams-page-parser');
@@ -102,7 +102,7 @@ async function main() {
     let context;
     try {
         context = await chromium.launchPersistentContext(userDataDir, {
-            headless: true,
+            headless: false, // 个人账户需要保持有界面模式避免被检测
             executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH || process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
             args: [
                 '--no-sandbox',
@@ -212,15 +212,19 @@ async function main() {
             return;
         }
         
-        console.log(`[Teams:${accountName}] 登录成功！保存 Session 并重启进程以转入后台无头模式...`);
+        console.log(`[Teams:${accountName}] 登录成功！保存 Session...`);
         try {
             const state = await context.storageState();
             sessionStore.saveSession(accountName, state);
+            console.log(`[Teams:${accountName}] Session 保存完成`);
         } catch (e) {
             console.warn(`[Teams:${accountName}] 保存 Session 失败:`, e.message);
         }
-        await context.close();
-        process.exit(0); // 退出让 PM2 重启，下次就会加载 session 并在后台运行了
+        // 不重启进程，继续在有界面模式下运行
+        console.log(`[Teams:${accountName}] 继续在有界面模式下运行...`);
+        
+        // 跳过后续的加载检测，直接进入采集循环
+        loaded = true;
     }
 
     if (!loaded) {
@@ -239,10 +243,31 @@ async function main() {
     }
 
     // 获取已登录用户信息
-    const title = await page.title();
-    const displayName = title.replace(' | Microsoft Teams', '').trim() || accountName;
+    const userInfo = await parser.getUserInfo(page);
+    const displayName = userInfo.displayName || accountName;
+    
+    // 更新数据库中的用户信息
+    try {
+        const stmt = db.prepare(`
+            UPDATE accounts 
+            SET user_id = ?, 
+                email = ?, 
+                display_name = ?, 
+                status = 'authenticated'
+            WHERE id = ?
+        `);
+        stmt.run(
+            userInfo.id || null,
+            userInfo.email || null,
+            displayName,
+            accountKey
+        );
+    } catch (e) {
+        console.error(`[Teams:${accountName}] 更新数据库用户信息失败:`, e.message);
+    }
+    
     updateAccountStatus(accountKey, 'teams', 'authenticated', displayName);
-    console.log(`✅ [Teams:${accountName}] 已登录: ${displayName}`);
+    console.log(`✅ [Teams:${accountName}] 已登录: ${displayName} (${userInfo.email || '无邮箱'})`);
 
     // ── 获取群聊列表 ──────────────────────────────────────────────────
     await randomSleep(3000, 5000);
@@ -258,20 +283,17 @@ async function main() {
     console.log(`[Teams:${accountName}] 监控 ${targetChats.length} 个群聊（白名单: ${whitelist ? '已启用' : '全部'}）`);
 
     // ── 实时轮询监听 ──────────────────────────────────────────────────
-    let lastPollTime = Date.now();
+    let lastPollTime = 0;
 
     async function pollMessages() {
         for (const chat of targetChats) {
             try {
                 // 随机等待，避免连续快速切换（安全策略）
-                await randomSleep(8000, 20000);
+                await randomSleep(1000, 3000);
 
                 // 打开该 Chat
-                const chatItems = page.locator('[data-tid="chat-pane-item"]');
-                const item = chatItems.nth(chat.index);
-                if (await item.count() === 0) continue;
-
-                await item.click();
+                const clicked = await parser.clickChat(page, chat);
+                if (!clicked) continue;
                 await randomSleep(2000, 4000);
 
                 // 验证是否是群聊
@@ -288,10 +310,10 @@ async function main() {
                     if (seenMessages.has(msg.messageId)) continue;
                     markSeen(msg.messageId);
 
-                    saveMessage({
+                    const result = saveMessage({
                         platform: 'teams',
                         receiver_account: accountKey,
-                        message_id: msg.messageId,
+                        message_id: `${chatInfo.chatId || chat.chatId}_${msg.messageId}`,
                         group_id: chatInfo.chatId || chat.chatId,
                         group_name: chatInfo.name || chat.name,
                         sender_id: msg.senderName, // Teams 个人账号难以获取稳定 UID
@@ -303,7 +325,9 @@ async function main() {
                         raw_data: null,
                     });
 
-                    console.log(`[Teams:${accountName}] 保存消息: ${msg.senderName} @ ${chatInfo.name || chat.name}`);
+                    if (result && result.changes > 0) {
+                        console.log(`[Teams:${accountName}] 保存消息: ${msg.senderName} @ ${chatInfo.name || chat.name}`);
+                    }
                 }
             } catch (e) {
                 console.error(`[Teams:${accountName}] 轮询 Chat[${chat.name}] 出错:`, e.message);
@@ -335,10 +359,8 @@ async function main() {
                     const { action: newAction } = backfillQueue.checkBackfillFlag(accountName);
                     if (newAction === 'pause') break;
                     try {
-                        const chatItems = page.locator('[data-tid="chat-pane-item"]');
-                        const item = chatItems.nth(chat.index);
-                        if (await item.count() === 0) continue;
-                        await item.click();
+                        const clicked = await parser.clickChat(page, chat);
+                        if (!clicked) continue;
                         await randomSleep(2000, 4000);
                         // 多次向上滚动加载历史
                         await parser.scrollUpToLoadHistory(page, 10);

@@ -66,6 +66,11 @@ function initSchema() {
             status TEXT NOT NULL,
             pushname TEXT,
             qr_code TEXT,
+            user_id TEXT,
+            email TEXT,
+            display_name TEXT,
+            avatar_url TEXT,
+            tenant_id TEXT,
             updated_at DATETIME DEFAULT (datetime('now'))
         );
 
@@ -140,6 +145,22 @@ function initSchema() {
     } catch (err) {
         console.error('Migration error:', err.message);
     }
+
+    // Migration: Add Teams user info columns to accounts table
+    try {
+        const accountsTableInfo = db.prepare("PRAGMA table_info(accounts)").all();
+        
+        const columnsToAdd = ['user_id', 'email', 'display_name', 'avatar_url', 'tenant_id'];
+        columnsToAdd.forEach(col => {
+            const exists = accountsTableInfo.some(c => c.name === col);
+            if (!exists) {
+                db.exec(`ALTER TABLE accounts ADD COLUMN ${col} TEXT`);
+                console.log(`Migrated database: added ${col} column to accounts table`);
+            }
+        });
+    } catch (err) {
+        console.error('Migration error for accounts table:', err.message);
+    }
 }
 
 initSchema();
@@ -161,7 +182,7 @@ function saveMessage(data) {
         // dynamically look up business_sector if not provided directly
         const bs = data.business_sector !== undefined ? data.business_sector : getBusinessSector(data.receiver_account);
 
-        return stmt.run({ receiver_account: 'default', business_sector: bs, ...data });
+        return stmt.run({ receiver_account: data.receiver_account, business_sector: bs, ...data });
     } catch (err) {
         console.error('Error saving message:', err.message);
         return null;

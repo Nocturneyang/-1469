@@ -9,6 +9,7 @@ const dataRoutes = require('./routes/data');
 const createAccountsRouter = require('./routes/accounts');
 const configRoutes = require('./routes/config');
 const analyticsRoutes = require('./routes/analytics');
+const logsRoutes = require('./routes/logs');
 const createTgUserRouter = require('./routes/tg-user');
 const createTeamsRouter = require('./routes/teams');
 const { getAnalyticsDb } = require('./routes/analytics');
@@ -21,8 +22,64 @@ app.use(cors());
 app.use(express.json());
 app.use('/api/auth', authRoutes);
 
+// ─── Teams OAuth 授权路由（公开访问，必须在 authenticateToken 之前）────
+app.get('/api/teams/auth/:name', async (req, res) => {
+    const { name } = req.params;
+    if (!/^[a-zA-Z0-9_-]+$/.test(name)) {
+        return res.status(400).json({ success: false, error: 'ID 格式无效' });
+    }
+    try {
+        const graphClient = require('./lib/microsoft-graph-client');
+        const authInfo = await graphClient.getAuthInfo(name);
+        res.json({ success: true, ...authInfo });
+    } catch (e) {
+        console.error('[Teams] 获取授权信息失败:', e.message);
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+
+app.get('/api/teams/poll/:name', async (req, res) => {
+    const { name } = req.params;
+    try {
+        const graphClient = require('./lib/microsoft-graph-client');
+        const tokenStore = require('./lib/teams-token-store');
+        const result = await graphClient.pollDeviceCode(name);
+        
+        if (result.pending) {
+            res.json({ success: true, pending: true });
+        } else {
+            // 授权成功，保存 token
+            const { accountName, access_token, refresh_token, expires_at } = result;
+            
+            // 获取用户信息
+            const userInfo = await graphClient.getUserInfo(access_token);
+            
+            // 保存 token 和用户信息
+            tokenStore.saveTokens(accountName, {
+                access_token,
+                refresh_token,
+                expires_at
+            }, userInfo);
+
+            // 更新数据库
+            const accountKey = `teams-${accountName}`;
+            tokenStore.updateAccountInDatabase(accountKey, userInfo);
+
+            res.json({ 
+                success: true, 
+                pending: false,
+                authorized: true,
+                userInfo 
+            });
+        }
+    } catch (e) {
+        console.error('[Teams] 轮询设备代码失败:', e.message);
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+
 // ─── 统一 API 鉴权 ────────────────────────────────────────────────
-// 所有 /api 请求（除 /api/auth 已在上面处理）都需要 JWT 认证
+// 所有 /api 请求（除 /api/auth 和 /api/teams/auth/* 已在上面处理）都需要 JWT 认证
 app.use('/api', authenticateToken);
 
 // ─── 路由挂载（按权限分层）─────────────────────────────────────────
@@ -80,15 +137,20 @@ app.use('/api', analyticsRoutes);
 // 以下接口需要 admin 权限
 app.use('/api/accounts', requireAdmin, createAccountsRouter({ safeWriteEcosystem }));
 app.use('/api', requireAdmin, configRoutes);
+app.use('/api', requireAdmin, logsRoutes);
 app.use('/api/tg-user', requireAdmin, createTgUserRouter({ safeWriteEcosystem }));
 app.use('/api/accounts/create-tg-user', requireAdmin, (req, res, next) => {
     req.url = '/create';
     createTgUserRouter({ safeWriteEcosystem })(req, res, next);
 });
-app.use('/api/teams', requireAdmin, createTeamsRouter({ safeWriteEcosystem }));
+// Teams 路由（部分公开，部分需要认证）
+const teamsRouter = createTeamsRouter({ safeWriteEcosystem });
+
+// Teams 管理路由（需要管理员认证）
+app.use('/api/teams', requireAdmin, teamsRouter);
 app.use('/api/accounts/create-teams', requireAdmin, (req, res, next) => {
     req.url = '/create';
-    createTeamsRouter({ safeWriteEcosystem })(req, res, next);
+    teamsRouter(req, res, next);
 });
 
 app.listen(PORT, () => {

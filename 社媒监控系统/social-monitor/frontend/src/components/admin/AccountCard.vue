@@ -12,8 +12,24 @@
     <div style="color:var(--t3);font-size:13px;margin-bottom:4px">{{ acc.id }}</div>
     <div v-if="acc.pushname && acc.pushname !== 'Loading...'" style="font-weight:700;color:var(--p);font-size:14px">{{ acc.pushname }}</div>
 
+    <!-- 运行状态评估 -->
+    <div style="margin-top: 14px; padding: 10px 14px; border-radius: 12px; background: var(--bg-tint, #fcfcfc); font-size: 13px; width: 100%; border: 1px solid var(--border); box-shadow: var(--in-shadow); text-align: left;">
+      <div style="display: flex; justify-content: space-between; margin-bottom: 6px; align-items: center;">
+        <span style="color: var(--t3); font-size: 12px;">运行评估:</span>
+        <span :style="{ color: acc.health_color || 'var(--t2)', fontWeight: 'bold', fontSize: '13px' }">
+          {{ acc.health_assessment || '未知' }}
+        </span>
+      </div>
+      <div style="display: flex; justify-content: space-between; align-items: center;">
+        <span style="color: var(--t3); font-size: 12px;">上条录入:</span>
+        <span style="color: var(--t2); font-size: 12px; font-weight: 500;">
+          {{ formatLatestMsgTime(acc.latest_msg_time) }}
+        </span>
+      </div>
+    </div>
+
     <div v-if="acc.status === 'qr' && acc.qr_code && acc.platform === 'whatsapp'" class="qr-container">
-      <img :src="acc.qr_code" style="max-width:180px;display:block;margin:0 auto" />
+      <img :src="qrCodeUrl" style="max-width:180px;display:block;margin:0 auto" />
       <div style="font-size:12px;color:var(--color-danger);margin-top:6px;text-align:center">请扫描二维码登录</div>
     </div>
 
@@ -44,6 +60,7 @@
         <template v-else>
           <button class="btn-secondary" @click="$emit('tgu-ratelimit', tguName)">频控</button>
           <button class="btn-secondary" @click="$emit('tgu-reconfig', tguName)">监控群聊</button>
+          <button class="btn-secondary" @click="$emit('tgu-relogin', acc)">重新登录</button>
           <button class="btn-secondary danger" @click="$emit('delete', acc.id)">删除</button>
         </template>
       </template>
@@ -51,7 +68,7 @@
       <!-- Regular actions -->
       <template v-else>
          <button v-if="acc.status === 'authenticated'" class="btn-secondary" @click="$emit('relogin', acc, 'logout')">下线退出</button>
-         <button v-else-if="!['initializing','qr'].includes(acc.status)" class="btn-secondary" @click="$emit('relogin', acc, 'relogin')">重新登录</button>
+         <button v-else class="btn-secondary" @click="$emit('relogin', acc, 'relogin')">重新登录</button>
          <button class="btn-secondary danger" @click="$emit('delete', acc.id)">永久删除</button>
       </template>
     </div>
@@ -65,9 +82,14 @@ const props = defineProps({
   acc: { type: Object, required: true }
 })
 
-defineEmits(['delete', 'relogin', 'teams-backfill', 'teams-relogin', 'tgu-ratelimit', 'tgu-reconfig', 'tgu-backfill', 'tgu-revoke'])
+defineEmits(['delete', 'relogin', 'teams-backfill', 'teams-relogin', 'tgu-ratelimit', 'tgu-reconfig', 'tgu-backfill', 'tgu-revoke', 'tgu-relogin'])
 
 const tguName = computed(() => props.acc.id.replace('tgu-', ''))
+
+const qrCodeUrl = computed(() => {
+  if (!props.acc.qr_code) return ''
+  return `https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(props.acc.qr_code)}`
+})
 
 const statusClass = computed(() => {
   const s = props.acc.status
@@ -92,6 +114,17 @@ const getPlatformName = (acc) => {
   if (acc.platform === 'teams') return 'Teams'
   if (acc.id.startsWith('tgu-')) return 'TG 用户号'
   return 'TG 机器人'
+}
+
+const formatLatestMsgTime = (timeStr) => {
+  if (!timeStr) return '无记录'
+  try {
+    const formattedStr = timeStr.replace(' ', 'T') + 'Z'
+    const d = new Date(formattedStr)
+    return d.toLocaleString('zh-CN', { hour12: false })
+  } catch (e) {
+    return timeStr
+  }
 }
 </script>
 

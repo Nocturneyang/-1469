@@ -23,6 +23,7 @@
           @tgu-reconfig="openReconfigGroupsModal"
           @tgu-backfill="openBackfillModal"
           @tgu-revoke="tguRevokeSession"
+          @tgu-relogin="openTguReloginModal"
         />
       </div>
     </div>
@@ -32,8 +33,8 @@
       <el-tabs v-model="activeTab">
         <el-tab-pane label="WhatsApp" name="wa">
           <el-form label-position="top">
-            <el-form-item label="设备标识符 (只能为英文和数字)">
-              <el-input v-model="newWaId" placeholder="例如: sales_01" />
+            <el-form-item label="设备标识符 (支持英文、数字、下划线、横线，可使用驼峰命名)">
+              <el-input v-model="newWaId" placeholder="例如: sales_01 或 SalesAccount" />
             </el-form-item>
             <el-button type="primary" class="w-100" @click="createWaAccount">部署 WhatsApp 终端</el-button>
           </el-form>
@@ -41,8 +42,8 @@
 
         <el-tab-pane label="Telegram Bot" name="tg-bot">
           <el-form label-position="top">
-            <el-form-item label="设备标识符">
-              <el-input v-model="newTgId" placeholder="bot_01" />
+            <el-form-item label="设备标识符 (支持英文、数字、下划线、横线，可使用驼峰命名)">
+              <el-input v-model="newTgId" placeholder="例如: bot_01 或 BotAccount" />
             </el-form-item>
             <el-form-item label="Bot Token (向 BotFather 申请)">
               <el-input v-model="newTgToken" placeholder="123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11" />
@@ -53,8 +54,8 @@
 
         <el-tab-pane label="Teams" name="teams">
            <el-form label-position="top">
-            <el-form-item label="设备标识符">
-              <el-input v-model="newTeamsId" placeholder="teams_01" />
+            <el-form-item label="设备标识符 (支持英文、数字、下划线、横线，可使用驼峰命名)">
+              <el-input v-model="newTeamsId" placeholder="例如: teams_01 或 TeamsAccount" />
             </el-form-item>
             <el-button type="primary" class="w-100" @click="createTeams">部署 Teams 终端</el-button>
           </el-form>
@@ -65,8 +66,8 @@
           
           <div v-if="tguStep === 1">
             <el-form label-position="top" size="small">
-              <el-form-item label="账号名称 (仅小写字母数字,不含 tgu- 前缀)">
-                <el-input v-model="tguForm.id" placeholder="例如: user01" />
+              <el-form-item label="账号名称 (支持英文、数字、下划线、横线，可使用驼峰命名，不含 tgu- 前缀)">
+                <el-input v-model="tguForm.id" placeholder="例如: user01 或 UserAccount" />
               </el-form-item>
               
               <el-row :gutter="10">
@@ -578,6 +579,41 @@ const tguRevokeSession = async (name) => {
        ElMessage.error(res.error)
     }
   } catch(e) {}
+}
+
+const openTguReloginModal = async (acc) => {
+  const name = acc.id.replace('tgu-', '')
+  tguLoading.value = true
+  try {
+    // 1. 获取现有 API 凭证
+    const configRes = await api.get('/api/tg-user/config/' + name)
+    // 2. 获取现有频控与回溯配置
+    const rlRes = await api.get('/api/tg-user/ratelimit/' + name)
+    
+    // 3. 填充登录表单
+    tguForm.id = name
+    tguForm.phone = ''
+    tguForm.code = ''
+    tguForm.password = ''
+    tguForm.apiId = configRes.success && configRes.api_id ? String(configRes.api_id) : ''
+    tguForm.apiHash = configRes.success && configRes.api_hash ? configRes.api_hash : ''
+    
+    if (rlRes.success && rlRes.data) {
+      tguForm.dailyLimit = rlRes.data.daily_limit || 2000
+      tguForm.backfillDays = rlRes.data.backfill_days !== undefined ? rlRes.data.backfill_days : 7
+    }
+    
+    // 4. 打开对话框并切到 TG 个人号 Tab
+    tguStep.value = 1
+    activeTab.value = 'tgu'
+    addModalVisible.value = true
+    
+    ElMessage.info(`已自动载入账号 tgu-${name} 的 API 凭证与频控配置，请输入手机号以重新登录。`)
+  } catch (e) {
+    ElMessage.error('载入账号配置失败：' + (e.message || e))
+  } finally {
+    tguLoading.value = false
+  }
 }
 
 

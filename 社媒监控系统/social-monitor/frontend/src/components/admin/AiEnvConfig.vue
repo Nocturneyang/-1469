@@ -4,8 +4,9 @@
       <span class="title-text"><span class="panel-icon">🤖</span> AI 分析引擎配置</span>
     </div>
     <p style="font-size:13px;color:var(--t3);margin-bottom:24px;line-height:1.8">
-      支持 <strong>OpenAI 兼容接口</strong>（one-api 中转／官方 OpenAI 均可），也可配置 <strong>Gemini</strong> 作为备用。<br>
-      调用优先级：OpenAI 兼容接口 → Gemini → 纯关键词降级。
+      所有 AI 模型通过 <strong>one-api 中转接口</strong>统一调用，支持 OpenAI 兼容模型和 Gemini。<br>
+      <strong>分层模型：</strong>FAST（高频轻量）→ DEFAULT（中等任务）→ PRO（高质量长文）。<br>
+      降级策略：主接口失败时自动降级为纯关键词匹配模式。
     </p>
 
     <div class="config-grid">
@@ -18,40 +19,113 @@
           <div class="config-status" :class="{ configured: isSet(item.key) }">
             {{ isSet(item.key) ? '已配置' : '未配置' }}
           </div>
-          <div v-if="isSet(item.key) && !item.sensitive" class="config-value">
-            {{ envConfig[item.key] }}
+          <div v-if="editingKey !== item.key">
+            <div v-if="isSet(item.key)" class="config-value">
+              {{ item.sensitive ? envConfig[item.key] : envConfig[item.key] }}
+            </div>
+            <div v-else class="config-empty">暂无配置</div>
+          </div>
+          <div v-else class="edit-box">
+            <input
+              v-model="draftValues[item.key]"
+              class="config-input"
+              :type="item.sensitive ? 'password' : 'text'"
+              :placeholder="item.sensitive && isSet(item.key) ? '留空表示不修改当前密钥' : item.placeholder"
+              @keyup.enter="saveItem(item)"
+            />
+            <div v-if="item.sensitive && isSet(item.key)" class="edit-hint">密钥已脱敏展示，输入新值才会覆盖。</div>
+          </div>
+          <div class="config-actions">
+            <button
+              v-if="editingKey !== item.key"
+              class="mini-btn"
+              :disabled="readonly || loading"
+              @click="startEdit(item)"
+            >
+              编辑
+            </button>
+            <button
+              v-else
+              class="mini-btn primary"
+              :disabled="readonly || loading"
+              @click="saveItem(item)"
+            >
+              保存
+            </button>
+            <button
+              v-if="editingKey === item.key"
+              class="mini-btn"
+              :disabled="loading"
+              @click="cancelEdit"
+            >
+              取消
+            </button>
+            <button
+              class="mini-btn danger"
+              :disabled="readonly || loading || !isSet(item.key)"
+              @click="$emit('delete-env', item.key)"
+            >
+              删除
+            </button>
           </div>
         </div>
       </div>
     </div>
 
     <div style="margin-top:24px;padding-top:16px;border-top:1px dashed var(--border);display:flex;align-items:center;gap:16px;flex-wrap:wrap">
-      <button class="btn-primary" style="background:linear-gradient(135deg,#5a67d8,#6b46c1)" @click="$emit('save')">
-        💾 保存环境变量至 .env
+      <button class="btn-primary" style="background:linear-gradient(135deg,#5a67d8,#6b46c1)" :disabled="readonly || loading" @click="$emit('test-ai')">
+        🧪 测试 AI 接口
       </button>
-      <span style="font-size:12px;color:var(--t3)">保存后系统将自动重启生效。</span>
+      <span style="font-size:12px;color:var(--t3)">保存或删除会同步写入后端 .env，运行中进程需重启后完整生效。</span>
     </div>
   </div>
 </template>
 
 <script setup>
+import { reactive, ref } from 'vue'
+
 const props = defineProps({
   envConfig: { type: Object, required: true },
-  loading: { type: Boolean, default: false }
+  loading: { type: Boolean, default: false },
+  readonly: { type: Boolean, default: false }
 })
 
-defineEmits(['save'])
+const emit = defineEmits(['save-env', 'delete-env', 'test-ai'])
 
 const configItems = [
-  { key: 'OPENAI_BASE_URL', label: '接口地址 (Base URL)', sensitive: false },
-  { key: 'OPENAI_MODEL', label: '调用模型 (Model)', sensitive: false },
-  { key: 'OPENAI_API_KEY', label: '主密钥 (OpenAI Key)', sensitive: true },
-  { key: 'GEMINI_API_KEY', label: '备用密钥 (Gemini Key)', sensitive: true },
+  { key: 'OPENAI_BASE_URL', label: '接口地址 (Base URL)', sensitive: false, placeholder: 'https://oneapi.itniotech.cn/v1' },
+  { key: 'OPENAI_MODEL', label: '默认模型 (DEFAULT)', sensitive: false, placeholder: 'deepseek-v3' },
+  { key: 'OPENAI_MODEL_FAST', label: '快速模型 (FAST)', sensitive: false, placeholder: 'anthropic/claude-haiku-4.5' },
+  { key: 'OPENAI_MODEL_PRO', label: '专业模型 (PRO)', sensitive: false, placeholder: 'gemini-2.5-pro' },
+  { key: 'OPENAI_API_KEY', label: '主密钥 (OpenAI Key)', sensitive: true, placeholder: '请输入 OpenAI 兼容接口密钥' },
+  { key: 'GEMINI_API_KEY', label: '备用密钥 (Gemini Key)', sensitive: true, placeholder: '请输入 Gemini API Key' },
 ]
+
+const editingKey = ref('')
+const draftValues = reactive({})
 
 const isSet = (key) => {
   const v = props.envConfig?.[key]
   return !!(v && !String(v).includes('YOUR_') && !String(v).includes('your_') && v !== '未配置' && v !== '')
+}
+
+const startEdit = (item) => {
+  editingKey.value = item.key
+  draftValues[item.key] = item.sensitive ? '' : (props.envConfig?.[item.key] || '')
+}
+
+const cancelEdit = () => {
+  editingKey.value = ''
+}
+
+const saveItem = (item) => {
+  const value = String(draftValues[item.key] || '').trim()
+  if (item.sensitive && !value && isSet(item.key)) {
+    editingKey.value = ''
+    return
+  }
+  emit('save-env', { key: item.key, value })
+  editingKey.value = ''
 }
 </script>
 
@@ -130,5 +204,67 @@ const isSet = (key) => {
   background: var(--bg-tint);
   padding: 6px 10px;
   border-radius: 6px;
+}
+
+.config-empty {
+  font-size: 12px;
+  color: #a0aec0;
+  background: var(--bg-tint);
+  padding: 6px 10px;
+  border-radius: 6px;
+}
+
+.edit-box {
+  display: grid;
+  gap: 6px;
+}
+
+.config-input {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 13px;
+  color: var(--t);
+  background: #fff;
+}
+
+.edit-hint {
+  font-size: 12px;
+  color: var(--t3);
+}
+
+.config-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+}
+
+.mini-btn {
+  border: 1px solid var(--border);
+  background: #fff;
+  color: var(--t2);
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.mini-btn.primary {
+  border-color: #5a67d8;
+  color: #5a67d8;
+}
+
+.mini-btn.danger {
+  border-color: rgba(229, 62, 62, 0.35);
+  color: #c53030;
+}
+
+.mini-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 </style>

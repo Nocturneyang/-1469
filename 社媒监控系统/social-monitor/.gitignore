@@ -7,3 +7,6 @@ teams-profile-*/
 whatsapp-session-*/
 *.png
 .DS_Store
+.env*
+.oauth-temp/
+*.bak

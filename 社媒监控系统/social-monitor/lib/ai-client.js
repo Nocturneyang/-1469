@@ -25,7 +25,26 @@ const dingtalk = require('./dingtalk');
 // 支持 OPENAI_* 和 ANTHROPIC_* 两种命名，OPENAI_* 优先（.env文件配置）
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || process.env.ANTHROPIC_API_KEY || '';
 const OPENAI_BASE_URL = (process.env.OPENAI_BASE_URL || process.env.ANTHROPIC_BASE_URL || 'https://api.openai.com/v1').replace(/\/$/, '');
-const OPENAI_MODEL = process.env.OPENAI_MODEL || process.env.ANTHROPIC_MODEL || 'gpt-4o-mini';
+
+// 分层模型配置（按场景选择最佳性价比模型）
+//   FAST    — 高频轻量（内容审核 / 模板提取 / 单消息打标签），追求低成本
+//   DEFAULT — 中等任务（供应商告警 / QA 提取 / 设备知识 / 上下文校验），中文表现强
+//   PRO     — 高质量长文（每日日报 / 周报 / 供应商画像），对推理质量敏感
+const OPENAI_MODEL_DEFAULT =
+  process.env.OPENAI_MODEL || process.env.ANTHROPIC_MODEL || 'deepseek-v3';
+const OPENAI_MODEL_FAST =
+  process.env.OPENAI_MODEL_FAST || 'anthropic/claude-haiku-4.5';
+const OPENAI_MODEL_PRO =
+  process.env.OPENAI_MODEL_PRO || 'anthropic/claude-3.7-sonnet';
+// 兼容旧引用
+const OPENAI_MODEL = OPENAI_MODEL_DEFAULT;
+
+function pickModel(tier) {
+  if (tier === 'fast') return OPENAI_MODEL_FAST;
+  if (tier === 'pro') return OPENAI_MODEL_PRO;
+  return OPENAI_MODEL_DEFAULT;
+}
+
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
 
 const MAX_MSGS_PER_CALL = 20;
@@ -76,17 +95,21 @@ async function openCircuit(reason) {
 }
 
 // ─── OpenAI 兼容接口调用（支持 one-api / 自建中转）───────────────
-async function callOpenAICompat(prompt) {
+async function callOpenAICompat(prompt, model, maxTokens = 16384, systemMessage = null) {
   if (!OPENAI_API_KEY) throw new Error('OPENAI_API_KEY 未配置');
 
   const url = `${OPENAI_BASE_URL}/chat/completions`;
+  const messages = systemMessage
+    ? [{ role: 'system', content: systemMessage }, { role: 'user', content: prompt }]
+    : [{ role: 'user', content: prompt }];
+
   const res = await axios.post(
     url,
     {
-      model: OPENAI_MODEL,
-      messages: [{ role: 'user', content: prompt }],
+      model: model || OPENAI_MODEL_DEFAULT,
+      messages,
       temperature: 0.2,
-      max_tokens: 600,
+      max_tokens: maxTokens,
     },
     {
       headers: {
@@ -97,40 +120,61 @@ async function callOpenAICompat(prompt) {
     }
   );
 
+  if (!res.data?.choices?.[0]?.message?.content) {
+    throw new Error('Invalid API response: missing choices or content');
+  }
+
   return res.data.choices[0].message.content.trim();
 }
 
-// ─── Gemini 直连（可选备用）──────────────────────────────────────
+// ─── Gemini 通过 one-api 中转（备用）────────────────────────────────
 async function callGemini(prompt) {
   if (!GEMINI_API_KEY) throw new Error('GEMINI_API_KEY 未配置');
 
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`;
+  const url = `${OPENAI_BASE_URL}/chat/completions`;
   const res = await axios.post(
     url,
     {
-      contents: [{ parts: [{ text: prompt }] }],
-      generationConfig: { temperature: 0.2, maxOutputTokens: 600 },
+      model: 'gemini-1.5-flash',
+      messages: [{ role: 'user', content: prompt }],
+      temperature: 0.2,
+      max_tokens: 16384,
     },
-    { headers: { 'Content-Type': 'application/json' }, timeout: 20000 }
+    {
+      headers: {
+        Authorization: `Bearer ${GEMINI_API_KEY}`,
+        'Content-Type': 'application/json',
+      },
+      timeout: 25000,
+    }
   );
 
-  return res.data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || '';
+  if (!res.data?.choices?.[0]?.message?.content) {
+    throw new Error('Invalid Gemini API response: missing choices or content');
+  }
+
+  return res.data.choices[0].message.content.trim();
 }
 
 // ─── 统一调用入口 ─────────────────────────────────────────────────
 /**
  * 调用 AI：OpenAI兼容接口 → Gemini → 降级
  * @param {string} prompt
+ * @param {{tier?: 'fast'|'default'|'pro', model?: string}} [options]
  * @returns {Promise<string>}
  * @throws {'AI_DEGRADED'} 当熔断器开启或均不可用时
  */
-async function callAI(prompt) {
+async function callAI(prompt, options = {}) {
   if (isCircuitOpen()) throw new Error('AI_DEGRADED');
+
+  const model = options.model || pickModel(options.tier);
+  const maxTokens = options.maxTokens;
+  const systemMessage = options.systemMessage || null;
 
   // ① 尝试 OpenAI 兼容接口
   if (OPENAI_API_KEY) {
     try {
-      const text = await callOpenAICompat(prompt);
+      const text = await callOpenAICompat(prompt, model, maxTokens, systemMessage);
       return text;
     } catch (err) {
       const status = err?.response?.status;
@@ -142,7 +186,7 @@ async function callAI(prompt) {
     }
   }
 
-  // ② 尝试 Gemini 直连
+  // ② 尝试 Gemini 直连（不分层，所有 tier 共用同一 Gemini 备份）
   if (GEMINI_API_KEY) {
     try {
       return await callGemini(prompt);
@@ -163,8 +207,27 @@ async function callAI(prompt) {
 // ─── JSON 提取 ────────────────────────────────────────────────────
 function extractJSON(text) {
   if (!text) return null;
+  // 先尝试直接解析
   try { return JSON.parse(text); } catch { }
-  const m = text.match(/\{[\s\S]*\}/);
+
+  // 使用平衡括号匹配提取完整 JSON
+  let depth = 0;
+  let start = -1;
+  for (let i = 0; i < text.length; i++) {
+    if (text[i] === '{') {
+      if (depth === 0) start = i;
+      depth++;
+    } else if (text[i] === '}') {
+      depth--;
+      if (depth === 0 && start !== -1) {
+        const jsonStr = text.slice(start, i + 1);
+        try { return JSON.parse(jsonStr); } catch { }
+      }
+    }
+  }
+
+  // 降级：尝试匹配第一个完整的 JSON 对象
+  const m = text.match(/\{[\s\S]*?\}/);
   if (m) { try { return JSON.parse(m[0]); } catch { } }
   return null;
 }
@@ -209,11 +272,14 @@ ${messagesBlock}
 4. 供应商是否有明确承诺？提取承诺原文（无则为null）。
 5. 下一步建议（1句话）。
 
-严格JSON输出，不含其他文字：
+【重要】直接输出JSON，不要输出任何思考过程、解释文字或markdown标记。JSON必须完整且格式正确：
 {"score":8,"title":"菲律宾Smart OTP投递率跌零","type":"成功率告警","commitment":"will fix in 30 mins","action":"检查SID 8100385配置，30分钟后确认是否恢复"}`;
 
   try {
-    const text = await callAI(prompt);
+    const text = await callAI(prompt, {
+      tier: 'default',
+      systemMessage: 'You are a JSON-only API. Output ONLY valid JSON, no explanations, no thinking process, no markdown. Start with { and end with }.'
+    });
     const result = extractJSON(text);
     if (!result) { console.warn('[AI] 无法解析JSON:', text.slice(0, 200)); return null; }
     return result;
@@ -258,11 +324,14 @@ ${openIssuesList}
 3. hasAlert: 是否有未解决的告警信号（true/false）
 4. solutions: 我方方案摘要（数组，从我方运营回复中提取，每条25字内，无则空数组）
 
-严格JSON输出，不含其他文字：
+【重要】直接输出JSON，不要输出任何思考过程、解释文字或markdown标记。JSON必须完整且格式正确：
 {"keyPoints":["Dexter确认Smart OTP通道正常"],"followUp":["有2条投递回执追踪消息，建议确认"],"hasAlert":false,"solutions":["建议客户切换至MKT通道测试OTP送达"]}`;
 
   try {
-    const text = await callAI(prompt);
+    const text = await callAI(prompt, {
+      tier: 'pro',
+      systemMessage: 'You are a JSON-only API. Output ONLY valid JSON, no explanations, no thinking process, no markdown. Start with { and end with }.'
+    });
     const result = extractJSON(text);
     return result || null;
   } catch (err) {
@@ -298,7 +367,7 @@ ${statsText}
 4. 语气专业客观，不要包裹在 \`\`\`markdown 代码块中，直接输出排版好的文本。`;
 
   try {
-    const text = await callAI(prompt);
+    const text = await callAI(prompt, { tier: 'pro' });
     return text ? text.trim() : null;
   } catch (err) {
     if (err.message === 'AI_DEGRADED') return null;
@@ -337,11 +406,14 @@ ${reviewerReply.slice(0, 500)}
 - 要求修改后再发 → approved=false, reason注明需修改
 - 模糊回复、仅确认收到、技术询问 → approved=null
 
-严格JSON输出：
+【重要】直接输出JSON，不要输出任何思考过程、解释文字或markdown标记。JSON必须完整且格式正确：
 {"approved":true,"confidence":0.95,"reason":"供应商明确回复ok确认内容可发送"}`;
 
   try {
-    const text = await callAI(prompt);
+    const text = await callAI(prompt, {
+      tier: 'fast',
+      systemMessage: 'You are a JSON-only API. Output ONLY valid JSON, no explanations, no thinking process, no markdown. Start with { and end with }.'
+    });
     const result = extractJSON(text);
     if (!result) return null;
     return {
@@ -390,11 +462,14 @@ ${conversation.slice(0, 3500)}
 4. answer_steps: 标准解决步骤（数组，每步≤30字）
 5. answer_category: 解决类型（配置修改/重启/更换硬件/联系运营商/等待恢复/内容调整/其他）
 
-严格JSON输出，不含其他文字：
+【重要】直接输出JSON，不要输出任何思考过程、解释文字或markdown标记。JSON必须完整且格式正确：
 {"question_type":"设备无法连接","question_summary":"GOIP设备端口断开无法连接","question_keywords":"disconnect,port,无法连接,goip","answer_steps":["检查网络和端口配置","重启设备","Anydesk远程排查"],"answer_category":"重启"}`;
 
   try {
-    const text = await callAI(prompt);
+    const text = await callAI(prompt, {
+      tier: 'default',
+      systemMessage: 'You are a JSON-only API. Output ONLY valid JSON, no explanations, no thinking process, no markdown. Start with { and end with }.'
+    });
     const result = extractJSON(text);
     if (!result) return null;
     return {
@@ -439,11 +514,14 @@ ${conversation.slice(0, 3000)}
 4. fault_category: 故障分类（配置/硬件/网络/SIM/IMEI/端口/其他）
 5. solution_steps: 解决步骤（数组，每步≤30字）
 
-严格JSON输出，不含其他文字：
+【重要】直接输出JSON，不要输出任何思考过程、解释文字或markdown标记。JSON必须完整且格式正确：
 {"device_model":"RFH0606938SM","device_type":"goip","fault_symptom":"模块4-8不工作，端口无法连接","fault_category":"硬件","solution_steps":["检查模块供电和连接线","拆卸模块重新安装","更换故障模块"]}`;
 
   try {
-    const text = await callAI(prompt);
+    const text = await callAI(prompt, {
+      tier: 'default',
+      systemMessage: 'You are a JSON-only API. Output ONLY valid JSON, no explanations, no thinking process, no markdown. Start with { and end with }.'
+    });
     const result = extractJSON(text);
     if (!result) return null;
     return {
@@ -491,11 +569,14 @@ ${conversation.slice(0, 3000)}
 6. review_result: 审核结论（approved/rejected/modified）
 7. compliance_notes: 合规备注（≤30字，如"禁止赌博类内容""短链接需更换域名"等）
 
-严格JSON输出，不含其他文字：
+【重要】直接输出JSON，不要输出任何思考过程、解释文字或markdown标记。JSON必须完整且格式正确：
 {"customer_name":"Onbuka","template_content":"OTP验证码6位数字，有效期5分钟","template_type":"OTP验证码","target_region":"菲律宾","target_operator":"Globe","review_result":"approved","compliance_notes":"需使用直连通道，避免公共通道"}`;
 
   try {
-    const text = await callAI(prompt);
+    const text = await callAI(prompt, {
+      tier: 'fast',
+      systemMessage: 'You are a JSON-only API. Output ONLY valid JSON, no explanations, no thinking process, no markdown. Start with { and end with }.'
+    });
     const result = extractJSON(text);
     if (!result) return null;
     return {
@@ -578,11 +659,14 @@ ${sample.slice(0, 4000)}
 
 9. **planned_maintenance_pct**: 计划内维护占比（0-1之间小数，根据"维护通知/计划升级"类消息占比估计，若无法判断填null）
 
-严格JSON输出，不含markdown代码块标记：
+【重要】直接输出JSON，不要输出任何思考过程、解释文字或markdown标记。JSON必须完整且格式正确：
 {"attitude_tags":["被动响应","英文主导"],"insight_tags":["故障高频","技术兜底弱","周末响应盲区"],"insight_summary":"该供应商工作日基本能响应，但一线客服多为传话筒...","sub_scores":{"主动上报与预警":15,"首问解决率FCR":40,"技术配合态度":70,"计划内变更占比":20},"avg_turns":6.5,"fcr":0.4,"tech_contact":"Alex","tech_reply_rate":0.75,"planned_maintenance_pct":0.15}`;
 
   try {
-    const text = await callAI(prompt);
+    const text = await callAI(prompt, {
+      tier: 'pro',
+      systemMessage: 'You are a JSON-only API. Output ONLY valid JSON, no explanations, no thinking process, no markdown. Start with { and end with }.'
+    });
     const result = extractJSON(text);
     if (!result) { console.warn('[AI] analyzeSupplierProfile JSON解析失败:', text?.slice(0, 150)); return null; }
     // 规范化：确保数组/对象字段类型正确
@@ -626,7 +710,9 @@ module.exports = {
   // 运行时可读的配置信息（用于 UI 展示）
   getConfig: () => ({
     baseUrl: OPENAI_BASE_URL,
-    model: OPENAI_MODEL,
+    model: OPENAI_MODEL_DEFAULT,
+    modelFast: OPENAI_MODEL_FAST,
+    modelPro: OPENAI_MODEL_PRO,
     hasKey: !!OPENAI_API_KEY,
     hasGemini: !!GEMINI_API_KEY,
   }),

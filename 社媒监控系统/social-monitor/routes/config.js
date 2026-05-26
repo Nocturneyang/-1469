@@ -33,7 +33,7 @@ const ENV_KEYS = ['DINGTALK_ALERT', 'DINGTALK_DIGEST', 'DINGTALK_WEEKLY',
                   'DINGTALK_ALERT_TGU_SECRET', 'DINGTALK_DIGEST_TGU_SECRET', 'DINGTALK_WEEKLY_TGU_SECRET',
                   'DINGTALK_ALERT_TEAMS_SECRET', 'DINGTALK_DIGEST_TEAMS_SECRET', 'DINGTALK_WEEKLY_TEAMS_SECRET',
                   'DINGTALK_SYSTEM_OPS_SECRET',
-                  'OPENAI_API_KEY', 'OPENAI_BASE_URL', 'OPENAI_MODEL', 'GEMINI_API_KEY'];
+                  'OPENAI_API_KEY', 'OPENAI_BASE_URL', 'OPENAI_MODEL', 'OPENAI_MODEL_FAST', 'OPENAI_MODEL_PRO', 'GEMINI_API_KEY'];
 
 router.get('/config/webhooks', (req, res) => {
     try {
@@ -158,7 +158,7 @@ router.post('/config/regions', (req, res) => {
         return res.status(400).json({ success: false, error: '缺少 account / region / platform 字段' });
     }
     if (!/^[a-zA-Z0-9_-]+$/.test(account)) {
-        return res.status(400).json({ success: false, error: 'account 只允许英文数字下划线中划线' });
+        return res.status(400).json({ success: false, error: 'account 只允许英文数字下划线中划线（支持驼峰命名）' });
     }
     try {
         const config = JSON.parse(fs.readFileSync(ACCOUNT_REGIONS_PATH, 'utf8'));

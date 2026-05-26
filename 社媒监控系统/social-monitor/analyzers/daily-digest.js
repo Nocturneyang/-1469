@@ -145,6 +145,16 @@ async function generateDailyDigest() {
   console.log('[daily-digest] 开始生成日报...');
   const range = getYesterdayRange();
 
+  // 检查当天是否已推送过（避免重复推送）
+  const existing = analyticsDb.prepare(`
+    SELECT COUNT(*) AS cnt FROM daily_digests WHERE digest_date = ?
+  `).get(range.dateStr);
+  if (existing.cnt > 0) {
+    console.log(`[daily-digest] ${range.dateStr} 日报已存在记录，跳过推送（避免重复）`);
+    _digestRunning = false;
+    return;
+  }
+
   // ── Step 1: 查询昨日活跃群 ──
   const activeGroups = sourceDb.prepare(`
     SELECT group_name, group_id, receiver_account,
@@ -398,19 +408,7 @@ function formatDigest(summaries, silentGroups, range, allOpenIssues, trend, regi
 
   lines.push(`## ${platformTitle} 供应商群消息汇总`);
   lines.push(`${range.dateStr} 09:00 日报${regionLabel ? ' · ' + regionLabel + '专区' : ''}`);
-  
-  // 添加网站超链接（优先使用环境变量，否则使用生产环境默认域名）
-  const webBaseUrl = process.env.WEB_BASE_URL || 'https://social-monitor.tyhark.com';
-  if (webBaseUrl) {
-    const linkParams = new URLSearchParams();
-    if (regionLabel) linkParams.set('region', regionLabel);
-    linkParams.set('date', range.dateStr);
-    const digestUrl = `${webBaseUrl}/daily-digest?${linkParams.toString()}`;
-    lines.push(`[📱 查看网站详情](${digestUrl})`);
-    lines.push('');
-  } else {
-    lines.push('');
-  }
+  lines.push('');
 
   // ── 趋势速览 ──
   if (trend) {

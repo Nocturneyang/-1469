@@ -78,7 +78,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import api from '@/utils/request'
 
 const platforms = [
@@ -94,6 +94,7 @@ const loading = ref(false)
 const messages = ref([])
 const currentPage = ref(1)
 const pageSize = 20
+let refreshTimer = null
 
 const filteredMessages = computed(() => {
   let result = messages.value
@@ -186,6 +187,11 @@ watch(selectedPlatform, () => {
 
 onMounted(() => {
   fetchMessages()
+  refreshTimer = setInterval(fetchMessages, 5000)
+})
+
+onUnmounted(() => {
+  if (refreshTimer) clearInterval(refreshTimer)
 })
 </script>
 

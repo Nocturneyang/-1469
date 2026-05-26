@@ -261,6 +261,46 @@ function createTgUserRouter({ safeWriteEcosystem }) {
         }
     });
 
+    router.get('/config/:name', (req, res) => {
+        const { name } = req.params;
+        const workerName = `worker-tgu-${name}`;
+        
+        const { exec } = require('child_process');
+        exec('npx pm2 jlist', (err, stdout) => {
+            let apiId = '';
+            let apiHash = '';
+            
+            try {
+                if (!err && stdout) {
+                    const list = JSON.parse(stdout);
+                    const app = list.find(x => x.name === workerName);
+                    if (app && app.pm2_env) {
+                        const accountKey = name.toUpperCase().replace(/-/g, '_');
+                        apiId = app.pm2_env[`TG_API_ID_${accountKey}`] || app.pm2_env.TG_API_ID || '';
+                        apiHash = app.pm2_env[`TG_API_HASH_${accountKey}`] || app.pm2_env.TG_API_HASH || '';
+                    }
+                }
+            } catch (jsonErr) {
+                console.error('[TGUser API] Failed to parse pm2 jlist:', jsonErr.message);
+            }
+            
+            // 兜底：如果 PM2 未查询到，从环境及 .env 文件中加载
+            if (!apiId || !apiHash) {
+                const accountKey = name.toUpperCase().replace(/-/g, '_');
+                const envMap = readEnvFile();
+                apiId = apiId || process.env[`TG_API_ID_${accountKey}`] || envMap[`TG_API_ID_${accountKey}`] || process.env.TG_API_ID || '';
+                apiHash = apiHash || process.env[`TG_API_HASH_${accountKey}`] || envMap[`TG_API_HASH_${accountKey}`] || process.env.TG_API_HASH || '';
+            }
+            
+            res.json({
+                success: true,
+                account_name: name,
+                api_id: apiId,
+                api_hash: apiHash
+            });
+        });
+    });
+
     router.post('/revoke/:name', (req, res) => {
         const { name } = req.params;
         try {
@@ -352,7 +392,7 @@ function createTgUserRouter({ safeWriteEcosystem }) {
             return res.status(400).json({ success: false, error: '缺少必填参数: id, api_id, api_hash' });
         }
         if (!/^[a-zA-Z0-9_-]+$/.test(id)) {
-            return res.status(400).json({ success: false, error: 'ID 只允许英文数字下划线中划线' });
+            return res.status(400).json({ success: false, error: 'ID 只允许英文数字下划线中划线（支持驼峰命名）' });
         }
 
         try {
