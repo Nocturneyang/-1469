@@ -200,16 +200,14 @@ function createAccountsRouter({ safeWriteEcosystem }) {
         if (token && !/^[a-zA-Z0-9_:.-]+$/.test(token)) return res.status(400).json({ success: false, error: 'Invalid token format' });
 
         try {
-            let workerName, scriptPath, spawnEnv;
+            let workerName, scriptPath;
             if (platform === 'whatsapp') {
                 workerName = `worker-wa-${trimmedId}`;
                 scriptPath = './workers/worker-wa.js';
-                spawnEnv = { PATH: process.env.PATH, HOME: process.env.HOME, NODE_ENV: 'production', ACCOUNT_NAME: trimmedId };
                 db.prepare(`INSERT OR REPLACE INTO accounts (id, platform, status) VALUES (?, 'whatsapp', 'initializing')`).run('wa-' + trimmedId);
             } else {
                 workerName = `worker-tg-${trimmedId}`;
                 scriptPath = './workers/worker-tg.js';
-                spawnEnv = { PATH: process.env.PATH, HOME: process.env.HOME, NODE_ENV: 'production', TG_ACCOUNT_NAME: trimmedId, TG_BOT_TOKEN: token };
                 db.prepare(`INSERT OR REPLACE INTO accounts (id, platform, status) VALUES (?, 'telegram', 'initializing')`).run('tg-' + trimmedId);
             }
 
@@ -244,16 +242,30 @@ function createAccountsRouter({ safeWriteEcosystem }) {
                 }
             }
 
-            const pm2 = spawn('pm2', ['start', scriptPath, '--name', workerName], {
-                env: spawnEnv,
-                stdio: 'inherit'
-            });
-            pm2.on('error', (err) => {
-                console.error(`[ACCOUNTS] Failed to spawn PM2 process:`, err.message);
-            });
-            pm2.on('close', (code) => {
-                if (code !== 0) console.error(`Failed to start PM2 process, exit code: ${code}`);
-                exec('pm2 save');
+            const cmd = `pm2 start ${scriptPath} --name "${workerName}" --max-memory-restart 1G --cron-restart "0 4 * * *"`;
+            
+            const spawnEnv = { 
+                NODE_ENV: 'production', 
+                DATA_DIR: process.env.DATA_DIR || path.join(__dirname, '..')
+            };
+
+            if (platform === 'whatsapp') {
+                spawnEnv.ACCOUNT_NAME = trimmedId;
+            } else {
+                spawnEnv.TG_ACCOUNT_NAME = trimmedId;
+                spawnEnv.TG_BOT_TOKEN = token;
+            }
+
+            exec(cmd, { 
+                cwd: path.join(__dirname, '..'),
+                env: { ...process.env, ...spawnEnv }
+            }, (error) => {
+                if (error) {
+                    console.error(`[ACCOUNTS] Failed to start PM2 process ${workerName}:`, error.message);
+                } else {
+                    console.log(`[ACCOUNTS] Successfully started PM2 process ${workerName}`);
+                    exec('pm2 save');
+                }
             });
 
             res.json({ success: true, message: 'Account creation started' });
