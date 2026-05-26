@@ -1,10 +1,12 @@
-const puppeteer = require('puppeteer-extra');
+const vanillaPuppeteer = require('puppeteer');
+const { PuppeteerExtra } = require('puppeteer-extra');
+const puppeteer = new PuppeteerExtra(vanillaPuppeteer);
 const StealthPlugin = require('puppeteer-extra-plugin-stealth');
 
 // Enable stealth plugin to hide headless browser footprints
 puppeteer.use(StealthPlugin());
 
-// Hijack standard puppeteer inside require cache so whatsapp-web.js uses puppeteer-extra
+// Hijack standard puppeteer inside require cache so whatsapp-web.js uses our custom PuppeteerExtra instance
 require.cache[require.resolve('puppeteer')] = {
     exports: puppeteer
 };
