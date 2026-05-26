@@ -6,15 +6,22 @@
 const fs = require('fs');
 const path = require('path');
 
-const CONFIG_PATH = path.join(__dirname, '../config/internal-staff.json');
+const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '..');
+const CONFIG_DIR = path.join(DATA_DIR, 'config');
+const CONFIG_PATH = path.join(CONFIG_DIR, 'internal-staff.json');
 
-// 初始化配置文件
+// 初始化配置文件目录及文件
+if (!fs.existsSync(CONFIG_DIR)) {
+  fs.mkdirSync(CONFIG_DIR, { recursive: true });
+}
+
 if (!fs.existsSync(CONFIG_PATH)) {
   fs.writeFileSync(CONFIG_PATH, JSON.stringify({
     whitelist: ['ITNIO~ DJ', 'ITNIO Support', 'Routing'],
     keywords: ['itnio', 'support', 'routing']
   }, null, 2));
 }
+
 
 let cachedConfig = null;
 let lastLoadTime = 0;
