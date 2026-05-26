@@ -7,7 +7,8 @@ const fs = require('fs');
 const router = express.Router();
 
 // Analytics database connection
-const analyticsDbPath = path.join(__dirname, '../db/analytics.sqlite');
+const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '..');
+const analyticsDbPath = path.join(DATA_DIR, 'db', 'analytics.sqlite');
 const analyticsDb = new Database(analyticsDbPath);
 
 // Account regions mapping file path
