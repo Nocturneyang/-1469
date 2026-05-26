@@ -1,12 +1,18 @@
-const { Client, LocalAuth } = require('whatsapp-web.js');
-const qrcode = require('qrcode-terminal');
-const fs = require('fs');
-const path = require('path');
 const puppeteer = require('puppeteer-extra');
 const StealthPlugin = require('puppeteer-extra-plugin-stealth');
 
 // Enable stealth plugin to hide headless browser footprints
 puppeteer.use(StealthPlugin());
+
+// Hijack standard puppeteer inside require cache so whatsapp-web.js uses puppeteer-extra
+require.cache[require.resolve('puppeteer')] = {
+    exports: puppeteer
+};
+
+const { Client, LocalAuth } = require('whatsapp-web.js');
+const qrcode = require('qrcode-terminal');
+const fs = require('fs');
+const path = require('path');
 
 const { db, saveMessage, updateAccountStatus } = require('../db/database');
 const { sendAccountAlert } = require('../lib/dingtalk');

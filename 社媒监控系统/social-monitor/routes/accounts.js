@@ -81,7 +81,7 @@ function createAccountsRouter({ safeWriteEcosystem }) {
                     fs.rmSync(sessionPath, { recursive: true, force: true });
                 }
                 
-                exec(`npx pm2 restart worker-wa-${accName}`, (error) => {
+                exec(`pm2 restart worker-wa-${accName}`, (error) => {
                     if(error) console.log('Notice: Could not restart PM2 via API.', error.message);
                 });
             }
@@ -118,7 +118,7 @@ function createAccountsRouter({ safeWriteEcosystem }) {
             
             db.prepare(`UPDATE accounts SET status = 'initializing' WHERE id = ?`).run(id);
             
-            exec(`npx pm2 restart ${workerName}`, (error) => {
+            exec(`pm2 restart ${workerName}`, (error) => {
                 if(error) console.log(`Notice: Could not restart PM2 ${workerName}.`, error.message);
             });
             
@@ -174,9 +174,9 @@ function createAccountsRouter({ safeWriteEcosystem }) {
                 safeWriteEcosystem(eco);
             }
 
-            exec(`npx pm2 delete ${workerName}`, (error) => {
+            exec(`pm2 delete ${workerName}`, (error) => {
                 if (error) console.log(`Notice: Could not delete PM2 process ${workerName} (may already be stopped).`);
-                exec('npx pm2 save', (err) => {
+                exec('pm2 save', (err) => {
                     if (err) console.error('[DELETE ACCOUNT] PM2 save failed:', err);
                     else console.log('[DELETE ACCOUNT] PM2 save succeeded');
                 });
@@ -244,13 +244,16 @@ function createAccountsRouter({ safeWriteEcosystem }) {
                 }
             }
 
-            const pm2 = spawn('npx', ['pm2', 'start', scriptPath, '--name', workerName], {
+            const pm2 = spawn('pm2', ['start', scriptPath, '--name', workerName], {
                 env: spawnEnv,
                 stdio: 'inherit'
             });
+            pm2.on('error', (err) => {
+                console.error(`[ACCOUNTS] Failed to spawn PM2 process:`, err.message);
+            });
             pm2.on('close', (code) => {
                 if (code !== 0) console.error(`Failed to start PM2 process, exit code: ${code}`);
-                exec('npx pm2 save');
+                exec('pm2 save');
             });
 
             res.json({ success: true, message: 'Account creation started' });
