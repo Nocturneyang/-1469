@@ -40,6 +40,10 @@ spec:
               value: /data
             - name: MEDIA_BASE_URL
               value: https://social-monitor.tyhark.com
+            - name: PUPPETEER_EXECUTABLE_PATH
+              value: /usr/bin/chromium
+            - name: PUPPETEER_SKIP_DOWNLOAD
+              value: "true"
           volumeMounts:
             - name: sqlite-data
               mountPath: /data

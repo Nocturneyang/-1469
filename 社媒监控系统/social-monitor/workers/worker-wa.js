@@ -2,6 +2,12 @@ const { Client, LocalAuth } = require('whatsapp-web.js');
 const qrcode = require('qrcode-terminal');
 const fs = require('fs');
 const path = require('path');
+const puppeteer = require('puppeteer-extra');
+const StealthPlugin = require('puppeteer-extra-plugin-stealth');
+
+// Enable stealth plugin to hide headless browser footprints
+puppeteer.use(StealthPlugin());
+
 const { db, saveMessage, updateAccountStatus } = require('../db/database');
 const { sendAccountAlert } = require('../lib/dingtalk');
 
@@ -90,6 +96,7 @@ const client = new Client({
     authStrategy: new LocalAuth({ dataPath: sessionPath }),
     webVersionCache: getWebVersionConfig(),
     puppeteer: {
+        ...puppeteer, // Pass stealth-enabled puppeteer-extra instance
         headless: true,
         protocolTimeout: 60000,
         args: [
