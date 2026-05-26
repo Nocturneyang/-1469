@@ -96,7 +96,7 @@ const client = new Client({
     authStrategy: new LocalAuth({ dataPath: sessionPath }),
     webVersionCache: getWebVersionConfig(),
     puppeteer: {
-        ...puppeteer, // Pass stealth-enabled puppeteer-extra instance
+        puppeteer: puppeteer, // Pass stealth-enabled puppeteer-extra instance
         headless: true,
         protocolTimeout: 60000,
         args: [
@@ -289,4 +289,9 @@ client.on('message_create', async (message) => {
 });
 
 console.log(`[WA] Initializing client for ${accountName}...`);
-client.initialize();
+client.initialize().catch(err => {
+    console.error('🔴 [WhatsApp] Failed to initialize client:', err);
+    if (updateAccountStatus) {
+        updateAccountStatus(`wa-${accountName}`, 'whatsapp', 'disconnected', `初始化失败: ${err.message}`);
+    }
+});
