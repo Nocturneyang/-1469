@@ -1,13 +1,12 @@
 FROM node:20-slim
 
-WORKDIR /app
+WORKDIR /app/social-monitor
 
 ENV TZ=Asia/Shanghai \
     NODE_ENV=production \
     DATA_DIR=/data \
+    SKIP_CHROME_INSTALL=true \
     PUPPETEER_SKIP_DOWNLOAD=true \
-    PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium \
-    PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium \
     PUPPETEER_CACHE_DIR=/root/.cache/puppeteer \
     PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
     PLAYWRIGHT_DOWNLOAD_HOST=https://npmmirror.com/mirrors/playwright
@@ -18,46 +17,32 @@ RUN sed -i 's|deb.debian.org|mirrors.aliyun.com|g' /etc/apt/sources.list.d/debia
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     ca-certificates \
-    chromium \
-    curl \
-    fonts-liberation \
-    fonts-noto-cjk \
-    libasound2 \
-    libatk-bridge2.0-0 \
-    libatk1.0-0 \
-    libcairo2 \
-    libcups2 \
-    libdbus-1-3 \
-    libdrm2 \
-    libexpat1 \
-    libgbm1 \
-    libglib2.0-0 \
-    libgtk-3-0 \
-    libnspr4 \
-    libnss3 \
-    libpango-1.0-0 \
-    libx11-6 \
-    libxcb1 \
-    libxcomposite1 \
-    libxdamage1 \
-    libxext6 \
-    libxfixes3 \
-    libxrandr2 \
-    libxrender1 \
-    libxshmfence1 \
-    xdg-utils \
+    python3 \
     && rm -rf /var/lib/apt/lists/*
 
-COPY 社媒监控系统/social-monitor/package*.json ./social-monitor/
-WORKDIR /app/social-monitor
-RUN npm ci --omit=dev --registry=https://registry.npmmirror.com && \
-    npm install -g pm2 --registry=https://registry.npmmirror.com
+COPY 社媒监控系统/social-monitor/package*.json ./
+COPY 社媒监控系统/social-monitor/frontend/package*.json ./frontend/
+COPY 社媒监控系统/social-monitor/scripts/install-chrome.js ./scripts/install-chrome.js
+
+RUN npm ci --omit=dev --registry=https://registry.npmmirror.com
+
+WORKDIR /app/social-monitor/frontend
+RUN npm ci --registry=https://registry.npmmirror.com
 
 WORKDIR /app
 COPY 社媒监控系统/social-monitor ./social-monitor
 COPY docker-entrypoint.sh /docker-entrypoint.sh
 RUN chmod +x /docker-entrypoint.sh
 
+WORKDIR /app/social-monitor/frontend
+RUN npm run build
+
+WORKDIR /app/social-monitor
+RUN npm install -g pm2 --registry=https://registry.npmmirror.com
+
 EXPOSE 3000
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
+  CMD node -e "fetch('http://127.0.0.1:3000/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 
 ENTRYPOINT ["/docker-entrypoint.sh"]

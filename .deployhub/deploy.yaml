@@ -6,3 +6,6 @@ middleware:
   - sqlite
 domain: social-monitor.tyhark.com
 sso: true
+build:
+  type: docker
+  dockerfile: Dockerfile
