@@ -186,6 +186,68 @@ function removeAppFromEcosystem(ecoPath, workerName) {
     };
 }
 
+function buildWaAppConfig(accountName) {
+    return {
+        name: `worker-wa-${accountName}`,
+        script: './workers/worker-wa.js',
+        max_memory_restart: '1G',
+        cron_restart: '0 4 * * *',
+        instances: 1,
+        exec_mode: 'fork',
+        autorestart: true,
+        watch: false,
+        kill_timeout: 15000,
+        restart_delay: 30000,
+        max_restarts: 5,
+        min_uptime: '2m',
+        env: {
+            NODE_ENV: 'production',
+            ACCOUNT_NAME: accountName,
+            WA_ORCHESTRATOR_MANAGED_INIT: 'true',
+            WA_INIT_COOLDOWN_MS: '30000',
+            WA_INIT_QUARANTINE_AFTER: '10',
+            WA_INIT_QUARANTINE_MS: '60000',
+            WA_INIT_HARD_TIMEOUT_MS: '360000',
+            WA_AUTH_TIMEOUT_MS: '300000',
+            PUPPETEER_EXECUTABLE_PATH: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium',
+            PUPPETEER_SKIP_DOWNLOAD: 'true'
+        }
+    };
+}
+
+function buildTgBotAppConfig(accountName, token) {
+    return {
+        name: `worker-tg-${accountName}`,
+        script: './workers/worker-tg.js',
+        instances: 1,
+        autorestart: true,
+        watch: false,
+        env: {
+            NODE_ENV: 'production',
+            TG_ACCOUNT_NAME: accountName,
+            TG_BOT_TOKEN: token
+        }
+    };
+}
+
+function upsertAppInEcosystem(ecoPath, appConfig) {
+    const config = loadEcosystemConfig(ecoPath);
+    if (!config || !Array.isArray(config.apps)) {
+        throw new Error('ecosystem.config.js 解析后 apps 不是数组');
+    }
+
+    const existingIndex = config.apps.findIndex(app => app && app.name === appConfig.name);
+    if (existingIndex >= 0) {
+        config.apps[existingIndex] = appConfig;
+    } else {
+        const uiIndex = config.apps.findIndex(app => app && app.name === 'ui-server');
+        if (uiIndex >= 0) config.apps.splice(uiIndex, 0, appConfig);
+        else config.apps.push(appConfig);
+    }
+
+    return serializeEcosystemConfig(config);
+}
+
 function clearTgUserRuntimeConfig(accountName) {
     const name = accountName.toUpperCase();
     writeEnvKeys({
@@ -647,43 +709,15 @@ function createAccountsRouter({ safeWriteEcosystem }) {
 
             const ecoPath = path.join(process.env.DATA_DIR || path.join(__dirname, '..'), 'ecosystem.config.js');
             if (fs.existsSync(ecoPath)) {
-                let eco = fs.readFileSync(ecoPath, 'utf8');
-                let insertStr = '';
-                if (platform === 'whatsapp') {
-                    insertStr = `    {
-      name: "${workerName}",
-      script: "${scriptPath}",
-      max_memory_restart: '1G',
-      cron_restart: '0 4 * * *',
-      instances: 1,
-      exec_mode: "fork",
-      autorestart: true,
-      watch: false,
-      kill_timeout: 15000,
-      restart_delay: 30000,
-      max_restarts: 5,
-      min_uptime: "2m",
-      env: { NODE_ENV: "production", ACCOUNT_NAME: "${trimmedId}" }
-    },\n    // --- Web UI Server ---`;
-                } else {
-                    insertStr = `    {
-      name: "${workerName}",
-      script: "${scriptPath}",
-      instances: 1,
-      autorestart: true,
-      watch: false,
-      env: { NODE_ENV: "production", TG_ACCOUNT_NAME: "${trimmedId}", TG_BOT_TOKEN: "${token}" }
-    },\n    // --- Web UI Server ---`;
-                }
-                if (eco.includes('// --- Web UI Server ---') && !eco.includes(workerName)) {
-                    eco = eco.replace('// --- Web UI Server ---', insertStr);
-                    safeWriteEcosystem(eco);
-                }
+                const appConfig = platform === 'whatsapp'
+                    ? buildWaAppConfig(trimmedId)
+                    : buildTgBotAppConfig(trimmedId, token);
+                safeWriteEcosystem(upsertAppInEcosystem(ecoPath, appConfig));
             }
 
             const cmd = platform === 'whatsapp'
-                ? `pm2 start ${scriptPath} --name "${workerName}" --max-memory-restart 1G --cron-restart "0 4 * * *" --restart-delay 30000 --max-restarts 5 --min-uptime 2m`
-                : `pm2 start ${scriptPath} --name "${workerName}"`;
+                ? `npx pm2 start ecosystem.config.js --only "${workerName}" --env production`
+                : `npx pm2 start ecosystem.config.js --only "${workerName}" --env production`;
             
             const spawnEnv = { 
                 NODE_ENV: 'production', 
@@ -702,14 +736,16 @@ function createAccountsRouter({ safeWriteEcosystem }) {
                 env: { ...process.env, ...spawnEnv }
             }, (error) => {
                 if (error) {
-                    console.error(`[ACCOUNTS] Failed to start PM2 process ${workerName}:`, error.message);
-                } else {
-                    console.log(`[ACCOUNTS] Successfully started PM2 process ${workerName}`);
-                    exec('pm2 save');
+                    const detail = [error.message, error.stderr, error.stdout].filter(Boolean).join('\n').slice(0, 1200);
+                    console.error(`[ACCOUNTS] Failed to start PM2 process ${workerName}:`, detail);
+                    db.prepare(`UPDATE accounts SET status = 'error', health_status = 'runtime_start_failed', updated_at = datetime('now') WHERE id = ?`)
+                        .run(platform === 'whatsapp' ? 'wa-' + trimmedId : 'tg-' + trimmedId);
+                    return res.status(500).json({ success: false, error: `PM2 启动失败: ${detail}` });
                 }
+                console.log(`[ACCOUNTS] Successfully started PM2 process ${workerName}`);
+                exec('npx pm2 save');
+                res.json({ success: true, message: 'Account creation started' });
             });
-
-            res.json({ success: true, message: 'Account creation started' });
         } catch (err) {
             console.error('Create Error:', err);
             res.status(500).json({ success: false, error: err.message });
