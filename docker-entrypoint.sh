@@ -16,6 +16,16 @@ if [ ! -f "$DATA_DIR/.env" ]; then
   touch "$DATA_DIR/.env"
 fi
 
+if [ -n "${TG_ACCOUNT_NAME:-}" ]; then
+  cd "$APP_DIR"
+  exec node scripts/start-tg-collector.js
+fi
+
+if [ -n "${ACCOUNT_NAME:-}" ]; then
+  cd "$APP_DIR"
+  exec node scripts/start-wa-collector.js
+fi
+
 if [ -f "$APP_DIR/ecosystem.cloud.config.js" ] && [ ! -f "$DATA_DIR/.cloud-ecosystem-version" ]; then
   if [ -f "$DATA_DIR/ecosystem.config.js" ]; then
     cp "$DATA_DIR/ecosystem.config.js" "$DATA_DIR/ecosystem.config.js.bak.$(date +%Y%m%d%H%M%S)"
