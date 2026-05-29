@@ -112,6 +112,28 @@ function removeWaAccountManaged(accountName) {
     writeWaAccountsConfig(config);
 }
 
+function clearWaInitGuards(accountName, reason = 'manual') {
+    const files = [
+        '/tmp/wa_chrome_init.lock',
+        path.join('/tmp', `wa_chrome_init_cooldown_${accountName}.json`),
+        path.join('/tmp', `wa_chrome_init_strikes_${accountName}.json`)
+    ];
+
+    for (const file of files) {
+        try {
+            if (!fs.existsSync(file)) continue;
+            if (file.endsWith('wa_chrome_init.lock')) {
+                const lock = JSON.parse(fs.readFileSync(file, 'utf8'));
+                if (lock.holder !== accountName) continue;
+            }
+            fs.unlinkSync(file);
+            console.log(`[WA INIT] Cleared ${path.basename(file)} for ${accountName} (${reason})`);
+        } catch (err) {
+            console.warn(`[WA INIT] Failed to clear ${file} for ${accountName}: ${err.message}`);
+        }
+    }
+}
+
 function createAccountsRouter({ safeWriteEcosystem }) {
     const router = express.Router();
 
@@ -436,23 +458,12 @@ function createAccountsRouter({ safeWriteEcosystem }) {
 
             // ── WA 账号额外清理：杀 Chrome、释放锁、清 Session Auth ────────
             if (id.startsWith('wa-')) {
-                const LOCK_FILE = '/tmp/wa_chrome_init.lock';
-
                 // 1. 杀掉该账号所有 Chrome 进程
                 exec(`pgrep -f "whatsapp-session-${accName}" 2>/dev/null | xargs kill -9 2>/dev/null || true`,
                     { shell: '/bin/bash' }, () => {});
 
-                // 2. 释放初始化锁（如果是该账号持有，或锁已超时 3 分钟）
-                try {
-                    if (fs.existsSync(LOCK_FILE)) {
-                        const lock = JSON.parse(fs.readFileSync(LOCK_FILE, 'utf8'));
-                        const age = Date.now() - lock.ts;
-                        if (lock.holder === accName || age > 3 * 60 * 1000) {
-                            fs.unlinkSync(LOCK_FILE);
-                            console.log(`[RELOGIN] 已释放初始化锁（原持有者: ${lock.holder}）`);
-                        }
-                    }
-                } catch (_) {}
+                // 2. 人工重新登录必须绕过自动保护冷却，否则会一直等旧 cooldown，不出二维码。
+                clearWaInitGuards(accName, 'relogin');
 
                 // 3. 清除 Session 认证数据（让 Chrome 生成全新 QR）
                 const sessionBase = path.join(
