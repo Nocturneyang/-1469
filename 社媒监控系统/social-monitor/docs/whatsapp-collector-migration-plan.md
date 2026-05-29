@@ -37,16 +37,16 @@
 - 主系统新增 `POST /api/collector/media`，collector 可将媒体 base64 上传回主系统并得到 `media/<file>` 路径。
 - WA worker 配置 `COLLECTOR_API_URL` 后会通过 HTTP 上报心跳、事件、账号状态和消息；未配置时保留本地 SQLite 写入模式。
 - collector 模式不加载本地 `db/database`，避免隔离容器直接打开主系统 SQLite。
-- 新增 `Dockerfile.wa-collector` 和 `npm run wa:collector`，每个 WA 账号可作为独立 collector 组件运行。
+- `npm run wa:collector` 可让同一镜像在 collector 角色下运行；Deploy Hub/Rainbond 只构建一个主镜像，不再为 collector 另建镜像。
 
 后续可继续把主系统本地媒体存储替换成对象存储，避免 App ID 58 的 10GiB PVC 被图片/视频长期占满。
 
 ## 阶段 4：Rainbond/Kubernetes 拆分
 
-- `social-monitor` App ID 58 只保留 Web/API/DB/分析/调度。
+- `social-monitor` App ID 58 使用单镜像多角色模式：主系统组件、WA collector 组件、TG collector 组件共用同一个镜像标签，通过入口脚本和环境变量分流。
 - 每个 WA 账号独立 collector 组件，建议每个组件 2-3GiB 内存限制。
 - Orchestrator 通过 RuntimeAdapter 管理本地 PM2 或线上 Rainbond/K8s。
-- 主系统 `Dockerfile` 已移除 Chrome 安装，构建时设置 `SKIP_CHROME_INSTALL=true` 和 `PUPPETEER_SKIP_DOWNLOAD=true`。
+- 根 `Dockerfile` 包含 Chromium，确保同一镜像可运行 WA collector；主系统组件自身不会启动 Chrome。
 - 新增 `.dockerignore`，避免把本地 session、SQLite、media、node_modules 打入主系统或 collector 镜像。
 - 新增 `.deployhub/k8s/app.yaml`，固化 App ID 58 的 10Gi PVC、`500m/1Gi` requests、`2/3Gi` limits。
 - 新增 `npm run wa:collector:manifest`，可为每个 WA 账号生成独立 collector 的 K8s manifest。

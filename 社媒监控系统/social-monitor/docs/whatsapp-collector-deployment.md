@@ -68,12 +68,24 @@ npm run db:backup:prune -- --execute
 - `SSO_USERINFO_URL` 可选；网关注入 `x-user-*` 用户头时可不配置
 - `SSO_ADMIN_USERS` 可选；逗号分隔，匹配 SSO 的 id/username/email，用于授予后台管理权限
 
+## 单镜像多角色
+
+当前 Deploy Hub/Rainbond 使用单镜像模式。根目录 `Dockerfile` 会把主系统、分析器、WA/TG worker、collector 协议、Chromium 运行时都打进同一个镜像。
+
+组件通过环境变量决定运行角色：
+
+- 未配置 `ACCOUNT_NAME` / `TG_ACCOUNT_NAME`：运行主系统 `ui-server`。
+- 配置 `ACCOUNT_NAME`：运行 WA collector。
+- 配置 `TG_ACCOUNT_NAME`：运行 TG collector。
+
+根目录 `docker-entrypoint.sh` 负责这个分流逻辑。因此 Rainbond 中可以有多个组件，但它们都使用同一个镜像标签，例如 `g1469-social-monitor:94f72d6`。不要为 WA/TG collector 单独构建第二、第三个镜像。
+
 ## WA Collector
 
-每个 WA 账号一个独立 collector 组件：
+每个 WA 账号一个独立 collector 组件，但共用主系统镜像：
 
-- 镜像：`Dockerfile.wa-collector`
-- 启动命令：`npm run wa:collector`
+- 镜像：与主系统相同的单镜像
+- 启动方式：组件环境变量配置 `ACCOUNT_NAME=<账号名>` 后，入口脚本自动执行 `scripts/start-wa-collector.js`
 - PVC：建议每账号独立 `/data`，2Gi 起步，ReadWriteOnce
 - 资源：requests `500m / 1Gi`，limits `2 / 3Gi`
 - 必填环境变量：
@@ -93,7 +105,7 @@ npm run db:backup:prune -- --execute
 ```bash
 npm run wa:collector:manifest -- \
   --account-name nanya_wa \
-  --image your-registry/social-monitor-wa-collector:tag \
+  --image your-registry/social-monitor:tag \
   --api-url https://your-social-monitor.example.com \
   --token replace_with_random_collector_token \
   --output /tmp/wa-collector-nanya.yaml
@@ -153,7 +165,7 @@ npm run collector:migration:status -- \
 ```
 
 3. 为试点 WA 账号 `wa_shebi` 部署独立 collector。系统账号 ID 是 `wa-wa_shebi`，collector 环境变量使用 `ACCOUNT_NAME=wa_shebi`。
-4. TG 用户号可使用 `Dockerfile.tg-collector` 独立部署。本轮迁移范围只包含 `tgu_supplier` 和 `laffic_service`；`mason_text`、`TG_kaxian` 暂不迁移。
+4. TG 用户号使用同一个主系统镜像独立部署组件。本轮迁移范围只包含 `tgu_supplier` 和 `laffic_service`；`mason_text`、`TG_kaxian` 暂不迁移。
    需要配置 `TG_ACCOUNT_NAME`、`TG_API_ID/TG_API_HASH`、`TG_USER_SESSION_{ACCOUNT}`、`COLLECTOR_API_URL`、`COLLECTOR_TOKEN`。
 5. 前端确认账号心跳、消息、媒体路径都能更新。
 6. 观察 24 小时后，再逐个迁移其他 WA 账号。
@@ -164,7 +176,7 @@ npm run collector:migration:status -- \
 ```bash
 npm run tg:collector:manifest -- \
   --account-name tgu_supplier \
-  --image your-registry/social-monitor-tg-collector:tag \
+  --image your-registry/social-monitor:tag \
   --api-url https://your-social-monitor.example.com \
   --token replace_with_random_collector_token \
   --output /tmp/tg-collector-tgu-supplier.yaml
