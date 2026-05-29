@@ -134,6 +134,18 @@ function clearWaInitGuards(accountName, reason = 'manual') {
     }
 }
 
+function clearWaSession(accountName) {
+    const sessionRoot = path.join(DATA_DIR, `whatsapp-session-${accountName}`);
+    try {
+        if (fs.existsSync(sessionRoot)) {
+            fs.rmSync(sessionRoot, { recursive: true, force: true });
+            console.log(`[WA SESSION] Cleared full session root for ${accountName}: ${sessionRoot}`);
+        }
+    } catch (err) {
+        console.warn(`[WA SESSION] Failed to clear ${sessionRoot} for ${accountName}: ${err.message}`);
+    }
+}
+
 function createAccountsRouter({ safeWriteEcosystem }) {
     const router = express.Router();
 
@@ -456,39 +468,30 @@ function createAccountsRouter({ safeWriteEcosystem }) {
 
             db.prepare(`UPDATE accounts SET status = 'initializing', qr_code = NULL WHERE id = ?`).run(id);
 
+            const restartWorker = () => {
+                setTimeout(() => {
+                    exec(`pm2 restart ${workerName}`, (error) => {
+                        if (error) console.log(`Notice: Could not restart PM2 ${workerName}.`, error.message);
+                    });
+                }, 500);
+            };
+
             // ── WA 账号额外清理：杀 Chrome、释放锁、清 Session Auth ────────
             if (id.startsWith('wa-')) {
-                // 1. 杀掉该账号所有 Chrome 进程
+                // 1. 杀掉该账号所有 Chrome 进程，杀完后再删除 session，避免残留文件句柄污染新 profile。
                 exec(`pgrep -f "whatsapp-session-${accName}" 2>/dev/null | xargs kill -9 2>/dev/null || true`,
-                    { shell: '/bin/bash' }, () => {});
+                    { shell: '/bin/bash' }, () => {
+                        // 2. 人工重新登录必须绕过自动保护冷却，否则会一直等旧 cooldown，不出二维码。
+                        clearWaInitGuards(accName, 'relogin');
 
-                // 2. 人工重新登录必须绕过自动保护冷却，否则会一直等旧 cooldown，不出二维码。
-                clearWaInitGuards(accName, 'relogin');
-
-                // 3. 清除 Session 认证数据（让 Chrome 生成全新 QR）
-                const sessionBase = path.join(
-                    process.env.DATA_DIR || path.join(__dirname, '..'),
-                    `whatsapp-session-${accName}`, 'session', 'Default'
-                );
-                const authDirs = ['IndexedDB', 'Local Storage', 'Session Storage'];
-                const authFiles = ['Cookies', 'Cookies-journal'];
-                authDirs.forEach(d => {
-                    const p = path.join(sessionBase, d);
-                    if (fs.existsSync(p)) { try { fs.rmSync(p, { recursive: true, force: true }); } catch (_) {} }
-                });
-                authFiles.forEach(f => {
-                    const p = path.join(sessionBase, f);
-                    if (fs.existsSync(p)) { try { fs.unlinkSync(p); } catch (_) {} }
-                });
-                console.log(`[RELOGIN] ${accName} Session 认证数据已清除`);
+                        // 3. 完整清除 LocalAuth profile，确保下次启动生成全新 QR。
+                        clearWaSession(accName);
+                        console.log(`[RELOGIN] ${accName} Session 已完整清除，准备重启`);
+                        restartWorker();
+                    });
+            } else {
+                restartWorker();
             }
-
-            // 等 500ms 让 Chrome 进程完全退出再重启 worker
-            setTimeout(() => {
-                exec(`pm2 restart ${workerName}`, (error) => {
-                    if (error) console.log(`Notice: Could not restart PM2 ${workerName}.`, error.message);
-                });
-            }, 500);
             
             res.json({ success: true, message: 'Restart command sent. QR code will appear shortly.' });
         } catch (err) {
