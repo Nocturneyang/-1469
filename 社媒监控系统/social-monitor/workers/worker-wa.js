@@ -314,6 +314,8 @@ function getWebVersionConfig() {
 
 const client = new Client({
     authStrategy: new LocalAuth({ dataPath: sessionPath }),
+    authTimeoutMs: Number(process.env.WA_AUTH_TIMEOUT_MS || 180000),
+    qrMaxRetries: Number(process.env.WA_QR_MAX_RETRIES || 0),
     webVersionCache: getWebVersionConfig(),
     puppeteer: {
         puppeteer: puppeteer, // Pass stealth-enabled puppeteer-extra instance
