@@ -419,6 +419,12 @@ main().catch(async (err) => {
         console.error(`[TGUser:${accountName}] Failed to send fatal alert:`, pushErr.message);
     }
 
+    if (String(err.message || '').includes('AUTH_KEY_DUPLICATED')) {
+        console.error(`[TGUser:${accountName}] AUTH_KEY_DUPLICATED requires a fresh cloud login. Parking worker to avoid restart storm.`);
+        setInterval(() => reportHeartbeat({ phase: 'error', healthStatus: 'error', lastError: err.message }), 60000);
+        return;
+    }
+
     // 非认证错误，30s 后让 PM2 重启
     await sleep(30000);
     process.exit(1);

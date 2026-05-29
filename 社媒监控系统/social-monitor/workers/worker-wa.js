@@ -15,6 +15,7 @@ const { Client, LocalAuth } = require('whatsapp-web.js');
 const qrcode = require('qrcode-terminal');
 const fs = require('fs');
 const path = require('path');
+const util = require('util');
 
 const { sendAccountAlert } = require('../lib/dingtalk');
 const { getWaChromeLaunchConfig } = require('../lib/wa-chrome-runtime');
@@ -316,6 +317,7 @@ const client = new Client({
     webVersionCache: getWebVersionConfig(),
     puppeteer: {
         puppeteer: puppeteer, // Pass stealth-enabled puppeteer-extra instance
+        executablePath: chromeRuntime.executablePath || process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium',
         headless: true,
         protocolTimeout: Number(process.env.WA_PROTOCOL_TIMEOUT_MS || 600000), // 多账号冷启动时 WA Web 注入可能很慢
 
@@ -702,6 +704,14 @@ const INIT_HARD_TIMEOUT = Number(process.env.WA_INIT_HARD_TIMEOUT_MS || 300 * 10
 let initTerminalFailure = false;
 let parkedAfterInitFailure = false;
 
+function formatInitError(err) {
+    if (!err) return 'Unknown initialization error';
+    if (err.stack) return err.stack;
+    if (err.message) return err.message;
+    if (typeof err === 'string') return err;
+    return util.inspect(err, { depth: 4, breakLength: 160 });
+}
+
 function parkAfterInitFailure(phase, message, cooldownReason, updateMessage, shouldCleanupChrome = true) {
     if (parkedAfterInitFailure) return;
     initTerminalFailure = true;
@@ -765,7 +775,8 @@ async function initializeWithRetry(attempt = 1) {
     } catch (err) {
         if (noBrowserWatchdog) clearTimeout(noBrowserWatchdog);
         if (initTerminalFailure) return;
-        const msg = err.message || '';
+        const msg = formatInitError(err);
+        const firstLine = msg.split('\n')[0] || 'Unknown initialization error';
         const isTransient =
             msg.includes('Execution context was destroyed') ||
             msg.includes('Protocol error') ||
@@ -778,9 +789,9 @@ async function initializeWithRetry(attempt = 1) {
 
         if (!ORCHESTRATOR_MANAGED_INIT && isTransient && attempt <= INIT_MAX_RETRIES) {
             const delay = INIT_RETRY_DELAYS[attempt - 1] || 60000;
-            console.warn(`⚠️ [WA:${accountName}] 初始化失败(第${attempt}次): ${msg.split('\n')[0]}`);
+            console.warn(`⚠️ [WA:${accountName}] 初始化失败(第${attempt}次): ${firstLine}`);
             console.warn(`⏳ [WA:${accountName}] ${delay / 1000}s 后重试... (${attempt}/${INIT_MAX_RETRIES})`);
-            transitionRuntime('init_retry', 'initializing', `Initialization retry ${attempt}: ${msg.split('\n')[0]}`, 'warn', { attempt, delay });
+            transitionRuntime('init_retry', 'initializing', `Initialization retry ${attempt}: ${firstLine}`, 'warn', { attempt, delay });
             cleanupStaleBrowser();
             // ⬇ 先释放锁，让其他账号在等待期间有机会初始化
             releaseInitLock();
@@ -790,12 +801,13 @@ async function initializeWithRetry(attempt = 1) {
 
         // 所有重试耗尽或非瞬时错误 → 释放锁让下一个账号尝试
         releaseInitLock();
-        console.error(`🔴 [WA:${accountName}] 初始化最终失败(已重试${attempt - 1}次):`, msg.split('\n')[0]);
+        console.error(`🔴 [WA:${accountName}] 初始化最终失败(已重试${attempt - 1}次): ${firstLine}`);
+        console.error(`[WA:${accountName}] 初始化错误详情:\n${msg}`);
         parkAfterInitFailure(
             'init_failed',
-            `Initialization failed: ${msg.split('\n')[0]}`,
+            `Initialization failed: ${firstLine}`,
             'init_failed',
-            `初始化失败: ${msg.split('\n')[0]}`
+            `初始化失败: ${firstLine}`
         );
     }
 }

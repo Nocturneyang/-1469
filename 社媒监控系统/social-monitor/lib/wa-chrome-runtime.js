@@ -15,9 +15,9 @@ function getChromeVersionFromExecutablePath(puppeteerInstance) {
 }
 
 function getPuppeteerChromeInfo(puppeteerInstance) {
-    let executablePath = null;
+    let executablePath = process.env.PUPPETEER_EXECUTABLE_PATH || null;
     try {
-        executablePath = puppeteerInstance.executablePath();
+        executablePath = executablePath || puppeteerInstance.executablePath();
     } catch (_) {}
 
     const chromeVersion = executablePath ? getChromeVersionFromExecutablePath(puppeteerInstance) : null;
