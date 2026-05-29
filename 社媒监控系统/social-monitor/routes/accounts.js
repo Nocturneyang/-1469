@@ -8,6 +8,7 @@ const {
     getWaChromeStats,
     getWaWebVersionCacheInfo
 } = require('../lib/wa-chrome-runtime');
+const { writeEnvKeys } = require('../lib/env-config');
 const puppeteer = require('puppeteer');
 
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '..');
@@ -144,6 +145,51 @@ function clearWaSession(accountName) {
     } catch (err) {
         console.warn(`[WA SESSION] Failed to clear ${sessionRoot} for ${accountName}: ${err.message}`);
     }
+}
+
+function serializeEcosystemConfig(config) {
+    const content = `module.exports = ${JSON.stringify(config, null, 2)};\n`;
+    return content.replace(
+        /\n    \{\n      "name": "ui-server"/,
+        '\n    // --- Web UI Server ---\n    {\n      "name": "ui-server"'
+    );
+}
+
+function loadEcosystemConfig(ecoPath) {
+    const resolved = require.resolve(ecoPath);
+    delete require.cache[resolved];
+    return require(resolved);
+}
+
+function removeAppFromEcosystem(ecoPath, workerName) {
+    const config = loadEcosystemConfig(ecoPath);
+    if (!config || !Array.isArray(config.apps)) {
+        throw new Error('ecosystem.config.js 解析后 apps 不是数组');
+    }
+
+    const before = config.apps.length;
+    config.apps = config.apps.filter(app => app && app.name !== workerName);
+    return {
+        removed: before !== config.apps.length,
+        content: serializeEcosystemConfig(config)
+    };
+}
+
+function clearTgUserRuntimeConfig(accountName) {
+    const name = accountName.toUpperCase();
+    writeEnvKeys({
+        [`TG_USER_SESSION_${name}`]: '',
+        [`TG_API_ID_${name}`]: '',
+        [`TG_API_HASH_${name}`]: '',
+        [`TG_WHITELIST_${name}`]: '',
+        [`TG_WARMUP_SECONDS_${name}`]: '',
+        [`TG_DAILY_LIMIT_${name}`]: '',
+        [`TG_BATCH_SIZE_${name}`]: '',
+        [`TG_SLEEP_MIN_MS_${name}`]: '',
+        [`TG_SLEEP_MAX_MS_${name}`]: '',
+        [`TG_BACKFILL_DAYS_${name}`]: '',
+        [`TG_ENABLE_BACKFILL_${name}`]: ''
+    });
 }
 
 function createAccountsRouter({ safeWriteEcosystem }) {
@@ -526,24 +572,22 @@ function createAccountsRouter({ safeWriteEcosystem }) {
             }
 
             db.prepare('DELETE FROM accounts WHERE id = ?').run(id);
+            db.prepare('DELETE FROM collector_heartbeats WHERE account_id = ?').run(id);
+            db.prepare('DELETE FROM wa_runtime_events WHERE account_id = ?').run(id);
 
             if (id.startsWith('wa-')) {
-                const sessionPath = path.join(process.env.DATA_DIR || path.join(__dirname, '..'), `whatsapp-session-${accName}`);
-                if (fs.existsSync(sessionPath)) {
-                    fs.rmSync(sessionPath, { recursive: true, force: true });
-                }
+                clearWaInitGuards(accName, 'delete');
+                clearWaSession(accName);
                 removeWaAccountManaged(accName);
+            } else if (id.startsWith('tgu-')) {
+                clearTgUserRuntimeConfig(accName);
             }
 
             const ecoPath = path.join(process.env.DATA_DIR || path.join(__dirname, '..'), 'ecosystem.config.js');
             if (fs.existsSync(ecoPath)) {
-                let eco = fs.readFileSync(ecoPath, 'utf8');
-                // 匹配整个配置块（包括可能的逗号），使用更精确的正则
-                const regex = new RegExp(`\\s*\\{\\s*name:\\s*["']${workerName}["'][\\s\\S]*?\\}(\\s*,)?\\s*`, 'g');
-                console.log(`[DELETE ACCOUNT] Before replace, eco length: ${eco.length}`);
-                eco = eco.replace(regex, '');
-                console.log(`[DELETE ACCOUNT] After replace, eco length: ${eco.length}`);
-                safeWriteEcosystem(eco);
+                const result = removeAppFromEcosystem(ecoPath, workerName);
+                console.log(`[DELETE ACCOUNT] ecosystem app ${workerName}: ${result.removed ? 'removed' : 'not found'}`);
+                if (result.removed) safeWriteEcosystem(result.content);
             }
 
             exec(`npx pm2 delete ${workerName}`, (error) => {
