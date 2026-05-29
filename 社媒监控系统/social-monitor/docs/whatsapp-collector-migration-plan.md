@@ -44,7 +44,7 @@
 ## 阶段 4：Rainbond/Kubernetes 拆分
 
 - `social-monitor` App ID 58 使用单镜像多角色模式：主系统组件、WA collector 组件、TG collector 组件共用同一个镜像标签，通过入口脚本和环境变量分流。
-- 每个 WA 账号独立 collector 组件，建议每个组件 2-3GiB 内存限制。
+- 每个 WA 账号独立 collector 组件，建议每个组件 requests `2Gi`、limits `4Gi`；如果该账号群多或媒体多，可临时提高到 `5Gi`。
 - Orchestrator 通过 RuntimeAdapter 管理本地 PM2 或线上 Rainbond/K8s。
 - 根 `Dockerfile` 包含 Chromium，确保同一镜像可运行 WA collector；主系统组件自身不会启动 Chrome。
 - 新增 `.dockerignore`，避免把本地 session、SQLite、media、node_modules 打入主系统或 collector 镜像。

@@ -11,7 +11,7 @@
 - 敏感配置：建议通过 `social-monitor-secrets` 注入，例如 `COLLECTOR_TOKEN`、AI Key、钉钉 Webhook
 - Deploy Hub 要求 skyline-ark-sso；当前已开启 `sso: true`，后端支持 `/token/userinfo`，前端会通过 `/runtime-config.js` 读取 SSO 配置并在 401 时跳转统一登录页
 
-主系统镜像不安装 Chrome，也不运行 WA worker。
+主系统组件不运行 WA worker；镜像中包含 Chromium，是为了让同一镜像也能作为 WA collector 组件启动。
 
 ### 健康检查
 
@@ -87,7 +87,7 @@ npm run db:backup:prune -- --execute
 - 镜像：与主系统相同的单镜像
 - 启动方式：组件环境变量配置 `ACCOUNT_NAME=<账号名>` 后，入口脚本自动执行 `scripts/start-wa-collector.js`
 - PVC：建议每账号独立 `/data`，2Gi 起步，ReadWriteOnce
-- 资源：requests `500m / 1Gi`，limits `2 / 3Gi`
+- 资源：requests `500m / 2Gi`，limits `2 / 4Gi`
 - 必填环境变量：
   - `ACCOUNT_NAME`
   - `COLLECTOR_API_URL`
@@ -99,6 +99,17 @@ npm run db:backup:prune -- --execute
   - `COLLECTOR_OUTBOX_FLUSH_MS=30000`
 
 当主系统 API 短暂不可用时，collector 会把消息、媒体和运行事件写入 outbox，并在恢复后自动补发；心跳和账号状态不进入 outbox，避免旧状态覆盖新状态。
+
+### 长期资源口径
+
+如果要 5 个以上 WA 账号长期在线，建议按账号独立申请资源，而不是把所有 Chrome 塞回主系统组件：
+
+- 主系统：保留 requests `500m / 1Gi`，limits `2 / 3Gi`。
+- 每个 WA collector：requests `500m / 2Gi`，limits `2 / 4Gi`，独立 2Gi PVC。
+- 每个 TG collector：requests `100m / 256Mi`，limits `1 / 768Mi`，独立 1Gi PVC。
+- 5 个 WA + 2 个 TG 的建议集群容量：内存 requests 约 `12.5Gi`，内存 limits 约 `24.5Gi`；节点可用内存建议不低于 `32Gi`，给系统、镜像缓存、SQLite、媒体处理和突发留余量。
+
+如果 WA 群数量多、媒体消息重或 Chrome RSS 经常超过 3.2GiB，可把单个 WA collector limit 临时提高到 `5Gi`，但仍应保持一账号一组件，避免互相拖垮。
 
 生成 K8s manifest 示例：
 

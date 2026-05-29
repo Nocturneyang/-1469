@@ -145,8 +145,8 @@ function main() {
         token: required(args, 'token', 'COLLECTOR_TOKEN'),
         storage: optional(args, 'storage', '2Gi', 'WA_COLLECTOR_STORAGE'),
         storageClassName: optional(args, 'storage-class', 'nas', 'WA_COLLECTOR_STORAGE_CLASS'),
-        requestMemory: optional(args, 'request-memory', '1Gi', 'WA_COLLECTOR_REQUEST_MEMORY'),
-        limitMemory: optional(args, 'limit-memory', '3Gi', 'WA_COLLECTOR_LIMIT_MEMORY'),
+        requestMemory: optional(args, 'request-memory', '2Gi', 'WA_COLLECTOR_REQUEST_MEMORY'),
+        limitMemory: optional(args, 'limit-memory', '4Gi', 'WA_COLLECTOR_LIMIT_MEMORY'),
         requestCpu: optional(args, 'request-cpu', '500m', 'WA_COLLECTOR_REQUEST_CPU'),
         limitCpu: optional(args, 'limit-cpu', '2', 'WA_COLLECTOR_LIMIT_CPU')
     };
