@@ -179,6 +179,9 @@ function getOrchestratorState(account, dbRow, runtime, config, runtimeStatus, co
     const collectorPhase = heartbeat ? heartbeat.phase : null;
 
     if (!account.enabled) return buildState('disabled', 'Account disabled in WA config');
+    if (dbStatus === 'timeout' || collectorPhase === 'qr_timeout') {
+        return buildState('qr_timeout', 'QR login timed out; waiting for manual relogin', 'warn');
+    }
     if (!runtimeStatus || runtimeStatus.status !== 'online') {
         return buildState('runtime_down', `${runtimeAdapter.name} status is ${runtimeStatus ? runtimeStatus.status : 'missing'}`, 'warn');
     }
@@ -386,8 +389,13 @@ async function maybeRestartNoChrome(account, dbRow, runtime, config, initLock, c
     noChromeCounts.delete(account.id);
 }
 
-async function maybeRecoverRuntimeDown(account, runtimeStatus, config) {
+async function maybeRecoverRuntimeDown(account, runtimeStatus, config, dbRow) {
     if (!account.enabled) return;
+    const status = dbRow ? dbRow.status : 'unknown';
+    if (['timeout', 'qr', 'disconnected'].includes(status)) {
+        runtimeDownCounts.delete(account.id);
+        return;
+    }
     if (runtimeStatus && runtimeStatus.status === 'online') {
         runtimeDownCounts.delete(account.id);
         return;
@@ -551,7 +559,7 @@ async function tick() {
             pm2_uptime_seconds: runtimeStatus ? runtimeStatus.uptimeSeconds : 0
         });
 
-        await maybeRecoverRuntimeDown(account, runtimeStatus, config);
+        await maybeRecoverRuntimeDown(account, runtimeStatus, config, row);
         if (runtimeStatus && runtimeStatus.status === 'online') {
             await maybeRecoverFailedInit(account, heartbeat, cooldown, config);
             await maybeRestartHighRss(account, runtime, config);

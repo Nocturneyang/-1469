@@ -251,6 +251,7 @@ const formatHealthStatus = (status) => {
   const m = {
     healthy: '健康',
     qr_required: '待扫码',
+    qr_timeout: '扫码超时',
     initializing: '初始化',
     starting: '启动中',
     no_chrome: '无 Chrome',
@@ -287,6 +288,7 @@ const formatCollectorPhase = (phase) => {
     authenticated: '已认证',
     ready: '采集中',
     qr_required: '待扫码',
+    qr_timeout: '扫码超时',
     init_retry: '重试中',
     init_timeout: '超时',
     init_failed: '失败',

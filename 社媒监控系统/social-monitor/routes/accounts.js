@@ -172,6 +172,24 @@ function loadEcosystemConfig(ecoPath) {
     return require(resolved);
 }
 
+function ensureRuntimeEcosystemConfig(ecoPath) {
+    if (fs.existsSync(ecoPath)) return;
+
+    const appRoot = path.join(__dirname, '..');
+    const candidates = [
+        path.join(appRoot, 'ecosystem.cloud.config.js'),
+        path.join(appRoot, 'ecosystem.config.js')
+    ];
+    const source = candidates.find(item => fs.existsSync(item));
+    if (!source) {
+        throw new Error('找不到可用于初始化的 ecosystem 配置');
+    }
+
+    fs.mkdirSync(path.dirname(ecoPath), { recursive: true });
+    fs.copyFileSync(source, ecoPath);
+    console.log(`[ECOSYSTEM] Initialized runtime ecosystem config from ${source}`);
+}
+
 function removeAppFromEcosystem(ecoPath, workerName) {
     const config = loadEcosystemConfig(ecoPath);
     if (!config || !Array.isArray(config.apps)) {
@@ -190,7 +208,7 @@ function buildWaAppConfig(accountName) {
     return {
         name: `worker-wa-${accountName}`,
         script: './workers/worker-wa.js',
-        max_memory_restart: '1G',
+        max_memory_restart: '4G',
         cron_restart: '0 4 * * *',
         instances: 1,
         exec_mode: 'fork',
@@ -209,6 +227,8 @@ function buildWaAppConfig(accountName) {
             WA_INIT_QUARANTINE_MS: '60000',
             WA_INIT_HARD_TIMEOUT_MS: '360000',
             WA_AUTH_TIMEOUT_MS: '300000',
+            WA_PROTOCOL_TIMEOUT_MS: '600000',
+            WA_QR_IDLE_TIMEOUT_MS: '180000',
             PUPPETEER_EXECUTABLE_PATH: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium',
             PUPPETEER_SKIP_DOWNLOAD: 'true'
         }
@@ -339,11 +359,20 @@ function createAccountsRouter({ safeWriteEcosystem }) {
                 acc.latest_msg_time = latestMsg ? latestMsg.created_at : null;
                 
                 // Perform status assessment
+                const recentInitError = acc.collector?.last_error || '';
+                const recentRestart = acc.last_restart_reason || '';
+
                 if (acc.runtime_status === 'stale_online') {
                     acc.health_assessment = acc.chrome_process_count > 0 ? '心跳过期，待恢复' : '假在线：无 Chrome 进程';
                     acc.health_color = '#DD6B20';
                 } else if (['queued', 'cooling_down', 'starting'].includes(acc.runtime_status)) {
-                    acc.health_assessment = acc.runtime_status === 'queued' ? '排队等待启动' : (acc.runtime_status === 'cooling_down' ? '初始化冷却中' : '启动初始化中');
+                    if (acc.runtime_status === 'queued') {
+                        acc.health_assessment = '排队等待启动';
+                    } else if (acc.runtime_status === 'cooling_down') {
+                        acc.health_assessment = recentInitError ? `初始化冷却：${recentInitError}` : '初始化冷却中';
+                    } else {
+                        acc.health_assessment = recentInitError ? `启动中：${recentInitError}` : '启动初始化中';
+                    }
                     acc.health_color = '#DD6B20';
                 } else if (['pm2_down', 'runtime_down', 'recovering_pm2', 'recovering_runtime', 'recovering_init', 'no_chrome', 'stale_heartbeat', 'degraded_high_rss'].includes(acc.runtime_status)) {
                     const m = {
@@ -356,10 +385,13 @@ function createAccountsRouter({ safeWriteEcosystem }) {
                         stale_heartbeat: '采集心跳过期',
                         degraded_high_rss: 'Chrome 内存偏高'
                     };
-                    acc.health_assessment = m[acc.runtime_status] || '运行异常';
+                    acc.health_assessment = recentRestart || recentInitError || m[acc.runtime_status] || '运行异常';
                     acc.health_color = '#DD6B20';
+                } else if (acc.runtime_status === 'qr_timeout') {
+                    acc.health_assessment = '扫码超时，进程已停止';
+                    acc.health_color = '#E53E3E';
                 } else if (['auth_failure', 'init_timeout', 'init_failed', 'no_browser_timeout'].includes(acc.runtime_status)) {
-                    acc.health_assessment = '初始化失败，等待保护恢复';
+                    acc.health_assessment = recentInitError || '初始化失败，等待保护恢复';
                     acc.health_color = '#E53E3E';
                 } else if (['authenticated', 'monitoring', 'warmup'].includes(acc.status)) {
                     if (!acc.latest_msg_time) {
@@ -708,16 +740,13 @@ function createAccountsRouter({ safeWriteEcosystem }) {
             }
 
             const ecoPath = path.join(process.env.DATA_DIR || path.join(__dirname, '..'), 'ecosystem.config.js');
-            if (fs.existsSync(ecoPath)) {
-                const appConfig = platform === 'whatsapp'
-                    ? buildWaAppConfig(trimmedId)
-                    : buildTgBotAppConfig(trimmedId, token);
-                safeWriteEcosystem(upsertAppInEcosystem(ecoPath, appConfig));
-            }
+            ensureRuntimeEcosystemConfig(ecoPath);
+            const appConfig = platform === 'whatsapp'
+                ? buildWaAppConfig(trimmedId)
+                : buildTgBotAppConfig(trimmedId, token);
+            safeWriteEcosystem(upsertAppInEcosystem(ecoPath, appConfig));
 
-            const cmd = platform === 'whatsapp'
-                ? `npx pm2 start ecosystem.config.js --only "${workerName}" --env production`
-                : `npx pm2 start ecosystem.config.js --only "${workerName}" --env production`;
+            const cmd = `npx pm2 start "${ecoPath}" --only "${workerName}" --env production`;
             
             const spawnEnv = { 
                 NODE_ENV: 'production', 

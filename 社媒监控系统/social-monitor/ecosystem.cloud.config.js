@@ -3,7 +3,7 @@ module.exports = {
     {
       name: "worker-wa-wa_shebi",
       script: "./workers/worker-wa.js",
-      max_memory_restart: "1G",
+      max_memory_restart: "4G",
       cron_restart: "0 4 * * *",
       instances: 1,
       exec_mode: "fork",
@@ -22,6 +22,8 @@ module.exports = {
         WA_INIT_QUARANTINE_MS: "60000",
         WA_INIT_HARD_TIMEOUT_MS: "360000",
         WA_AUTH_TIMEOUT_MS: "300000",
+        WA_PROTOCOL_TIMEOUT_MS: "600000",
+        WA_QR_IDLE_TIMEOUT_MS: "180000",
         PUPPETEER_EXECUTABLE_PATH: "/usr/bin/chromium",
         PUPPETEER_SKIP_DOWNLOAD: "true"
       }

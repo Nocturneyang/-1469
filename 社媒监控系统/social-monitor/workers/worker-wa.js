@@ -16,6 +16,7 @@ const qrcode = require('qrcode-terminal');
 const fs = require('fs');
 const path = require('path');
 const util = require('util');
+const { execFile } = require('child_process');
 
 const { sendAccountAlert } = require('../lib/dingtalk');
 const { getWaChromeLaunchConfig } = require('../lib/wa-chrome-runtime');
@@ -344,18 +345,38 @@ function triggerOfflineAlert(reasonStr) {
     }).catch(err => console.error('[WA] 发送运维告警失败:', err.message));
 }
 
-const MAX_QR_TIME_MS = 30 * 60 * 1000; // 30 mins
+const QR_IDLE_TIMEOUT_MS = Number(process.env.WA_QR_IDLE_TIMEOUT_MS || 3 * 60 * 1000);
 let qrStartTime = null;
+let qrTimeoutTimer = null;
+let qrTimedOut = false;
 
-client.on('qr', (qr) => {
-    if (!qrStartTime) qrStartTime = Date.now();
-    clearInitStrikes();
-    transitionRuntime('qr_required', 'qr', 'QR code required');
-    
-    if (Date.now() - qrStartTime > MAX_QR_TIME_MS) {
-        console.log(`[WA] QR timeout after 30 mins. Stopping QR generation.`);
-        persistAccountStatus('timeout');
-        
+function stopSelfAfterQrTimeout() {
+    const workerName = `worker-wa-${accountName}`;
+    console.warn(`[WA:${accountName}] QR idle timeout after ${Math.round(QR_IDLE_TIMEOUT_MS / 1000)}s; stopping ${workerName}`);
+    transitionRuntime('qr_timeout', 'timeout', 'QR login timed out', 'warn');
+    persistAccountStatus('timeout');
+    cleanupStaleBrowser();
+    releaseInitLock();
+
+    execFile('npx', ['pm2', 'stop', workerName], {
+        cwd: process.env.DATA_DIR || path.join(__dirname, '..'),
+        timeout: 30000,
+        maxBuffer: 1024 * 1024
+    }, (err) => {
+        if (err) {
+            console.error(`[WA:${accountName}] Failed to stop PM2 process after QR timeout: ${err.message}`);
+            return;
+        }
+        console.log(`[WA:${accountName}] PM2 process stopped after QR timeout`);
+    });
+}
+
+function scheduleQrTimeout() {
+    if (qrTimeoutTimer) return;
+    qrTimeoutTimer = setTimeout(() => {
+        if (qrTimedOut) return;
+        qrTimedOut = true;
+
         const accountKey = `wa-${accountName}`;
         const info = regionMap[accountKey] || { region: '未知区', platform: 'wa' };
         sendAccountAlert({
@@ -363,12 +384,27 @@ client.on('qr', (qr) => {
             accountId: accountKey,
             region: info.region,
             status: 'timeout',
-            detail: `节点已超 30 分钟未扫码，已停止刷新。请在控制台点击「重新登录」获取新二维码。`
+            detail: `节点已超 ${Math.round(QR_IDLE_TIMEOUT_MS / 60000)} 分钟未扫码，已停止该账号进程以释放内存。请在控制台点击「重新登录」获取新二维码。`
         }).catch(() => {});
 
-        client.destroy();
-        return;
+        try { client.destroy(); } catch (_) {}
+        stopSelfAfterQrTimeout();
+    }, QR_IDLE_TIMEOUT_MS);
+    qrTimeoutTimer.unref();
+}
+
+function clearQrTimeout() {
+    if (qrTimeoutTimer) {
+        clearTimeout(qrTimeoutTimer);
+        qrTimeoutTimer = null;
     }
+}
+
+client.on('qr', (qr) => {
+    if (!qrStartTime) qrStartTime = Date.now();
+    clearInitStrikes();
+    transitionRuntime('qr_required', 'qr', 'QR code required');
+    scheduleQrTimeout();
 
     console.log('\n📌 [WhatsApp] Please scan QR code to login:');
     qrcode.generate(qr, { small: true });
@@ -387,11 +423,13 @@ client.on('qr', (qr) => {
 
 client.on('authenticated', () => {
     console.log('✅ [WhatsApp] Authenticated successfully!');
+    clearQrTimeout();
     transitionRuntime('authenticated', 'authenticated', 'WA session authenticated');
     persistAccountStatus('authenticated', 'Loading...', null);
 });
 
 client.on('ready', () => {
+    clearQrTimeout();
     clearInitStrikes();
     isFirstInit = false; // 成功登录过一次
     runtimeState.lastReadyAt = new Date().toISOString();
