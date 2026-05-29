@@ -36,7 +36,7 @@ const noChromeCounts = new Map();
 const runtimeDownCounts = new Map();
 const restartCooldowns = new Map();
 const HEARTBEAT_FRESH_SECONDS = 90;
-const BOOT_PHASES = new Set(['booting', 'profile_cleanup', 'init_lock_acquired', 'wa_injecting', 'init_retry']);
+const BOOT_PHASES = new Set(['booting', 'profile_cleanup', 'init_lock_acquired', 'browser_starting', 'web_loading', 'wa_injecting', 'session_restoring', 'wa_state', 'init_retry']);
 const READY_PHASES = new Set(['authenticated', 'ready']);
 const RECOVERABLE_INIT_FAILURES = new Set(['init_timeout', 'init_failed', 'no_browser_timeout']);
 

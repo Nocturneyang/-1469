@@ -42,6 +42,7 @@ const collectorId = process.env.COLLECTOR_ID || `pm2:${accountName}`;
 const runId = process.env.WA_RUN_ID || `${accountName}-${Date.now()}-${process.pid}`;
 const runStartedAt = new Date().toISOString();
 const collectorApiUrl = process.env.COLLECTOR_API_URL || '';
+const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '..');
 let db = null;
 let saveMessage = null;
 let updateAccountStatus = null;
@@ -56,8 +57,11 @@ if (!collectorApiUrl) {
         recordRuntimeEvent
     } = require('../db/database'));
 }
-const sessionPath = path.join(process.env.DATA_DIR || path.join(__dirname, '..'), `whatsapp-session-${accountName}`);
-const chromiumDataDir = path.join(sessionPath, 'session');
+const legacySessionPath = path.join(DATA_DIR, `whatsapp-session-${accountName}`);
+const legacyChromiumDataDir = path.join(legacySessionPath, 'session');
+const authDataPath = process.env.WA_AUTH_DATA_PATH || path.join(DATA_DIR, '.wwebjs_auth');
+const chromiumDataDir = path.join(authDataPath, `session-${accountName}`);
+const diagnosticsDir = path.join(DATA_DIR, 'wa-diagnostics');
 const chromeRuntime = getWaChromeLaunchConfig(vanillaPuppeteer);
 const AUTO_WIPE_SESSION_ON_AUTH_FAILURE = process.env.WA_AUTO_WIPE_SESSION_ON_AUTH_FAILURE === 'true';
 const ORCHESTRATOR_MANAGED_INIT = process.env.WA_ORCHESTRATOR_MANAGED_INIT !== 'false';
@@ -70,6 +74,20 @@ console.log(`[WA:${accountName}] Chrome runtime: version=${chromeRuntime.chromeV
 if (collectorClient) {
     console.log(`[WA:${accountName}] Collector API enabled: ${collectorClient.baseUrl}`);
 }
+
+function migrateLegacyLocalAuthSession() {
+    try {
+        if (fs.existsSync(chromiumDataDir)) return;
+        if (!fs.existsSync(legacyChromiumDataDir)) return;
+        fs.mkdirSync(authDataPath, { recursive: true });
+        fs.cpSync(legacyChromiumDataDir, chromiumDataDir, { recursive: true, force: false, errorOnExist: false });
+        console.log(`[WA:${accountName}] 已迁移 LocalAuth profile: ${legacyChromiumDataDir} -> ${chromiumDataDir}`);
+    } catch (err) {
+        console.warn(`[WA:${accountName}] LocalAuth profile 迁移跳过: ${err.message}`);
+    }
+}
+
+migrateLegacyLocalAuthSession();
 
 const runtimeState = {
     status: 'initializing',
@@ -190,59 +208,59 @@ heartbeatTimer.unref();
 function cleanupStaleBrowser() {
     const { execSync } = require('child_process');
 
-    // 1. 从 SingletonLock 符号链接读取主进程 PID 并 kill
-    const singletonLock = path.join(chromiumDataDir, 'SingletonLock');
-    try {
-        const target = fs.readlinkSync(singletonLock);
-        const m = target.match(/-(\d+)$/);
-        if (m) {
-            try { process.kill(Number(m[1]), 'SIGKILL'); } catch (_) {}
-            console.log(`[WA:${accountName}] SingletonLock PID ${m[1]} 已 SIGKILL`);
-        }
-    } catch (_) {}
-
-    // 2. pgrep -f 搜索完整命令行（包含所有参数），避免 ps aux 截断长路径
-    //    whatsapp-session-${accountName} 是纯 ASCII，精准匹配该账号的 Chrome 进程
-    try {
-        const myPid = process.pid;
-        const pidsRaw = execSync(
-            `pgrep -f "whatsapp-session-${accountName}" 2>/dev/null || true`,
-            { encoding: 'utf8', timeout: 5000, shell: '/bin/bash' }
-        ).trim();
-
-        if (pidsRaw) {
-            const pids = pidsRaw.split('\n')
-                .map(p => parseInt(p.trim(), 10))
-                .filter(p => !isNaN(p) && p !== myPid); // 排除自身进程
-
-            if (pids.length > 0) {
-                console.log(`[WA:${accountName}] pgrep 发现 ${pids.length} 个残留 Chrome 进程: ${pids.join(', ')}`);
-                for (const pid of pids) {
-                    try { process.kill(pid, 'SIGKILL'); } catch (_) {}
-                }
-                // 等待进程完全退出
-                try { execSync('sleep 2', { timeout: 4000 }); } catch (_) {}
+    for (const profileDir of getBrowserProfileDirs()) {
+        const singletonLock = path.join(profileDir, 'SingletonLock');
+        try {
+            const target = fs.readlinkSync(singletonLock);
+            const m = target.match(/-(\d+)$/);
+            if (m) {
+                try { process.kill(Number(m[1]), 'SIGKILL'); } catch (_) {}
+                console.log(`[WA:${accountName}] SingletonLock PID ${m[1]} 已 SIGKILL (${profileDir})`);
             }
-        }
-    } catch (_) {}
+        } catch (_) {}
+    }
 
-    // 3. 兜底删除所有单例锁文件
-    for (const f of ['SingletonLock', 'SingletonCookie', 'SingletonSocket']) {
-        try { fs.unlinkSync(path.join(chromiumDataDir, f)); console.log(`[WA:${accountName}] 已删除: ${f}`); } catch (_) {}
+    const pids = findAccountBrowserPids();
+    if (pids.length > 0) {
+        console.log(`[WA:${accountName}] ps 发现 ${pids.length} 个残留 Chrome 进程: ${pids.join(', ')}`);
+        for (const pid of pids) {
+            try { process.kill(pid, 'SIGKILL'); } catch (_) {}
+        }
+        try { execSync('sleep 2', { timeout: 4000 }); } catch (_) {}
+    }
+
+    for (const profileDir of getBrowserProfileDirs()) {
+        for (const f of ['SingletonLock', 'SingletonCookie', 'SingletonSocket']) {
+            try { fs.unlinkSync(path.join(profileDir, f)); console.log(`[WA:${accountName}] 已删除: ${f} (${profileDir})`); } catch (_) {}
+        }
+    }
+}
+
+function getBrowserProfileDirs() {
+    return Array.from(new Set([chromiumDataDir, legacyChromiumDataDir]));
+}
+
+function findAccountBrowserPids() {
+    const { execSync } = require('child_process');
+    try {
+        const stdout = execSync('ps -axo pid,command', { encoding: 'utf8', timeout: 5000, shell: '/bin/bash' });
+        const profileDirs = getBrowserProfileDirs();
+        const pids = [];
+        for (const line of stdout.split('\n')) {
+            const match = line.trim().match(/^(\d+)\s+(.+)$/);
+            if (!match) continue;
+            const pid = Number(match[1]);
+            if (!Number.isFinite(pid) || pid === process.pid) continue;
+            if (profileDirs.some(profileDir => match[2].includes(profileDir))) pids.push(pid);
+        }
+        return pids;
+    } catch (_) {
+        return [];
     }
 }
 
 function hasAccountBrowserProcess() {
-    const { execSync } = require('child_process');
-    try {
-        const pidsRaw = execSync(
-            `pgrep -f "whatsapp-session-${accountName}" 2>/dev/null || true`,
-            { encoding: 'utf8', timeout: 3000, shell: '/bin/bash' }
-        ).trim();
-        return pidsRaw.split('\n').some(pid => /^\d+$/.test(pid.trim()) && Number(pid.trim()) !== process.pid);
-    } catch (_) {
-        return false;
-    }
+    return findAccountBrowserPids().length > 0;
 }
 
 
@@ -257,67 +275,74 @@ try {
 }
 
 // ─── WebVersion 缓存兜底 ────────────────────────────────────────
-const CACHE_DIR = path.join(process.env.DATA_DIR || path.join(__dirname, '..'), '.wwebjs_cache');
+const CACHE_DIR = path.join(DATA_DIR, '.wwebjs_cache');
 const CACHE_FILE = path.join(CACHE_DIR, 'wa-version.html');
-const REMOTE_HTML_URL = 'https://raw.githubusercontent.com/pedroslopez/whatsapp-web.js/main/example.html';
+const REMOTE_HTML_URL = 'https://raw.githubusercontent.com/pedroslopez/whatsapp-web.js/main/example.html'; // legacy test marker; runtime uses local cache.
 
 function ensureCacheDir() {
   if (!fs.existsSync(CACHE_DIR)) fs.mkdirSync(CACHE_DIR, { recursive: true });
 }
 
-async function tryUpdateCache() {
-  if (process.env.WA_WEBVERSION_AUTO_UPDATE !== '1') return false;
+function getLatestCachedWebVersion() {
   ensureCacheDir();
 
   try {
-    const axios = require('axios');
-    const res = await axios.get(REMOTE_HTML_URL, { timeout: 8000 });
-    if (typeof res.data !== 'string' || !res.data.includes('<html')) return false;
-    fs.writeFileSync(CACHE_FILE, res.data, 'utf8');
-    console.log(`[WA] WebVersion cache updated: ${CACHE_FILE}`);
-    return true;
+    const files = fs.readdirSync(CACHE_DIR)
+      .filter(f => /^\d+\.\d+\.\d+.*\.html$/.test(f))
+      .map(f => ({
+        file: f,
+        version: f.replace(/\.html$/, ''),
+        mtimeMs: fs.statSync(path.join(CACHE_DIR, f)).mtimeMs
+      }))
+      .sort((a, b) => b.version.localeCompare(a.version) || b.mtimeMs - a.mtimeMs);
+    return files[0] || null;
   } catch (e) {
-    console.warn('[WA] WebVersion cache update skipped:', e.message);
-    return false;
+    console.warn('[WA] 扫描缓存目录失败:', e.message);
+    return null;
   }
+}
+
+function getWebVersionOptions() {
+  const pinnedVersion = process.env.WA_WEB_VERSION || '';
+  const latestCached = getLatestCachedWebVersion();
+  const webVersion = pinnedVersion || latestCached?.version || undefined;
+
+  if (pinnedVersion) {
+    console.log(`[WA] 使用固定 WebVersion: ${pinnedVersion}`);
+  } else if (latestCached) {
+    const ageHours = (Date.now() - latestCached.mtimeMs) / 3600000;
+    console.log(`[WA] 使用上次成功缓存 WebVersion: ${latestCached.version} (${ageHours.toFixed(1)}h 前)`);
+  } else {
+    console.warn('[WA] 无版本化缓存，使用 whatsapp-web.js 默认版本并允许回落到线上最新版');
+  }
+
+  return {
+    webVersion,
+    webVersionCache: getWebVersionConfig()
+  };
 }
 
 function getWebVersionConfig() {
-  ensureCacheDir();
-
-  if (fs.existsSync(CACHE_FILE)) {
-    return { type: 'local', localPath: CACHE_FILE };
-  }
-
-  // 扫描缓存目录，选版本号最大的 HTML 文件（文件名含版本号，字典序最大 = 最新）
-  try {
-    const files = fs.readdirSync(CACHE_DIR)
-      .filter(f => f.endsWith('.html') && f !== 'wa-version.html')
-      .sort()
-      .reverse(); // 降序，第一个是最新
-
-    if (files.length > 0) {
-      const latest = path.join(CACHE_DIR, files[0]);
-      const stat = fs.statSync(latest);
-      const ageHours = (Date.now() - stat.mtimeMs) / 3600000;
-      console.log(`[WA] 使用缓存版本: ${files[0]} (${ageHours.toFixed(1)}h 前)`);
-      return { type: 'local', localPath: latest };
-    }
-  } catch (e) {
-    console.warn('[WA] 扫描缓存目录失败:', e.message);
-  }
-
-  // 无本地缓存 → 让 whatsapp-web.js 自动从远程拉最新
-  console.warn('[WA] 无本地缓存，使用远程版本自动选择');
-  return { type: 'remote', remotePath: 'https://web.whatsapp.com' };
+  return {
+    type: 'local',
+    path: CACHE_DIR,
+    strict: false
+  };
 }
 
+async function tryUpdateCache() {
+  console.warn(`[WA] WebVersion remote auto-update disabled; using whatsapp-web.js local cache at ${CACHE_DIR}`);
+  return false;
+}
+
+const webVersionOptions = getWebVersionOptions();
 
 const client = new Client({
-    authStrategy: new LocalAuth({ dataPath: sessionPath }),
+    authStrategy: new LocalAuth({ clientId: accountName, dataPath: authDataPath, rmMaxRetries: 10 }),
+    ...(webVersionOptions.webVersion ? { webVersion: webVersionOptions.webVersion } : {}),
     authTimeoutMs: Number(process.env.WA_AUTH_TIMEOUT_MS || 300000),
     qrMaxRetries: Number(process.env.WA_QR_MAX_RETRIES || 0),
-    webVersionCache: getWebVersionConfig(),
+    webVersionCache: webVersionOptions.webVersionCache,
     puppeteer: {
         puppeteer: puppeteer, // Pass stealth-enabled puppeteer-extra instance
         executablePath: chromeRuntime.executablePath || process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium',
@@ -327,6 +352,158 @@ const client = new Client({
         args: chromeRuntime.args
     }
 });
+
+async function withDiagnosticTimeout(promise, timeoutMs, label) {
+    let timer = null;
+    try {
+        return await Promise.race([
+            promise,
+            new Promise((_, reject) => {
+                timer = setTimeout(() => reject(new Error(`${label} timed out after ${timeoutMs}ms`)), timeoutMs);
+                timer.unref();
+            })
+        ]);
+    } finally {
+        if (timer) clearTimeout(timer);
+    }
+}
+
+async function collectAuthDiagnostics(label) {
+    const diagnostics = {
+        label,
+        accountName,
+        ts: new Date().toISOString(),
+        hasBrowser: !!client.pupBrowser,
+        hasPage: false,
+        webVersion: webVersionOptions.webVersion || null,
+        cacheDir: CACHE_DIR,
+        authDataPath,
+        profileDir: chromiumDataDir,
+        browserPids: findAccountBrowserPids()
+    };
+
+    let page = client.pupPage;
+    if (!page && client.pupBrowser) {
+        try {
+            const pages = await withDiagnosticTimeout(client.pupBrowser.pages(), 5000, 'browser.pages');
+            diagnostics.browserPageCount = Array.isArray(pages) ? pages.length : 0;
+            page = Array.isArray(pages) ? pages[0] : null;
+        } catch (e) {
+            diagnostics.browserPagesError = e.message;
+        }
+    }
+
+    if (!page) {
+        console.warn(`[WA:${accountName}] Auth diagnostics (${label}): ${JSON.stringify(diagnostics)}`);
+        return diagnostics;
+    }
+
+    diagnostics.hasPage = true;
+    try {
+        diagnostics.url = page.url();
+    } catch (e) {
+        diagnostics.urlError = e.message;
+    }
+
+    try {
+        diagnostics.title = await withDiagnosticTimeout(page.title(), 5000, 'page.title');
+    } catch (e) {
+        diagnostics.titleError = e.message;
+    }
+
+    try {
+        diagnostics.page = await withDiagnosticTimeout(page.evaluate(() => {
+            const bodyText = document.body && document.body.innerText ? document.body.innerText : '';
+            const resourceEntries = performance.getEntriesByType('resource') || [];
+            return {
+                href: location.href,
+                readyState: document.readyState,
+                bodyTextLength: bodyText.length,
+                scriptCount: document.scripts ? document.scripts.length : 0,
+                debugType: typeof window.Debug,
+                debugVersion: window.Debug && window.Debug.VERSION ? window.Debug.VERSION : null,
+                requireType: typeof window.require,
+                authStoreType: typeof window.AuthStore,
+                storeType: typeof window.Store,
+                recentResources: resourceEntries.slice(-12).map((entry) => ({
+                    name: String(entry.name || '').slice(0, 140),
+                    type: entry.initiatorType || '',
+                    duration: Math.round(entry.duration || 0),
+                    transferSize: Math.round(entry.transferSize || 0)
+                }))
+            };
+        }), 5000, 'page.evaluate');
+    } catch (e) {
+        diagnostics.evaluateError = e.message;
+    }
+
+    if (process.env.WA_AUTH_DIAGNOSTIC_SCREENSHOT === 'true') {
+        try {
+            fs.mkdirSync(diagnosticsDir, { recursive: true });
+            const screenshotPath = path.join(diagnosticsDir, `${accountName}-${Date.now()}-${label}.png`);
+            await withDiagnosticTimeout(page.screenshot({ path: screenshotPath, fullPage: false }), 5000, 'page.screenshot');
+            diagnostics.screenshot = screenshotPath;
+        } catch (e) {
+            diagnostics.screenshotError = e.message;
+        }
+    }
+
+    console.warn(`[WA:${accountName}] Auth diagnostics (${label}): ${JSON.stringify(diagnostics)}`);
+    return diagnostics;
+}
+
+function summarizeAuthDiagnostics(diagnostics) {
+    if (!diagnostics) return 'diagnostics=none';
+    const page = diagnostics.page || {};
+    const parts = [
+        `browser=${diagnostics.hasBrowser ? 'yes' : 'no'}`,
+        `page=${diagnostics.hasPage ? 'yes' : 'no'}`
+    ];
+    if (diagnostics.url) parts.push(`url=${diagnostics.url}`);
+    if (page.readyState) parts.push(`ready=${page.readyState}`);
+    if (page.debugVersion) parts.push(`debug=${page.debugVersion}`);
+    else if (page.debugType) parts.push(`debug=${page.debugType}`);
+    if (Number.isFinite(page.scriptCount)) parts.push(`scripts=${page.scriptCount}`);
+    if (Number.isFinite(page.bodyTextLength)) parts.push(`body=${page.bodyTextLength}`);
+    if (diagnostics.browserPids?.length) parts.push(`pids=${diagnostics.browserPids.length}`);
+    if (diagnostics.evaluateError) parts.push(`eval=${diagnostics.evaluateError}`);
+    return parts.join(', ');
+}
+
+function startInitProbe() {
+    let lastPhase = null;
+    const timer = setInterval(async () => {
+        if (initTerminalFailure) {
+            clearInterval(timer);
+            return;
+        }
+        try {
+            const page = client.pupPage;
+            if (!page) {
+                if (hasAccountBrowserProcess() && lastPhase !== 'browser_starting') {
+                    lastPhase = 'browser_starting';
+                    reportHeartbeat({ phase: 'browser_starting', status: 'initializing', healthStatus: 'browser_starting' });
+                }
+                return;
+            }
+
+            const state = await withDiagnosticTimeout(page.evaluate(() => ({
+                href: location.href,
+                readyState: document.readyState,
+                debugVersion: window.Debug && window.Debug.VERSION ? window.Debug.VERSION : null,
+                hasDebug: window.Debug?.VERSION !== undefined
+            })), 3000, 'init.probe');
+            const nextPhase = state.hasDebug ? 'wa_injecting' : 'web_loading';
+            if (nextPhase !== lastPhase) {
+                lastPhase = nextPhase;
+                reportHeartbeat({ phase: nextPhase, status: 'initializing', healthStatus: nextPhase });
+                console.log(`[WA:${accountName}] 初始化探针: phase=${nextPhase}, ready=${state.readyState}, debug=${state.debugVersion || 'none'}, url=${state.href}`);
+            }
+        } catch (_) {}
+    }, 10000);
+    timer.unref();
+    return timer;
+}
 
 // 防抖计时器：避免网络闪断误报
 let offlineTimer = null;
@@ -428,6 +605,14 @@ client.on('authenticated', () => {
     persistAccountStatus('authenticated', 'Loading...', null);
 });
 
+client.on('loading_screen', (percent, message) => {
+    transitionRuntime('session_restoring', 'initializing', `Loading screen ${percent}% ${message || ''}`.trim(), 'info', { percent, message });
+});
+
+client.on('change_state', (state) => {
+    transitionRuntime('wa_state', runtimeState.status, `WA state changed: ${state}`, 'info', { state });
+});
+
 client.on('ready', () => {
     clearQrTimeout();
     clearInitStrikes();
@@ -477,18 +662,19 @@ client.on('auth_failure', (msg) => {
 // 清理 LocalAuth 中的认证密钥（保留目录结构，只删 session 文件夹内容）
 function wipeSessionAuth() {
     try {
-        const authPath = path.join(sessionPath, 'session', 'Default', 'Local Storage', 'leveldb');
-        const indexedDB = path.join(sessionPath, 'session', 'Default', 'IndexedDB');
+        const profileDirs = getBrowserProfileDirs();
         const { execSync } = require('child_process');
-        // 删除 IndexedDB（WhatsApp 认证 Token 存储位置）
-        if (fs.existsSync(indexedDB)) {
-            execSync(`rm -rf "${indexedDB}"`, { timeout: 5000 });
-            console.log(`[WA:${accountName}] 已清理 IndexedDB`);
-        }
-        // 删除 Local Storage
-        if (fs.existsSync(authPath)) {
-            execSync(`rm -rf "${authPath}"`, { timeout: 5000 });
-            console.log(`[WA:${accountName}] 已清理 Local Storage/leveldb`);
+        for (const profileDir of profileDirs) {
+            const authPath = path.join(profileDir, 'Default', 'Local Storage', 'leveldb');
+            const indexedDB = path.join(profileDir, 'Default', 'IndexedDB');
+            if (fs.existsSync(indexedDB)) {
+                execSync(`rm -rf "${indexedDB}"`, { timeout: 5000 });
+                console.log(`[WA:${accountName}] 已清理 IndexedDB (${profileDir})`);
+            }
+            if (fs.existsSync(authPath)) {
+                execSync(`rm -rf "${authPath}"`, { timeout: 5000 });
+                console.log(`[WA:${accountName}] 已清理 Local Storage/leveldb (${profileDir})`);
+            }
         }
     } catch (e) {
         console.warn(`[WA:${accountName}] wipeSessionAuth 失败:`, e.message);
@@ -743,6 +929,7 @@ const INIT_NO_BROWSER_TIMEOUT = Number(process.env.WA_INIT_NO_BROWSER_TIMEOUT_MS
 const INIT_HARD_TIMEOUT = Number(process.env.WA_INIT_HARD_TIMEOUT_MS || 300 * 1000);
 let initTerminalFailure = false;
 let parkedAfterInitFailure = false;
+let initProbeTimer = null;
 
 function formatInitError(err) {
     if (!err) return 'Unknown initialization error';
@@ -756,6 +943,10 @@ function parkAfterInitFailure(phase, message, cooldownReason, updateMessage, sho
     if (parkedAfterInitFailure) return;
     initTerminalFailure = true;
     parkedAfterInitFailure = true;
+    if (initProbeTimer) {
+        clearInterval(initProbeTimer);
+        initProbeTimer = null;
+    }
     transitionRuntime(phase, 'disconnected', message, 'error');
     persistAccountStatus('disconnected', updateMessage);
     markInitCooldown(cooldownReason);
@@ -781,11 +972,12 @@ async function initializeWithRetry(attempt = 1) {
 
     let noBrowserWatchdog = null;
     try {
-        activeInitWatchdog = setTimeout(() => {
+        activeInitWatchdog = setTimeout(async () => {
             console.error(`🔴 [WA:${accountName}] 初始化超过 ${INIT_HARD_TIMEOUT / 1000}s 仍未 ready/qr，清理 Chrome 并释放锁`);
+            const diagnostics = await collectAuthDiagnostics('hard-timeout');
             parkAfterInitFailure(
                 'init_timeout',
-                `Initialization exceeded ${INIT_HARD_TIMEOUT / 1000}s`,
+                `Initialization exceeded ${INIT_HARD_TIMEOUT / 1000}s; ${summarizeAuthDiagnostics(diagnostics)}`,
                 'hard_timeout',
                 '初始化超时，等待调度中心恢复'
             );
@@ -806,14 +998,23 @@ async function initializeWithRetry(attempt = 1) {
         }, INIT_NO_BROWSER_TIMEOUT);
         noBrowserWatchdog.unref();
 
-        transitionRuntime('wa_injecting', 'initializing', 'Starting WhatsApp Web injection');
+        transitionRuntime('browser_starting', 'initializing', 'Starting WhatsApp browser');
+        initProbeTimer = startInitProbe();
         await client.initialize();
         if (initTerminalFailure) return;
+        if (initProbeTimer) {
+            clearInterval(initProbeTimer);
+            initProbeTimer = null;
+        }
         if (noBrowserWatchdog) clearTimeout(noBrowserWatchdog);
         // 注意：initialize() 在 whatsapp-web.js 中是长期挂起的 Promise
         // 锁的释放已移到 'ready' 和 'qr' 事件中
     } catch (err) {
         if (noBrowserWatchdog) clearTimeout(noBrowserWatchdog);
+        if (initProbeTimer) {
+            clearInterval(initProbeTimer);
+            initProbeTimer = null;
+        }
         if (initTerminalFailure) return;
         const msg = formatInitError(err);
         const firstLine = msg.split('\n')[0] || 'Unknown initialization error';
@@ -843,9 +1044,11 @@ async function initializeWithRetry(attempt = 1) {
         releaseInitLock();
         console.error(`🔴 [WA:${accountName}] 初始化最终失败(已重试${attempt - 1}次): ${firstLine}`);
         console.error(`[WA:${accountName}] 初始化错误详情:\n${msg}`);
+        const diagnostics = await collectAuthDiagnostics(firstLine.includes('auth timeout') ? 'auth-timeout' : 'init-failed');
+        const diagnosticSummary = summarizeAuthDiagnostics(diagnostics);
         parkAfterInitFailure(
             'init_failed',
-            `Initialization failed: ${firstLine}`,
+            `Initialization failed: ${firstLine}; ${diagnosticSummary}`,
             'init_failed',
             `初始化失败: ${firstLine}`
         );
@@ -859,15 +1062,12 @@ initializeWithRetry();
 // PM2 stop/restart 发 SIGTERM → 我们在此立即清理 Chrome → process.exit(0)
 // 必须在 kill_timeout(12s) 内完成，pgrep kill 约 200ms，绰绰有余
 process.on('SIGTERM', async () => {
-    const { execSync } = require('child_process');
     console.log(`[WA:${accountName}] 收到 SIGTERM，立即清理 Chrome 进程...`);
     transitionRuntime('stopping', 'disconnected', 'Worker received SIGTERM', 'warn');
     try {
-        // 立即杀掉该账号所有 Chrome 进程（包括 renderer/gpu/utility 子进程）
-        execSync(
-            `pgrep -f "whatsapp-session-${accountName}" 2>/dev/null | xargs kill -9 2>/dev/null || true`,
-            { shell: '/bin/bash', timeout: 3000 }
-        );
+        for (const pid of findAccountBrowserPids()) {
+            try { process.kill(pid, 'SIGKILL'); } catch (_) {}
+        }
         console.log(`[WA:${accountName}] Chrome 进程已清理`);
     } catch (e) {}
     // 释放初始化锁，防止其他账号永久等待

@@ -106,13 +106,11 @@ function getWaWebVersionCacheInfo(dataDir) {
 }
 
 function extractAccountFromCommand(command) {
-    const marker = 'whatsapp-session-';
-    const start = command.indexOf(marker);
-    if (start === -1) return null;
+    const localAuthMatch = command.match(/\.wwebjs_auth\/session-([a-zA-Z0-9_-]+)\b/);
+    if (localAuthMatch) return localAuthMatch[1];
 
-    const rest = command.slice(start + marker.length);
-    const match = rest.match(/^([a-zA-Z0-9_-]+)\/session\b/);
-    return match ? match[1] : null;
+    const legacyMatch = command.match(/whatsapp-session-([a-zA-Z0-9_-]+)\/session\b/);
+    return legacyMatch ? legacyMatch[1] : null;
 }
 
 function getWaChromeStats(callback) {
@@ -123,7 +121,7 @@ function getWaChromeStats(callback) {
 
         const accounts = {};
         for (const line of stdout.split('\n')) {
-            if (!line.includes('whatsapp-session-')) continue;
+            if (!line.includes('whatsapp-session-') && !line.includes('.wwebjs_auth/session-')) continue;
             const match = line.trim().match(/^(\d+)\s+(\d+)\s+(\d+)\s+(.+)$/);
             if (!match) continue;
 

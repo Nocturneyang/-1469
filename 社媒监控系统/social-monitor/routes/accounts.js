@@ -147,15 +147,31 @@ function clearWaInitGuards(accountName, reason = 'manual') {
 }
 
 function clearWaSession(accountName) {
-    const sessionRoot = path.join(DATA_DIR, `whatsapp-session-${accountName}`);
-    try {
-        if (fs.existsSync(sessionRoot)) {
-            fs.rmSync(sessionRoot, { recursive: true, force: true });
-            console.log(`[WA SESSION] Cleared full session root for ${accountName}: ${sessionRoot}`);
+    const sessionRoots = [
+        path.join(DATA_DIR, `whatsapp-session-${accountName}`),
+        path.join(DATA_DIR, '.wwebjs_auth', `session-${accountName}`)
+    ];
+    for (const sessionRoot of sessionRoots) {
+        try {
+            if (fs.existsSync(sessionRoot)) {
+                fs.rmSync(sessionRoot, { recursive: true, force: true });
+                console.log(`[WA SESSION] Cleared session root for ${accountName}: ${sessionRoot}`);
+            }
+        } catch (err) {
+            console.warn(`[WA SESSION] Failed to clear ${sessionRoot}: ${err.message}`);
         }
-    } catch (err) {
-        console.warn(`[WA SESSION] Failed to clear ${sessionRoot} for ${accountName}: ${err.message}`);
     }
+}
+
+function killWaChromeProcesses(accountName, callback = () => {}) {
+    const patterns = [
+        `whatsapp-session-${accountName}`,
+        `.wwebjs_auth/session-${accountName}`
+    ];
+    const cmd = patterns
+        .map(pattern => `pgrep -f "${pattern}" 2>/dev/null`)
+        .join(' ; ');
+    exec(`(${cmd}) | sort -u | xargs kill -9 2>/dev/null || true`, { shell: '/bin/bash' }, callback);
 }
 
 function serializeEcosystemConfig(config) {
@@ -565,8 +581,7 @@ function createAccountsRouter({ safeWriteEcosystem }) {
 
             if (id.startsWith('wa-')) {
                 const LOCK_FILE = '/tmp/wa_chrome_init.lock';
-                exec(`pgrep -f "whatsapp-session-${accName}" 2>/dev/null | xargs kill -9 2>/dev/null || true`,
-                    { shell: '/bin/bash' }, () => {});
+                killWaChromeProcesses(accName);
 
                 try {
                     if (fs.existsSync(LOCK_FILE)) {
@@ -630,8 +645,7 @@ function createAccountsRouter({ safeWriteEcosystem }) {
             // ── WA 账号额外清理：杀 Chrome、释放锁、清 Session Auth ────────
             if (id.startsWith('wa-')) {
                 // 1. 杀掉该账号所有 Chrome 进程，杀完后再删除 session，避免残留文件句柄污染新 profile。
-                exec(`pgrep -f "whatsapp-session-${accName}" 2>/dev/null | xargs kill -9 2>/dev/null || true`,
-                    { shell: '/bin/bash' }, () => {
+                killWaChromeProcesses(accName, () => {
                         // 2. 人工重新登录必须绕过自动保护冷却，否则会一直等旧 cooldown，不出二维码。
                         clearWaInitGuards(accName, 'relogin');
 
