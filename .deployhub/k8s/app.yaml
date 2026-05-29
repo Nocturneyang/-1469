@@ -108,6 +108,42 @@ spec:
               value: "512"
             - name: STORAGE_MIN_FREE_PERCENT
               value: "5"
+            - name: TG_API_ID_TGU_SUPPLIER
+              valueFrom:
+                secretKeyRef:
+                  name: social-monitor-secrets
+                  key: TG_API_ID_TGU_SUPPLIER
+                  optional: true
+            - name: TG_API_HASH_TGU_SUPPLIER
+              valueFrom:
+                secretKeyRef:
+                  name: social-monitor-secrets
+                  key: TG_API_HASH_TGU_SUPPLIER
+                  optional: true
+            - name: TG_USER_SESSION_TGU_SUPPLIER
+              valueFrom:
+                secretKeyRef:
+                  name: social-monitor-secrets
+                  key: TG_USER_SESSION_TGU_SUPPLIER
+                  optional: true
+            - name: TG_API_ID_LAFFIC_SERVICE
+              valueFrom:
+                secretKeyRef:
+                  name: social-monitor-secrets
+                  key: TG_API_ID_LAFFIC_SERVICE
+                  optional: true
+            - name: TG_API_HASH_LAFFIC_SERVICE
+              valueFrom:
+                secretKeyRef:
+                  name: social-monitor-secrets
+                  key: TG_API_HASH_LAFFIC_SERVICE
+                  optional: true
+            - name: TG_USER_SESSION_LAFFIC_SERVICE
+              valueFrom:
+                secretKeyRef:
+                  name: social-monitor-secrets
+                  key: TG_USER_SESSION_LAFFIC_SERVICE
+                  optional: true
           envFrom:
             - secretRef:
                 name: social-monitor-secrets
