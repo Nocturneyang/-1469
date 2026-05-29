@@ -27,6 +27,7 @@ const DEFAULT_CONFIG = {
         staleInitLockSeconds: 720,
         restartCooldownSeconds: 900
     },
+    deletedAccounts: [],
     accounts: []
 };
 
@@ -45,12 +46,17 @@ function loadConfig() {
         const parsed = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'));
         return {
             capacity: { ...DEFAULT_CONFIG.capacity, ...(parsed.capacity || {}) },
+            deletedAccounts: Array.isArray(parsed.deletedAccounts) ? parsed.deletedAccounts : [],
             accounts: Array.isArray(parsed.accounts) ? parsed.accounts : []
         };
     } catch (err) {
         console.error('[WA Supervisor] Failed to read config:', err.message);
         return DEFAULT_CONFIG;
     }
+}
+
+function getDeletedAccountNames(config) {
+    return new Set((config.deletedAccounts || []).map(item => typeof item === 'string' ? item : item.id).filter(Boolean));
 }
 
 function collectStats() {
@@ -69,8 +75,13 @@ function collectRuntimeStatus() {
 function mergeDiscoveredWaAccounts(config, runtimeByName) {
     const accounts = Array.isArray(config.accounts) ? [...config.accounts] : [];
     const seen = new Set(accounts.map(account => account.id || account.name).filter(Boolean));
+    const deletedNames = getDeletedAccountNames(config);
 
     for (const accountName of runtimeByName.keys()) {
+        if (deletedNames.has(accountName)) {
+            console.warn(`[WA Supervisor] Ignoring deleted ${runtimeAdapter.name} WA account: ${accountName}`);
+            continue;
+        }
         if (seen.has(accountName)) continue;
         accounts.push({
             id: accountName,
@@ -83,6 +94,23 @@ function mergeDiscoveredWaAccounts(config, runtimeByName) {
     }
 
     return { ...config, accounts };
+}
+
+async function cleanupDeletedRuntime(config, runtimeByName) {
+    const deletedNames = getDeletedAccountNames(config);
+    for (const accountName of deletedNames) {
+        if (!runtimeByName.has(accountName)) continue;
+        console.warn(`[WA Supervisor] Removing deleted runtime collector: ${runtimeAdapter.workerName(accountName)}`);
+        try {
+            await runtimeAdapter.deleteCollector(accountName);
+        } catch (err) {
+            console.warn(`[WA Supervisor] Failed to delete runtime collector ${accountName}: ${err.message}`);
+        }
+        db.prepare('DELETE FROM accounts WHERE id = ?').run(`wa-${accountName}`);
+        db.prepare('DELETE FROM collector_heartbeats WHERE account_id = ?').run(`wa-${accountName}`);
+        db.prepare('DELETE FROM wa_runtime_events WHERE account_id = ?').run(`wa-${accountName}`);
+        runtimeByName.delete(accountName);
+    }
 }
 
 function updateAccountRuntime(accountId, patch) {
@@ -466,6 +494,7 @@ async function tick() {
     }
 
     const [runtimeByName] = await Promise.all([collectRuntimeStatus()]);
+    await cleanupDeletedRuntime(config, runtimeByName);
     config = mergeDiscoveredWaAccounts(config, runtimeByName);
     const enabledAccounts = config.accounts.filter(account => account.enabled !== false);
     const statsByName = new Map((stats.accounts || []).map(item => [item.accountName, item]));

@@ -78,11 +78,15 @@ function readWaAccountsConfig() {
             supervisorIntervalMs: 60000,
             staleInitLockSeconds: 720,
             restartCooldownSeconds: 900,
+            deletedAccounts: [],
             accounts: []
         };
     }
 
-    return JSON.parse(fs.readFileSync(WA_ACCOUNTS_CONFIG_PATH, 'utf8'));
+    const config = JSON.parse(fs.readFileSync(WA_ACCOUNTS_CONFIG_PATH, 'utf8'));
+    config.accounts = Array.isArray(config.accounts) ? config.accounts : [];
+    config.deletedAccounts = Array.isArray(config.deletedAccounts) ? config.deletedAccounts : [];
+    return config;
 }
 
 function writeWaAccountsConfig(config) {
@@ -93,6 +97,10 @@ function writeWaAccountsConfig(config) {
 function ensureWaAccountManaged(accountName) {
     const config = readWaAccountsConfig();
     config.accounts = Array.isArray(config.accounts) ? config.accounts : [];
+    config.deletedAccounts = (config.deletedAccounts || []).filter(item => {
+        const deletedName = typeof item === 'string' ? item : item.id;
+        return deletedName !== accountName;
+    });
 
     const existing = config.accounts.find(item => (item.id || item.name) === accountName);
     if (existing) {
@@ -110,6 +118,9 @@ function removeWaAccountManaged(accountName) {
     if (!fs.existsSync(WA_ACCOUNTS_CONFIG_PATH)) return;
     const config = readWaAccountsConfig();
     config.accounts = (config.accounts || []).filter(item => (item.id || item.name) !== accountName);
+    const deletedNames = new Set((config.deletedAccounts || []).map(item => typeof item === 'string' ? item : item.id).filter(Boolean));
+    deletedNames.add(accountName);
+    config.deletedAccounts = Array.from(deletedNames).sort();
     writeWaAccountsConfig(config);
 }
 

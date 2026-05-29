@@ -60,6 +60,11 @@ class Pm2RuntimeAdapter {
         return this.runPm2(['start', 'ecosystem.config.js', '--only', workerName, '--env', 'production']);
     }
 
+    deleteCollector(accountName) {
+        const workerName = this.workerName(accountName);
+        return this.runPm2(['delete', workerName]);
+    }
+
     runPm2(args) {
         return new Promise((resolve, reject) => {
             execFile('npx', ['pm2', ...args], {
