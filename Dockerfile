@@ -7,6 +7,8 @@ ENV TZ=Asia/Shanghai \
     DATA_DIR=/data \
     SKIP_CHROME_INSTALL=true \
     PUPPETEER_SKIP_DOWNLOAD=true \
+    PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium \
+    PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium \
     PUPPETEER_CACHE_DIR=/root/.cache/puppeteer \
     PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
     PLAYWRIGHT_DOWNLOAD_HOST=https://npmmirror.com/mirrors/playwright
@@ -17,6 +19,9 @@ RUN sed -i 's|deb.debian.org|mirrors.aliyun.com|g' /etc/apt/sources.list.d/debia
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     ca-certificates \
+    chromium \
+    fonts-liberation \
+    fonts-noto-cjk \
     procps \
     python3 \
     && rm -rf /var/lib/apt/lists/*

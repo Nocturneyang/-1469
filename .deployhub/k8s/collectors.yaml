@@ -1,0 +1,279 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: wa-collector-wa-shebi-data
+spec:
+  storageClassName: nas
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 2Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: wa-collector-wa-shebi
+  labels:
+    app: wa-collector-wa-shebi
+    app.kubernetes.io/name: social-monitor-wa-collector
+    app.kubernetes.io/component: wa-collector
+    app.kubernetes.io/part-of: social-monitor-wa
+    wa-account: wa_shebi
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: wa-collector-wa-shebi
+      wa-account: wa_shebi
+  template:
+    metadata:
+      labels:
+        app: wa-collector-wa-shebi
+        app.kubernetes.io/name: social-monitor-wa-collector
+        app.kubernetes.io/component: wa-collector
+        app.kubernetes.io/part-of: social-monitor-wa
+        wa-account: wa_shebi
+    spec:
+      containers:
+        - name: wa-collector
+          image: __IMAGE__
+          command: ["node", "scripts/start-wa-collector.js"]
+          env:
+            - name: NODE_ENV
+              value: production
+            - name: ACCOUNT_NAME
+              value: wa_shebi
+            - name: COLLECTOR_ID
+              value: k8s:wa_shebi
+            - name: COLLECTOR_API_URL
+              value: http://social-monitor
+            - name: COLLECTOR_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: social-monitor-secrets
+                  key: COLLECTOR_TOKEN
+            - name: DATA_DIR
+              value: /data
+            - name: COLLECTOR_OUTBOX_ENABLED
+              value: "true"
+            - name: COLLECTOR_OUTBOX_DIR
+              value: /data/collector-outbox
+            - name: WA_ORCHESTRATOR_MANAGED_INIT
+              value: "true"
+            - name: PUPPETEER_EXECUTABLE_PATH
+              value: /usr/bin/chromium
+            - name: PUPPETEER_SKIP_DOWNLOAD
+              value: "true"
+          resources:
+            requests:
+              cpu: 500m
+              memory: 1Gi
+            limits:
+              cpu: "2"
+              memory: 3Gi
+          volumeMounts:
+            - name: collector-data
+              mountPath: /data
+      volumes:
+        - name: collector-data
+          persistentVolumeClaim:
+            claimName: wa-collector-wa-shebi-data
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: tg-collector-tgu-supplier-data
+spec:
+  storageClassName: nas
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tg-collector-tgu-supplier
+  labels:
+    app: tg-collector-tgu-supplier
+    app.kubernetes.io/name: social-monitor-tg-collector
+    app.kubernetes.io/component: tg-collector
+    app.kubernetes.io/part-of: social-monitor-tg
+    tg-account: tgu_supplier
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: tg-collector-tgu-supplier
+      tg-account: tgu_supplier
+  template:
+    metadata:
+      labels:
+        app: tg-collector-tgu-supplier
+        app.kubernetes.io/name: social-monitor-tg-collector
+        app.kubernetes.io/component: tg-collector
+        app.kubernetes.io/part-of: social-monitor-tg
+        tg-account: tgu_supplier
+    spec:
+      containers:
+        - name: tg-collector
+          image: __IMAGE__
+          command: ["node", "scripts/start-tg-collector.js"]
+          env:
+            - name: NODE_ENV
+              value: production
+            - name: TG_ACCOUNT_NAME
+              value: tgu_supplier
+            - name: TG_COLLECTOR_TYPE
+              value: user
+            - name: COLLECTOR_ID
+              value: k8s:tgu:tgu_supplier
+            - name: COLLECTOR_API_URL
+              value: http://social-monitor
+            - name: COLLECTOR_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: social-monitor-secrets
+                  key: COLLECTOR_TOKEN
+            - name: TG_API_ID_TGU_SUPPLIER
+              valueFrom:
+                secretKeyRef:
+                  name: social-monitor-secrets
+                  key: TG_API_ID_TGU_SUPPLIER
+            - name: TG_API_HASH_TGU_SUPPLIER
+              valueFrom:
+                secretKeyRef:
+                  name: social-monitor-secrets
+                  key: TG_API_HASH_TGU_SUPPLIER
+            - name: TG_USER_SESSION_TGU_SUPPLIER
+              valueFrom:
+                secretKeyRef:
+                  name: social-monitor-secrets
+                  key: TG_USER_SESSION_TGU_SUPPLIER
+            - name: DATA_DIR
+              value: /data
+            - name: COLLECTOR_OUTBOX_ENABLED
+              value: "true"
+            - name: COLLECTOR_OUTBOX_DIR
+              value: /data/collector-outbox
+            - name: TG_WARMUP_SECONDS
+              value: "600"
+            - name: TG_BACKFILL_DAYS
+              value: "0"
+            - name: TG_ENABLE_BACKFILL
+              value: "true"
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 768Mi
+          volumeMounts:
+            - name: collector-data
+              mountPath: /data
+      volumes:
+        - name: collector-data
+          persistentVolumeClaim:
+            claimName: tg-collector-tgu-supplier-data
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: tg-collector-laffic-service-data
+spec:
+  storageClassName: nas
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tg-collector-laffic-service
+  labels:
+    app: tg-collector-laffic-service
+    app.kubernetes.io/name: social-monitor-tg-collector
+    app.kubernetes.io/component: tg-collector
+    app.kubernetes.io/part-of: social-monitor-tg
+    tg-account: laffic_service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: tg-collector-laffic-service
+      tg-account: laffic_service
+  template:
+    metadata:
+      labels:
+        app: tg-collector-laffic-service
+        app.kubernetes.io/name: social-monitor-tg-collector
+        app.kubernetes.io/component: tg-collector
+        app.kubernetes.io/part-of: social-monitor-tg
+        tg-account: laffic_service
+    spec:
+      containers:
+        - name: tg-collector
+          image: __IMAGE__
+          command: ["node", "scripts/start-tg-collector.js"]
+          env:
+            - name: NODE_ENV
+              value: production
+            - name: TG_ACCOUNT_NAME
+              value: laffic_service
+            - name: TG_COLLECTOR_TYPE
+              value: user
+            - name: COLLECTOR_ID
+              value: k8s:tgu:laffic_service
+            - name: COLLECTOR_API_URL
+              value: http://social-monitor
+            - name: COLLECTOR_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: social-monitor-secrets
+                  key: COLLECTOR_TOKEN
+            - name: TG_API_ID_LAFFIC_SERVICE
+              valueFrom:
+                secretKeyRef:
+                  name: social-monitor-secrets
+                  key: TG_API_ID_LAFFIC_SERVICE
+            - name: TG_API_HASH_LAFFIC_SERVICE
+              valueFrom:
+                secretKeyRef:
+                  name: social-monitor-secrets
+                  key: TG_API_HASH_LAFFIC_SERVICE
+            - name: TG_USER_SESSION_LAFFIC_SERVICE
+              valueFrom:
+                secretKeyRef:
+                  name: social-monitor-secrets
+                  key: TG_USER_SESSION_LAFFIC_SERVICE
+            - name: DATA_DIR
+              value: /data
+            - name: COLLECTOR_OUTBOX_ENABLED
+              value: "true"
+            - name: COLLECTOR_OUTBOX_DIR
+              value: /data/collector-outbox
+            - name: TG_WARMUP_SECONDS
+              value: "600"
+            - name: TG_BACKFILL_DAYS
+              value: "0"
+            - name: TG_ENABLE_BACKFILL
+              value: "true"
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 768Mi
+          volumeMounts:
+            - name: collector-data
+              mountPath: /data
+      volumes:
+        - name: collector-data
+          persistentVolumeClaim:
+            claimName: tg-collector-laffic-service-data
