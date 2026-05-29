@@ -68,59 +68,45 @@ npm run db:backup:prune -- --execute
 - `SSO_USERINFO_URL` 可选；网关注入 `x-user-*` 用户头时可不配置
 - `SSO_ADMIN_USERS` 可选；逗号分隔，匹配 SSO 的 id/username/email，用于授予后台管理权限
 
-## 单镜像多角色
+## 单镜像单组件多进程
 
 当前 Deploy Hub/Rainbond 使用单镜像模式。根目录 `Dockerfile` 会把主系统、分析器、WA/TG worker、collector 协议、Chromium 运行时都打进同一个镜像。
 
-组件通过环境变量决定运行角色：
+当前线上策略是不依赖 Rainbond 管理端启动每个账号组件：
 
-- 未配置 `ACCOUNT_NAME` / `TG_ACCOUNT_NAME`：运行主系统 `ui-server`。
-- 配置 `ACCOUNT_NAME`：运行 WA collector。
-- 配置 `TG_ACCOUNT_NAME`：运行 TG collector。
+- Rainbond 只启动 `social-monitor` 一个组件。
+- 容器内由 PM2 启动 `ui-server`、分析器、`wa-supervisor`、WA worker、TG user worker。
+- 前端新增或重登账号时，后端继续修改 `/data/ecosystem.config.js` 并调用 PM2 启动进程。
 
-根目录 `docker-entrypoint.sh` 负责这个分流逻辑。因此 Rainbond 中可以有多个组件，但它们都使用同一个镜像标签，例如 `g1469-social-monitor:94f72d6`。不要为 WA/TG collector 单独构建第二、第三个镜像。
+根目录 `docker-entrypoint.sh` 会把随镜像发布的 `ecosystem.cloud.config.js` 同步到 `/data/ecosystem.config.js`。每次需要重置线上 PM2 基线时提升 `CLOUD_ECOSYSTEM_VERSION` 默认值；入口脚本会先备份旧配置再覆盖。
 
-## WA Collector
+镜像入口仍保留 `ACCOUNT_NAME` / `TG_ACCOUNT_NAME` 的单进程分流能力，作为未来硬隔离 collector 的备用方案，但当前 Deploy Hub 配置不再创建独立 collector Deployment。
 
-每个 WA 账号一个独立 collector 组件，但共用主系统镜像：
+## WA Worker
+
+当前线上 WA 账号在 `social-monitor` 组件内以 PM2 worker 方式运行：
 
 - 镜像：与主系统相同的单镜像
-- 启动方式：组件环境变量配置 `ACCOUNT_NAME=<账号名>` 后，入口脚本自动执行 `scripts/start-wa-collector.js`
-- PVC：建议每账号独立 `/data`，2Gi 起步，ReadWriteOnce
-- 资源：requests `500m / 2Gi`，limits `2 / 4Gi`
-- 必填环境变量：
+- 启动方式：`ecosystem.cloud.config.js` 或前端动态写入 `/data/ecosystem.config.js`
+- PVC：共用主系统 `/data`，用于 SQLite、媒体、WA session、PM2 配置
+- 当前主组件资源：requests `1CPU / 3Gi`，limits `4CPU / 8Gi`
+- WA worker 必填环境变量：
   - `ACCOUNT_NAME`
-  - `COLLECTOR_API_URL`
-  - `COLLECTOR_TOKEN`
-  - `DATA_DIR=/data`
-- 可选但建议保留：
-  - `COLLECTOR_OUTBOX_ENABLED=true`
-  - `COLLECTOR_OUTBOX_DIR=/data/collector-outbox`
-  - `COLLECTOR_OUTBOX_FLUSH_MS=30000`
+  - `DATA_DIR=/data`，由入口脚本统一设置
+  - `PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium`
 
-当主系统 API 短暂不可用时，collector 会把消息、媒体和运行事件写入 outbox，并在恢复后自动补发；心跳和账号状态不进入 outbox，避免旧状态覆盖新状态。
+PM2 和 `wa-supervisor` 仍然会记录心跳、初始化阶段、Chrome RSS、无 Chrome、重启保护等状态。区别只是运行位置从 Rainbond 独立组件改回同一个 Pod 内部。
 
 ### 长期资源口径
 
-如果要 5 个以上 WA 账号长期在线，建议按账号独立申请资源，而不是把所有 Chrome 塞回主系统组件：
+如果坚持不通过管理端启动账号组件，长期 5 个以上 WA 账号就需要把 `social-monitor` 这个唯一组件整体扩容：
 
-- 主系统：保留 requests `500m / 1Gi`，limits `2 / 3Gi`。
-- 每个 WA collector：requests `500m / 2Gi`，limits `2 / 4Gi`，独立 2Gi PVC。
-- 每个 TG collector：requests `100m / 256Mi`，limits `1 / 768Mi`，独立 1Gi PVC。
-- 5 个 WA + 2 个 TG 的建议集群容量：内存 requests 约 `12.5Gi`，内存 limits 约 `24.5Gi`；节点可用内存建议不低于 `32Gi`，给系统、镜像缓存、SQLite、媒体处理和突发留余量。
+- 当前 1 个 WA + 2 个 TG：requests `1CPU / 3Gi`，limits `4CPU / 8Gi`。
+- 3 个 WA + 2 个 TG：建议 requests `2CPU / 8Gi`，limits `6CPU / 16Gi`。
+- 5 个 WA + 2 个 TG：建议 requests `3CPU / 12Gi`，limits `8CPU / 24Gi`。
+- 节点可用内存建议不低于 `32Gi`，给系统、镜像缓存、SQLite、媒体处理和 Chrome 峰值留余量。
 
-如果 WA 群数量多、媒体消息重或 Chrome RSS 经常超过 3.2GiB，可把单个 WA collector limit 临时提高到 `5Gi`，但仍应保持一账号一组件，避免互相拖垮。
-
-生成 K8s manifest 示例：
-
-```bash
-npm run wa:collector:manifest -- \
-  --account-name nanya_wa \
-  --image your-registry/social-monitor:tag \
-  --api-url https://your-social-monitor.example.com \
-  --token replace_with_random_collector_token \
-  --output /tmp/wa-collector-nanya.yaml
-```
+这种模式的好处是前端可以直接新增、扫码、重登，不再卡 Rainbond 组件启动；代价是多个 Chrome 共享同一个 Pod 内存上限，某个账号异常膨胀时仍可能影响主系统。因此必须保留 `wa-supervisor` 的串行初始化、RSS 巡检和重启保护。
 
 ## Orchestrator RuntimeAdapter
 
@@ -130,7 +116,7 @@ npm run wa:collector:manifest -- \
 WA_RUNTIME_ADAPTER=pm2
 ```
 
-线上拆分 collector 后，主系统的 `wa-supervisor` 可切到 Kubernetes/Rainbond 适配器：
+如果未来重新采用硬隔离 collector，主系统的 `wa-supervisor` 可切到 Kubernetes/Rainbond 适配器：
 
 ```bash
 WA_RUNTIME_ADAPTER=k8s
@@ -160,7 +146,7 @@ WA_K8S_DEPLOYMENT_MAP={"nanya_wa":"wa-collector-nanya-wa"}
 
 ## 迁移顺序
 
-1. 先给主系统配置 `COLLECTOR_TOKEN` 并部署轻量镜像。
+1. 部署单镜像单组件版本，确认 `social-monitor` Pod 资源不低于当前账号规模。
 2. 先检查试点账号和 TG 用户号的迁移条件：
 
 ```bash
@@ -175,20 +161,7 @@ npm run collector:migration:status -- \
   --exclude mason_text,TG_kaxian
 ```
 
-3. 为试点 WA 账号 `wa_shebi` 部署独立 collector。系统账号 ID 是 `wa-wa_shebi`，collector 环境变量使用 `ACCOUNT_NAME=wa_shebi`。
-4. TG 用户号使用同一个主系统镜像独立部署组件。本轮迁移范围只包含 `tgu_supplier` 和 `laffic_service`；`mason_text`、`TG_kaxian` 暂不迁移。
-   需要配置 `TG_ACCOUNT_NAME`、`TG_API_ID/TG_API_HASH`、`TG_USER_SESSION_{ACCOUNT}`、`COLLECTOR_API_URL`、`COLLECTOR_TOKEN`。
+3. 试点 WA 账号 `wa_shebi` 由 `ecosystem.cloud.config.js` 直接启动，系统账号 ID 是 `wa-wa_shebi`。
+4. TG 用户号本轮只启动 `tgu_supplier` 和 `laffic_service`；`mason_text`、`TG_kaxian` 暂不迁移。
 5. 前端确认账号心跳、消息、媒体路径都能更新。
-6. 观察 24 小时后，再逐个迁移其他 WA 账号。
-7. 迁移完成后，本地/主系统 PM2 中不再保留已迁移的 `worker-wa-*` / `worker-tgu-*` 进程。
-
-生成 TG 用户号 manifest 示例：
-
-```bash
-npm run tg:collector:manifest -- \
-  --account-name tgu_supplier \
-  --image your-registry/social-monitor:tag \
-  --api-url https://your-social-monitor.example.com \
-  --token replace_with_random_collector_token \
-  --output /tmp/tg-collector-tgu-supplier.yaml
-```
+6. 观察 24 小时后，再逐个通过前端新增或重登其他 WA 账号。

@@ -2,7 +2,7 @@
 
 ## 目标
 
-将 WhatsApp 从主系统执行面中拆出，形成“主系统轻量化 + WA 采集器隔离化 + 状态调度中心化 + 可替代通道预留”的架构。当前阶段先保留 PM2，本地落地统一心跳、事件和状态模型，为后续 Rainbond/Kubernetes collector 拆分做准备。
+将 WhatsApp 从无治理的主进程里拆出来，形成“PM2 多进程托管 + 状态调度中心化 + 可替代通道预留”的架构。当前线上约束是不通过 Rainbond 管理端逐个启动账号组件，所以采用单镜像、单 Rainbond 组件、容器内 PM2 多进程模式。
 
 ## 阶段 1：运行态账本（已落地）
 
@@ -20,16 +20,16 @@
 - 状态变化写入 `wa_runtime_events`，前端/API 优先展示 orchestrator 的运行事实。
 - worker 初始化失败后默认进入驻留心跳模式，不再通过 `process.exit(1)` 触发 PM2 立即重启；orchestrator 等冷却结束后统一恢复。
 
-下一步继续把 WA RuntimeAdapter 抽象出来，让同一套 orchestrator 可以管理本地 PM2 和线上 Rainbond/Kubernetes collector。
+下一步继续保留 WA RuntimeAdapter 抽象，让同一套 orchestrator 既能管理当前 PM2 模式，也能在未来需要硬隔离时切回 Rainbond/Kubernetes collector。
 
 ## 阶段 2.5：RuntimeAdapter 抽象（已落地 PM2 适配器）
 
 - 新增 `lib/wa-runtime-adapters/pm2-runtime-adapter.js`，封装本地 PM2 的列表、启动和重启操作。
 - 新增 `lib/wa-runtime-adapters/k8s-runtime-adapter.js`，支持通过集群内 Kubernetes API 管理线上 Kubernetes/Rainbond collector Deployment，必要时回退 `kubectl`。
 - `wa-supervisor` 只依赖 RuntimeAdapter 接口，不再在状态机中直接拼 PM2 命令。
-- 当前默认 `WA_RUNTIME_ADAPTER=pm2`；线上可切 `WA_RUNTIME_ADAPTER=k8s` 或 `rainbond` 复用同一套状态机。
-- 前端运行时卡片已从固定 `PM2` 表述改为通用运行时字段，避免线上 collector 仍显示 PM2 异常。
-- 主系统 K8s manifest 已补最小 ServiceAccount/Role/RoleBinding，允许 orchestrator 查看 pods/deployments，并 patch/restart/scale WA collector。
+- 当前线上默认 `WA_RUNTIME_ADAPTER=pm2`，不依赖 Rainbond 管理端启动账号组件。
+- 前端运行时卡片已从固定 `PM2` 表述改为通用运行时字段，未来切到 K8s/Rainbond 时仍可复用。
+- 主系统 K8s manifest 保留最小 ServiceAccount/Role/RoleBinding，作为未来硬隔离 collector 的备用能力；当前 PM2 模式不依赖这些权限。
 
 ## 阶段 3：Collector 协议
 
@@ -41,15 +41,16 @@
 
 后续可继续把主系统本地媒体存储替换成对象存储，避免 App ID 58 的 10GiB PVC 被图片/视频长期占满。
 
-## 阶段 4：Rainbond/Kubernetes 拆分
+## 阶段 4：Rainbond 单组件上线
 
-- `social-monitor` App ID 58 使用单镜像多角色模式：主系统组件、WA collector 组件、TG collector 组件共用同一个镜像标签，通过入口脚本和环境变量分流。
-- 每个 WA 账号独立 collector 组件，建议每个组件 requests `2Gi`、limits `4Gi`；如果该账号群多或媒体多，可临时提高到 `5Gi`。
-- Orchestrator 通过 RuntimeAdapter 管理本地 PM2 或线上 Rainbond/K8s。
-- 根 `Dockerfile` 包含 Chromium，确保同一镜像可运行 WA collector；主系统组件自身不会启动 Chrome。
+- `social-monitor` App ID 58 使用单镜像单组件模式：Rainbond 只启动主组件，容器内 PM2 启动 Web/API、分析器、WA worker、TG user worker。
+- 当前试点资源为 requests `1CPU / 3Gi`、limits `4CPU / 8Gi`，覆盖 `wa_shebi` + `tgu_supplier` + `laffic_service`。
+- 长期 5 个以上 WA 账号如果仍坚持单组件模式，建议把主组件提高到 requests `3CPU / 12Gi`、limits `8CPU / 24Gi`。
+- Orchestrator 通过 PM2 RuntimeAdapter 管理账号进程，前端新增/重登账号不需要管理员启动 Rainbond 组件。
+- 根 `Dockerfile` 包含 Chromium，确保同一镜像里的 WA worker 可以启动 Chrome。
 - 新增 `.dockerignore`，避免把本地 session、SQLite、media、node_modules 打入主系统或 collector 镜像。
-- 新增 `.deployhub/k8s/app.yaml`，固化 App ID 58 的 10Gi PVC、`500m/1Gi` requests、`2/3Gi` limits。
-- 新增 `npm run wa:collector:manifest`，可为每个 WA 账号生成独立 collector 的 K8s manifest。
+- 新增 `.deployhub/k8s/app.yaml`，固化 App ID 58 的 10Gi PVC 和当前单组件资源规格。
+- 保留 `npm run wa:collector:manifest` 作为未来硬隔离方案工具，但当前 Deploy Hub 不再使用独立 collector manifest。
 - 主系统已补齐 skyline-ark-sso 兼容：`sso: true`、`/token/userinfo`、运行时 `/runtime-config.js`、前端 401 统一登录跳转。
 
 ## 阶段 5：可替代通道
