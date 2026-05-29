@@ -10,6 +10,7 @@ ENV PUPPETEER_SKIP_DOWNLOAD=true
 # Copy package files
 COPY package*.json ./
 COPY frontend/package*.json ./frontend/
+COPY scripts/install-chrome.js ./scripts/install-chrome.js
 
 # Install backend dependencies
 RUN npm ci --omit=dev --registry=https://registry.npmmirror.com

@@ -6,6 +6,7 @@ ENV SKIP_CHROME_INSTALL=true
 ENV PUPPETEER_SKIP_DOWNLOAD=true
 
 COPY package*.json ./
+COPY scripts/install-chrome.js ./scripts/install-chrome.js
 RUN npm ci --omit=dev --registry=https://registry.npmmirror.com
 
 COPY . .
