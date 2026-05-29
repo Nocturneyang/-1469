@@ -17,6 +17,7 @@ RUN sed -i 's|deb.debian.org|mirrors.aliyun.com|g' /etc/apt/sources.list.d/debia
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     ca-certificates \
+    procps \
     python3 \
     && rm -rf /var/lib/apt/lists/*
 
