@@ -153,6 +153,70 @@ router.get('/knowledge-base', (req, res) => {
     }
 });
 
+// ─── QA 知识库导出（支持 json / jsonl / csv）────────────────────
+router.get('/knowledge-base/export', (req, res) => {
+    try {
+        const adb = getAnalyticsDb();
+        if (!adb) return res.status(503).json({ success: false, error: '数据库不可用' });
+
+        const fmt = (req.query.format || 'json').toLowerCase();
+        const rows = adb.prepare(
+            'SELECT * FROM qa_knowledge_base ORDER BY confidence DESC, frequency DESC'
+        ).all();
+
+        const timestamp = new Date().toISOString().slice(0, 10);
+
+        if (fmt === 'jsonl') {
+            // JSONL: 每行一条 {instruction, output} — RAG / fine-tune 直接可用
+            res.setHeader('Content-Type', 'application/jsonl; charset=utf-8');
+            res.setHeader('Content-Disposition', `attachment; filename="qa-kb-${timestamp}.jsonl"`);
+            for (const r of rows) {
+                const steps = (r.answer_pattern || '').split('\n').filter(Boolean);
+                const line = {
+                    instruction: r.question_summary || '',
+                    input: (r.question_keywords || '').split(/[,，]/).map(k => k.trim()).filter(Boolean).join(', '),
+                    output: steps.join('\n'),
+                    metadata: {
+                        id: r.id,
+                        sector: r.business_sector,
+                        confidence: r.confidence,
+                        frequency: r.frequency,
+                        question_type: r.question_type,
+                        created_at: r.created_at,
+                    }
+                };
+                res.write(JSON.stringify(line) + '\n');
+            }
+            return res.end();
+        }
+
+        if (fmt === 'csv') {
+            res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+            res.setHeader('Content-Disposition', `attachment; filename="qa-kb-${timestamp}.csv"`);
+            const escape = v => `"${String(v ?? '').replace(/"/g, '""')}"`;
+            const headers = ['id','question_summary','question_keywords','question_type','answer_pattern','confidence','frequency','business_sector','created_at'];
+            res.write('\uFEFF'); // BOM for Excel
+            res.write(headers.join(',') + '\n');
+            for (const r of rows) {
+                res.write(headers.map(h => escape(r[h])).join(',') + '\n');
+            }
+            return res.end();
+        }
+
+        // 默认 JSON
+        res.setHeader('Content-Type', 'application/json; charset=utf-8');
+        res.setHeader('Content-Disposition', `attachment; filename="qa-kb-${timestamp}.json"`);
+        const data = rows.map(r => ({
+            ...r,
+            answer_steps: (r.answer_pattern || '').split('\n').filter(Boolean),
+            question_keywords: (r.question_keywords || '').split(/[,，]/).map(k => k.trim()).filter(Boolean),
+        }));
+        return res.json({ exported_at: new Date().toISOString(), total: data.length, data });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
 router.get('/knowledge-base/sectors', (req, res) => {
     try {
         const adb = getAnalyticsDb();
@@ -165,6 +229,7 @@ router.get('/knowledge-base/sectors', (req, res) => {
         res.status(500).json({ success: false, error: err.message });
     }
 });
+
 
 router.get('/supplier-profiles/sectors', (req, res) => {
     try {
@@ -309,6 +374,62 @@ router.get('/device-kb/categories', (req, res) => {
             'SELECT DISTINCT fault_category FROM device_knowledge_graph WHERE fault_category IS NOT NULL ORDER BY fault_category'
         ).all();
         res.json({ success: true, data: rows.map(r => r.fault_category) });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// ─── 设备知识库导出（支持 json / jsonl / csv）─────────────────────
+router.get('/device-kb/export', (req, res) => {
+    try {
+        const adb = getAnalyticsDb();
+        if (!adb) return res.status(503).json({ success: false, error: '数据库不可用' });
+
+        const fmt = (req.query.format || 'json').toLowerCase();
+        const rows = adb.prepare(
+            'SELECT * FROM device_knowledge_graph ORDER BY frequency DESC, last_seen_at DESC'
+        ).all();
+
+        const timestamp = new Date().toISOString().slice(0, 10);
+
+        if (fmt === 'jsonl') {
+            res.setHeader('Content-Type', 'application/jsonl; charset=utf-8');
+            res.setHeader('Content-Disposition', `attachment; filename="device-kb-${timestamp}.jsonl"`);
+            for (const r of rows) {
+                const line = {
+                    instruction: `设备 ${r.device_model} 出现故障：${r.fault_symptom}，如何处理？`,
+                    input: `故障类型: ${r.fault_category || '未知'}`,
+                    output: r.solution_steps || '',
+                    metadata: {
+                        id: r.id,
+                        device_model: r.device_model,
+                        fault_category: r.fault_category,
+                        frequency: r.frequency,
+                        last_seen_at: r.last_seen_at,
+                    }
+                };
+                res.write(JSON.stringify(line) + '\n');
+            }
+            return res.end();
+        }
+
+        if (fmt === 'csv') {
+            res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+            res.setHeader('Content-Disposition', `attachment; filename="device-kb-${timestamp}.csv"`);
+            const escape = v => `"${String(v ?? '').replace(/"/g, '""')}"`;
+            const headers = ['id','device_model','fault_symptom','fault_category','solution_steps','frequency','last_seen_at','created_at'];
+            res.write('\uFEFF');
+            res.write(headers.join(',') + '\n');
+            for (const r of rows) {
+                res.write(headers.map(h => escape(r[h])).join(',') + '\n');
+            }
+            return res.end();
+        }
+
+        // 默认 JSON
+        res.setHeader('Content-Type', 'application/json; charset=utf-8');
+        res.setHeader('Content-Disposition', `attachment; filename="device-kb-${timestamp}.json"`);
+        return res.json({ exported_at: new Date().toISOString(), total: rows.length, data: rows });
     } catch (err) {
         res.status(500).json({ success: false, error: err.message });
     }

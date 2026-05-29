@@ -147,8 +147,9 @@ function resetTask(accountName, chatId) {
  * @param {object} rateLimitCfg    频控参数 { daily_limit, batch_size, sleep_min_ms, sleep_max_ms }
  * @param {Function} onCircuitBreak  熔断回调 (error) => void
  */
-async function runBackfillLoop(client, accountName, rateLimitCfg, onCircuitBreak) {
+async function runBackfillLoop(client, accountName, rateLimitCfg, onCircuitBreak, options = {}) {
     const { Api } = require('telegram');
+    const saveMessageFn = options.saveMessageFn || saveMessage;
     const db = getDb();
     const {
         daily_limit = 2000,
@@ -237,7 +238,7 @@ async function runBackfillLoop(client, accountName, rateLimitCfg, onCircuitBreak
                     const groupIdAbs = groupIdStr.replace(/^-100/, '').replace(/^-/, '');
                     const globalMessageId = `${groupIdAbs}_${msgId}`;
 
-                    saveMessage({
+                    await saveMessageFn({
                         platform: 'telegram',
                         receiver_account: `tgu-${accountName}`,
                         message_id: globalMessageId,

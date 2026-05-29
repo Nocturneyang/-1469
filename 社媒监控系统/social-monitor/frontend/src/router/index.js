@@ -1,6 +1,7 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { useAuthStore } from '@/store/auth'
 import Login from '@/views/Login.vue'
+import { isSsoEnabled, redirectToSsoLogin } from '@/utils/runtime-config'
 
 const routes = [
   {
@@ -90,7 +91,14 @@ const router = createRouter({
 router.beforeEach((to, from, next) => {
   const authStore = useAuthStore()
 
-  if (!to.meta.public && !authStore.isAuthenticated) {
+  if (isSsoEnabled()) {
+    if (to.name === 'Login') {
+      redirectToSsoLogin()
+      next(false)
+    } else {
+      next()
+    }
+  } else if (!to.meta.public && !authStore.isAuthenticated) {
     next({ name: 'Login' })
   } else if (to.name === 'Login' && authStore.isAuthenticated) {
     next({ name: 'Home' })

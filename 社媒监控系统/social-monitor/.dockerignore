@@ -1,0 +1,17 @@
+.DS_Store
+.env
+.env.*
+.git
+.pm2
+.oauth-temp
+.wwebjs_cache
+node_modules
+frontend/node_modules
+frontend/dist
+db/*.sqlite
+db/*.sqlite-*
+media
+whatsapp-session*
+teams-profile*
+*.bak
+npm-debug.log*

@@ -3,6 +3,7 @@ node_modules/
 db/*.db
 db/*.sqlite
 db/.tgu_status_*.json
+backups/
 teams-profile-*/
 whatsapp-session-*/
 *.png

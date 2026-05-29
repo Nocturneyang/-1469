@@ -30,14 +30,91 @@ require('dotenv').config({ path: path.join(process.env.DATA_DIR || path.join(__d
 const { TelegramClient } = require('telegram');
 const { StringSession } = require('telegram/sessions');
 const { NewMessage } = require('telegram/events');
-const { saveMessage, updateAccountStatus } = require('../db/database');
+const {
+    saveMessage,
+    updateAccountStatus,
+    upsertCollectorHeartbeat,
+    recordRuntimeEvent
+} = require('../db/database');
 const { getSession, saveSession, getRateLimit } = require('../lib/tg-session-store');
 const { registerTask, runBackfillLoop } = require('../lib/tg-backfill-queue');
 const { sendAlert, sendAccountAlert } = require('../lib/dingtalk');
+const { createCollectorClient } = require('../lib/collector-client');
 
 // ─── 配置读取 ────────────────────────────────────────────────────────────────
 const accountName = process.env.TG_ACCOUNT_NAME || 'default';
 const accountKey = accountName.toUpperCase().replace(/-/g, '_');
+const accountId = `tgu-${accountName}`;
+const collectorId = process.env.COLLECTOR_ID || `pm2:tgu:${accountName}`;
+const runId = process.env.TG_RUN_ID || `${accountName}-${Date.now()}-${process.pid}`;
+const runStartedAt = new Date().toISOString();
+const collectorClient = createCollectorClient({
+    baseUrl: process.env.COLLECTOR_API_URL,
+    token: process.env.COLLECTOR_TOKEN,
+    logger: console
+});
+const runtimeState = {
+    status: 'initializing',
+    phase: 'booting',
+    healthStatus: 'booting',
+    lastError: null,
+    lastReadyAt: null,
+    lastMessageAt: null
+};
+
+function reportHeartbeat(patch = {}) {
+    Object.assign(runtimeState, patch);
+    const payload = {
+        accountId,
+        platform: 'telegram',
+        collectorId,
+        runId,
+        pid: process.pid,
+        status: runtimeState.status,
+        phase: runtimeState.phase,
+        healthStatus: runtimeState.healthStatus,
+        lastError: runtimeState.lastError,
+        lastReadyAt: runtimeState.lastReadyAt,
+        lastMessageAt: runtimeState.lastMessageAt,
+        startedAt: runStartedAt
+    };
+    if (collectorClient) collectorClient.heartbeat(payload);
+    else upsertCollectorHeartbeat(payload);
+}
+
+function recordCollectorEvent(eventType, message, severity = 'info', data = null) {
+    const payload = {
+        accountId,
+        platform: 'telegram',
+        source: 'worker-tg-user',
+        eventType,
+        severity,
+        runId,
+        message,
+        data
+    };
+    if (collectorClient) collectorClient.event(payload);
+    else recordRuntimeEvent(payload);
+}
+
+async function setAccountStatus(status, pushname = null, qrCode = null) {
+    const payload = { id: accountId, platform: 'telegram', status, pushname, qrCode };
+    if (collectorClient) {
+        await collectorClient.accountStatus(payload);
+    } else {
+        updateAccountStatus(payload.id, payload.platform, payload.status, payload.pushname, payload.qrCode);
+    }
+    reportHeartbeat({ status, phase: status, healthStatus: status });
+}
+
+async function persistMessage(payload) {
+    if (collectorClient) {
+        await collectorClient.message(payload);
+    } else {
+        saveMessage(payload);
+    }
+    reportHeartbeat({ lastMessageAt: new Date().toISOString() });
+}
 
 // 优先读取账号专属环境变量 TG_API_ID_{NAME} / TG_API_HASH_{NAME}，其次通用变量
 const apiId = parseInt(
@@ -50,9 +127,18 @@ const apiHash =
 
 if (!apiId || !apiHash) {
     console.warn(`⚠️ [TGUser:${accountName}] TG_API_ID or TG_API_HASH not configured. Worker idle.`);
+    reportHeartbeat({
+        status: 'idle',
+        phase: 'missing_config',
+        healthStatus: 'missing_config',
+        lastError: 'TG_API_ID or TG_API_HASH not configured'
+    });
     setInterval(() => { }, 3600000);
     return;
 }
+reportHeartbeat({ phase: 'booting', status: 'initializing', healthStatus: 'booting' });
+const heartbeatTimer = setInterval(() => reportHeartbeat(), 15000);
+heartbeatTimer.unref();
 
 // 频控参数
 const rateCfg = getRateLimit(accountName);
@@ -92,7 +178,7 @@ async function main() {
     if (!sessionString) {
         console.log(`[TGUser:${accountName}] No session found. Waiting for login via API...`);
         writeStatus({ status: 'idle', account: accountName });
-        updateAccountStatus(`tgu-${accountName}`, 'telegram', 'idle', `TG User (${accountName})`, null);
+        await setAccountStatus('idle', `TG User (${accountName})`, null);
 
         // 将 client 暴露给登录 API（通过全局变量，仅限同进程 reload 场景）
         global[`tgu_client_${accountName}`] = client;
@@ -123,7 +209,7 @@ async function main() {
         if (!newSessionString) {
             console.error(`[TGUser:${accountName}] Login completed but no session found in store!`);
             writeStatus({ status: 'error', error: 'no_session_after_login', account: accountName });
-            updateAccountStatus(`tgu-${accountName}`, 'telegram', 'error', null, null);
+            await setAccountStatus('error', null, null);
             setInterval(() => { }, 3600000);
             return;
         }
@@ -141,11 +227,13 @@ async function main() {
             const me = await client.getMe();
             const displayName = `${me.firstName || ''} ${me.lastName || ''}`.trim() || me.username || accountName;
             console.log(`✅ [TGUser:${accountName}] Post-login connected as: ${displayName}`);
-            updateAccountStatus(`tgu-${accountName}`, 'telegram', 'warmup', displayName, null);
+            await setAccountStatus('warmup', displayName, null);
+            reportHeartbeat({ lastReadyAt: new Date().toISOString() });
+            recordCollectorEvent('connected', `TG user collector connected as ${displayName}`);
             writeStatus({ status: 'warmup', account: accountName, displayName });
         } catch (meErr) {
             console.error(`[TGUser:${accountName}] Post-login getMe failed:`, meErr.message);
-            updateAccountStatus(`tgu-${accountName}`, 'telegram', 'warmup', null, null);
+            await setAccountStatus('warmup', null, null);
         }
         global[`tgu_client_${accountName}`] = client;
     } else {
@@ -159,13 +247,17 @@ async function main() {
             const me = await client.getMe();
             const displayName = `${me.firstName || ''} ${me.lastName || ''}`.trim() || me.username || accountName;
             console.log(`✅ [TGUser:${accountName}] Connected as: ${displayName}`);
-            updateAccountStatus(`tgu-${accountName}`, 'telegram', 'warmup', displayName, null);
+            await setAccountStatus('warmup', displayName, null);
+            reportHeartbeat({ lastReadyAt: new Date().toISOString() });
+            recordCollectorEvent('connected', `TG user collector connected as ${displayName}`);
             writeStatus({ status: 'warmup', account: accountName, displayName });
             global[`tgu_client_${accountName}`] = client;
         } catch (err) {
             console.error(`[TGUser:${accountName}] Session invalid:`, err.message);
             writeStatus({ status: 'session_invalid', account: accountName });
-            updateAccountStatus(`tgu-${accountName}`, 'telegram', 'session_invalid', null, null);
+            await setAccountStatus('session_invalid', null, null);
+            reportHeartbeat({ phase: 'session_invalid', healthStatus: 'session_invalid', lastError: err.message });
+            recordCollectorEvent('session_invalid', err.message, 'error');
             setInterval(() => { }, 3600000);
             return;
         }
@@ -217,7 +309,7 @@ async function main() {
         const globalMessageId = `${groupIdAbs}_${msg.id}`;
 
         try {
-            saveMessage({
+            await persistMessage({
                 platform: 'telegram',
                 receiver_account: `tgu-${accountName}`,
                 message_id: globalMessageId,
@@ -240,13 +332,13 @@ async function main() {
     // ─── 预热静默期 ──────────────────────────────────────────────────────────
     console.log(`[TGUser:${accountName}] Warmup period: ${WARMUP_SECONDS}s (realtime listen only, no history pull)`);
     writeStatus({ status: 'warmup', account: accountName, warmup_ends_at: Date.now() + WARMUP_SECONDS * 1000 });
-    updateAccountStatus(`tgu-${accountName}`, 'telegram', 'warmup', null, null);
+    await setAccountStatus('warmup', null, null);
     await sleep(WARMUP_SECONDS * 1000);
 
     // ─── 预热结束，进入监听+回溯模式 ────────────────────────────────────────
     console.log(`[TGUser:${accountName}] Warmup done. Starting monitoring + backfill.`);
     writeStatus({ status: 'monitoring', account: accountName });
-    updateAccountStatus(`tgu-${accountName}`, 'telegram', 'monitoring', null, null);
+    await setAccountStatus('monitoring', null, null);
 
     // 注册所有已加入群的回溯任务
     if (ENABLE_BACKFILL && BACKFILL_DAYS !== 0) {
@@ -274,6 +366,8 @@ async function main() {
         // 熔断回调
         const onCircuitBreak = async (err) => {
             const errName = err.constructor?.name || 'UnknownError';
+            reportHeartbeat({ phase: 'circuit_break', healthStatus: 'circuit_break', lastError: err.message });
+            recordCollectorEvent('circuit_break', err.message, 'error', { name: errName });
             await sendAlert({
                 title: `[TG用户账号熔断] ${accountName}`,
                 content: [
@@ -288,7 +382,7 @@ async function main() {
         };
 
         // 启动后台回溯队列（不 await，让它在后台持续运行）
-        runBackfillLoop(client, accountName, rateCfg, onCircuitBreak)
+        runBackfillLoop(client, accountName, rateCfg, onCircuitBreak, { saveMessageFn: persistMessage })
             .catch(err => console.error(`[TGUser:${accountName}] Backfill loop crashed:`, err.message));
     }
 
@@ -308,7 +402,9 @@ main().catch(async (err) => {
     const errName = err.constructor?.name || 'Error';
     console.error(`[TGUser:${accountName}] Fatal error:`, err.message);
     writeStatus({ status: 'error', error: err.message });
-    updateAccountStatus(`tgu-${accountName}`, 'telegram', 'error', null, null);
+    await setAccountStatus('error', null, null);
+    reportHeartbeat({ phase: 'error', healthStatus: 'error', lastError: err.message });
+    recordCollectorEvent('fatal_error', err.message, 'error', { name: errName });
 
     // 触发严重断线/崩溃预警到运维専用频道
     try {

@@ -85,7 +85,7 @@ function isTemplateExtracted(sourceMsgId) {
   return !!row;
 }
 
-function saveTemplate(tmpl, groupName, msgIds) {
+function saveTemplate(tmpl, groupName, msgIds, lastSeenAt) {
   if (!ensureTemplateTable()) return null;
   const result = analyticsDb.prepare(`
     INSERT INTO content_template_lib
@@ -95,14 +95,15 @@ function saveTemplate(tmpl, groupName, msgIds) {
   `).run(
     tmpl.customer_name, tmpl.template_content, tmpl.template_type,
     tmpl.target_region, tmpl.target_operator, tmpl.review_result,
-    tmpl.compliance_notes, groupName, JSON.stringify(msgIds), Date.now()
+    tmpl.compliance_notes, groupName, JSON.stringify(msgIds), lastSeenAt
   );
   console.log(`[content-review] 📝 新增模板 #${result.lastInsertRowid}: ${tmpl.customer_name} — ${tmpl.template_type}`);
   return result.lastInsertRowid;
 }
 
 async function extractAndSaveTemplate(groupName, pendingMsg, replyMsg, sectorName, reviewVerdict) {
-  // 从所有板块的审核对话中提取内容模板
+  if (sectorName !== '客服') return;
+  // 只从客服板块的审核对话中提取内容模板
   if (isTemplateExtracted(pendingMsg.id)) return;
 
   const aiClient = require('../lib/ai-client');
@@ -113,7 +114,7 @@ async function extractAndSaveTemplate(groupName, pendingMsg, replyMsg, sectorNam
       console.log(`[content-review] 📝 跳过模板提取（AI未识别出有效模板）`);
       return;
     }
-    saveTemplate(tmpl, groupName, [pendingMsg.id, replyMsg.id]);
+    saveTemplate(tmpl, groupName, [pendingMsg.id, replyMsg.id], replyMsg.timestamp || Date.now());
   } catch (err) {
     console.error(`[content-review] 模板提取失败:`, err.message);
   }
@@ -213,7 +214,7 @@ async function processMessages() {
           const regionCfg = JSON.parse(fs.readFileSync(path.join(ROOT, 'config', 'account-regions.json'), 'utf8'));
           const acctInfo = (regionCfg.accounts || []).find(a => a.account === msg.receiver_account);
           const sector = acctInfo?.business_sector || '';
-          extractAndSaveTemplate(msg.group_name, pending.originalMsg, msg, sector, verdictText);
+          await extractAndSaveTemplate(msg.group_name, pending.originalMsg, msg, sector, verdictText);
         } catch (err) {
           console.error(`[content-review] 模板提取异常: ${msg.group_name}`, err.message);
         }
@@ -238,9 +239,9 @@ async function processMessages() {
 }
 
 // ─── 启动轮询 ────────────────────────────────────────────────────
-function tick() {
+async function tick() {
   try {
-    processMessages();
+    await processMessages();
   } catch (err) {
     console.error('[content-review-extractor] tick 出错:', err.message);
   }

@@ -2,6 +2,7 @@ import axios from 'axios'
 import { useAuthStore } from '@/store/auth'
 import router from '@/router'
 import { ElMessage } from 'element-plus'
+import { isSsoEnabled, redirectToSsoLogin } from '@/utils/runtime-config'
 
 const api = axios.create({
   baseURL: '/',
@@ -31,8 +32,9 @@ api.interceptors.response.use(
     const authStore = useAuthStore()
 
     if (error.response) {
-      // Handle 401/403 globally
-      if (error.response.status === 401 || error.response.status === 403) {
+      if (error.response.status === 401 && isSsoEnabled() && redirectToSsoLogin()) {
+        authStore.logout()
+      } else if (error.response.status === 401 || error.response.status === 403) {
         authStore.logout()
         router.push('/login')
         ElMessage.error(error.response.data?.error || '登录态失效或没有权限,请重新登录')

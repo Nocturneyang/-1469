@@ -347,6 +347,7 @@ async function generateDailyDigest() {
     // 确定该 webhook 覆盖的主要区域和平台（用于标题）
     const platformsInGroup = [...new Set(summaries.map(s => s.platform))];
     const regionsInGroup = [...new Set(summaries.map(s => s.region))];
+    const primaryPlatform = platformsInGroup.length === 1 ? platformsInGroup[0] : 'multi';
     const primaryRegion = regionsInGroup.length === 1 ? regionsInGroup[0] : '';
 
     // 筛选该 webhook 对应的沉默群组和未闭环事项
@@ -360,7 +361,7 @@ async function generateDailyDigest() {
       summaries.some(s => s.groupName === i.group_name)
     );
 
-    const digestText = formatDigest(summaries, gSilent, range, gOpenIssues, trend, primaryRegion);
+    const digestText = formatDigest(summaries, gSilent, range, gOpenIssues, primaryPlatform, trend, primaryRegion);
     if (!digestText) continue;
 
     const title = `📋 供应商群 ${range.dateStr} 日报${primaryRegion ? ` (${primaryRegion}专区)` : ''}`;
@@ -398,7 +399,7 @@ async function generateDailyDigest() {
 }
 
 // ── 格式化（板块优先，平铺群组，区域仅作标签后缀）─────────────
-function formatDigest(summaries, silentGroups, range, allOpenIssues, trend, regionLabel) {
+function formatDigest(summaries, silentGroups, range, allOpenIssues, platform, trend, regionLabel) {
   if (summaries.length === 0 && silentGroups.length === 0) return null;
 
   const lines = [];

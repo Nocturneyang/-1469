@@ -71,11 +71,11 @@
       "account": "wa-wa_oumei2",
       "region": "欧美区",
       "business_sector": "直连供应商",
-      "value_label": "L1",
       "platform": "wa",
       "owner": "",
       "owner_dingtalk_id": "",
-      "description": "欧美区第二个帐户"
+      "description": "欧美区第二个帐户",
+      "value_label": "L1"
     },
     {
       "account": "tgu-mason_text",
@@ -90,11 +90,11 @@
       "account": "wa-wa_shebi",
       "region": "WA设备技术",
       "business_sector": "设备供应商",
-      "value_label": "L1",
       "platform": "wa",
       "owner": "",
       "owner_dingtalk_id": "",
-      "description": "设备技术服务R端"
+      "description": "设备技术服务R端",
+      "value_label": "L1"
     },
     {
       "account": "tgu-tgu_supplier",
@@ -125,16 +125,6 @@
       "owner": "",
       "owner_dingtalk_id": "",
       "description": "卡线和双向的业务"
-    },
-    {
-      "account": "wa-yuyin_wa_02",
-      "region": "语音",
-      "business_sector": "语音直连供应商",
-      "platform": "wa",
-      "owner": "",
-      "owner_dingtalk_id": "",
-      "description": "语音备用帐号",
-      "value_label": "L1"
     }
   ],
   "_add_new_account_example": {

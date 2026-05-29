@@ -1,0 +1,42 @@
+{
+  "_comment": "WhatsApp supervisor 配置。enabled=false 的账号不会被 supervisor 自动重启；priority 数值越高越重要。",
+  "capacity": {
+    "maxOnlineAccounts": 5,
+    "maxStartingAccounts": 1,
+    "maxChromeRssMbPerAccount": 3800,
+    "maxChromeRssMbTotal": 12000,
+    "restartConsecutiveBreaches": 5,
+    "noChromeConsecutiveChecks": 3,
+    "runtimeDownConsecutiveChecks": 2,
+    "pm2DownConsecutiveChecks": 2,
+    "supervisorIntervalMs": 30000,
+    "staleInitLockSeconds": 420,
+    "restartCooldownSeconds": 420
+  },
+  "accounts": [
+    {
+      "id": "nanya_wa",
+      "enabled": true,
+      "priority": 100,
+      "region": "南亚区",
+      "business_sector": "直连供应商"
+    },
+    {
+      "id": "yatai-wa",
+      "enabled": true,
+      "priority": 90,
+      "region": "亚太区",
+      "business_sector": "直连供应商"
+    },
+    {
+      "id": "wa_oumei2",
+      "enabled": true,
+      "priority": 50
+    },
+    {
+      "id": "wa_shebi",
+      "enabled": true,
+      "priority": 50
+    }
+  ]
+}

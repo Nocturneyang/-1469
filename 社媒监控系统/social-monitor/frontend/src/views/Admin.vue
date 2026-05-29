@@ -6,6 +6,38 @@
         <button class="btn-primary" @click="openAddModal">+ 添加帐号</button>
       </div>
 
+      <div v-if="waSupervisor" class="wa-supervisor-strip">
+        <div class="wa-supervisor-head">
+          <div>
+            <div class="wa-supervisor-title">WhatsApp Supervisor</div>
+            <div class="wa-supervisor-sub">长期在线容量 {{ waCapacityText }}</div>
+          </div>
+          <el-button size="small" :icon="RefreshRight" :loading="waSupervisorLoading" circle @click="fetchWaSupervisor" />
+        </div>
+        <div class="wa-supervisor-metrics">
+          <div class="wa-metric">
+            <span>Chrome RSS</span>
+            <strong>{{ waRuntimeSummary.totalRssMb }} MB</strong>
+          </div>
+          <div class="wa-metric">
+            <span>Chrome 进程</span>
+            <strong>{{ waRuntimeSummary.totalProcessCount }}</strong>
+          </div>
+          <div class="wa-metric">
+            <span>在线账号</span>
+            <strong>{{ waRuntimeSummary.accountCount }}</strong>
+          </div>
+          <div class="wa-metric">
+            <span>Chrome 版本</span>
+            <strong>{{ waChromeVersion }}</strong>
+          </div>
+          <div class="wa-metric">
+            <span>WebVersion</span>
+            <strong>{{ waWebVersion }}</strong>
+          </div>
+        </div>
+      </div>
+
       <div v-if="loading" class="loading-state">
         <div style="text-align: center; padding: 40px; color: var(--t3)">加载中...</div>
       </div>
@@ -16,6 +48,7 @@
           :key="acc.id"
           :acc="acc"
           @delete="deleteAccount"
+          @restart="handleRestart"
           @relogin="handleRelogin"
           @teams-backfill="handleTeamsBackfill"
           @teams-relogin="handleTeamsRelogin"
@@ -251,7 +284,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted, reactive } from 'vue'
+import { ref, onMounted, onUnmounted, reactive, computed } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Delete, RefreshRight } from '@element-plus/icons-vue'
 import api from '@/utils/request'
@@ -259,6 +292,8 @@ import AccountCard from '@/components/admin/AccountCard.vue'
 
 const accounts = ref([])
 const loading = ref(true)
+const waSupervisor = ref(null)
+const waSupervisorLoading = ref(false)
 const addModalVisible = ref(false)
 const activeTab = ref('wa')
 
@@ -317,6 +352,28 @@ const bfTasks = ref([])
 
 let pollTimer = null
 
+const waRuntimeSummary = computed(() => {
+  const runtime = waSupervisor.value?.runtime || {}
+  const summary = runtime.summary || runtime
+  return {
+    totalRssMb: summary.totalRssMb || 0,
+    totalProcessCount: summary.totalProcessCount || 0,
+    accountCount: summary.accountCount || runtime.accounts?.length || 0
+  }
+})
+
+const waChromeVersion = computed(() => waSupervisor.value?.chrome?.chromeVersion || '未知')
+const waWebVersion = computed(() => waSupervisor.value?.webVersionCache?.latest?.version || '未缓存')
+
+const waCapacityText = computed(() => {
+  const root = waSupervisor.value?.config || {}
+  const cfg = root.capacity || root
+  const maxOnline = cfg.maxOnlineAccounts || '-'
+  const maxStarting = cfg.maxStartingAccounts || '-'
+  const maxRss = cfg.maxChromeRssMbTotal || '-'
+  return `${maxOnline} 个在线 / ${maxStarting} 个启动中 / ${maxRss} MB 总预算`
+})
+
 const fetchAccounts = async () => {
   try {
     const res = await api.get('/api/accounts')
@@ -326,6 +383,23 @@ const fetchAccounts = async () => {
   } finally {
     loading.value = false
   }
+}
+
+const fetchWaSupervisor = async () => {
+  waSupervisorLoading.value = true
+  try {
+    const res = await api.get('/api/accounts/wa-supervisor')
+    if (res.success) waSupervisor.value = res.data
+  } catch (e) {
+    console.error(e)
+  } finally {
+    waSupervisorLoading.value = false
+  }
+}
+
+const refreshAdminData = () => {
+  fetchAccounts()
+  fetchWaSupervisor()
 }
 
 const openAddModal = () => {
@@ -385,6 +459,19 @@ const deleteAccount = async (id) => {
       fetchAccounts()
     } else {
        ElMessage.error(res.error)
+    }
+  } catch (e) {}
+}
+
+const handleRestart = async (acc) => {
+  try {
+    await ElMessageBox.confirm('确定要重启该账号进程吗？这会保留登录态，不会清除 Session。', '提示', { type: 'warning' })
+    const res = await api.post('/api/accounts/restart', { id: acc.id })
+    if (res.success) {
+      ElMessage.success('重启指令已发送，登录态已保留')
+      fetchAccounts()
+    } else {
+      ElMessage.error(res.error)
     }
   } catch (e) {}
 }
@@ -748,8 +835,8 @@ const getBfStatusText = (status) => {
 
 
 onMounted(() => {
-  fetchAccounts()
-  pollTimer = setInterval(fetchAccounts, 5000)
+  refreshAdminData()
+  pollTimer = setInterval(refreshAdminData, 5000)
 })
 onUnmounted(() => {
   if (pollTimer) clearInterval(pollTimer)
@@ -766,6 +853,57 @@ onUnmounted(() => {
 .text-center { text-align: center; }
 .flex-between { display: flex; justify-content: space-between; align-items: center; }
 .rate-presets { display: flex; gap: 10px; justify-content: center; margin-top: 10px; }
+.wa-supervisor-strip {
+  margin: 0 0 18px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: var(--out-shadow);
+}
+.wa-supervisor-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 14px;
+}
+.wa-supervisor-title {
+  font-weight: 800;
+  color: var(--t);
+  font-size: 15px;
+}
+.wa-supervisor-sub {
+  margin-top: 4px;
+  color: var(--t3);
+  font-size: 12px;
+}
+.wa-supervisor-metrics {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(120px, 1fr));
+  gap: 10px;
+}
+.wa-metric {
+  min-height: 62px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-tint, #fcfcfc);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 6px;
+}
+.wa-metric span {
+  color: var(--t3);
+  font-size: 12px;
+}
+.wa-metric strong {
+  color: var(--t);
+  font-size: 14px;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
 .dialog-list-container {
   max-height: 250px;
   overflow-y: auto;
@@ -788,5 +926,18 @@ onUnmounted(() => {
   color: var(--t3);
   font-size: 12px;
   padding: 10px 0;
+}
+@media (max-width: 980px) {
+  .wa-supervisor-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (max-width: 560px) {
+  .wa-supervisor-head {
+    align-items: flex-start;
+  }
+  .wa-supervisor-metrics {
+    grid-template-columns: 1fr;
+  }
 }
 </style>

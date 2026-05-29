@@ -214,7 +214,7 @@ function isDeviceMsgSetExtracted(msgIds) {
   return !!row;
 }
 
-function findSimilarDeviceKnowledge(deviceModel, faultSymptom, groupName) {
+function findSimilarDeviceKnowledge(deviceModel, faultSymptom, faultCategory, groupName) {
   if (!ensureDeviceTable()) return null;
   // 同群 + 同型号首先匹配
   if (groupName) {
@@ -223,7 +223,7 @@ function findSimilarDeviceKnowledge(deviceModel, faultSymptom, groupName) {
       FROM device_knowledge_graph
       WHERE device_model = ? AND source_group_name = ? AND fault_category = ?
       ORDER BY frequency DESC LIMIT 1
-    `).get(deviceModel, groupName, faultSymptom);
+    `).get(deviceModel, groupName, faultCategory);
     if (sameGroup) return sameGroup;
   }
   // 全局型号+分类匹配（低阈值）
@@ -232,7 +232,7 @@ function findSimilarDeviceKnowledge(deviceModel, faultSymptom, groupName) {
     FROM device_knowledge_graph
     WHERE device_model = ? AND fault_category = ?
     ORDER BY frequency DESC
-  `).all(deviceModel, faultSymptom);
+  `).all(deviceModel, faultCategory);
 
   if (candidates.length === 0) return null;
 
@@ -255,7 +255,7 @@ function saveDeviceKnowledge(dk, sector, groupName, issueId, msgIds, closeTs) {
     ? dk.solution_steps.map((s, i) => `${i + 1}. ${s}`).join('\n')
     : String(dk.solution_steps || '');
 
-  const similar = findSimilarDeviceKnowledge(dk.device_model, dk.fault_symptom, groupName);
+  const similar = findSimilarDeviceKnowledge(dk.device_model, dk.fault_symptom, dk.fault_category, groupName);
 
   if (similar) {
     const newFreq = similar.frequency + 1;
@@ -314,20 +314,24 @@ async function processNewlyClosedIssues() {
     FROM issue_records ir
     LEFT JOIN alert_records ar ON ir.alert_id = ar.id
     WHERE ir.status = 'closed'
-      AND ir.id > ?
+      AND (
+        ir.closed_at > ?
+        OR (ir.closed_at = ? AND ir.id > ?)
+      )
       AND ir.closed_at IS NOT NULL
-    ORDER BY ir.id ASC
+    ORDER BY ir.closed_at ASC, ir.id ASC
     LIMIT 20
-  `).all(cursor.last_msg_id);
+  `).all(cursor.last_ts, cursor.last_ts, cursor.last_msg_id);
 
   if (newlyClosed.length === 0) return;
 
   for (const issue of newlyClosed) {
     if (isAlreadyExtracted(issue.id)) {
       // 更新游标跳过已处理的
-      if (issue.id > cursor.last_msg_id) {
+      if (issue.closed_at > cursor.last_ts || (issue.closed_at === cursor.last_ts && issue.id > cursor.last_msg_id)) {
         cursor.last_msg_id = issue.id;
         cursor.last_ts = issue.closed_at;
+        updateCursor(cursor.last_msg_id, cursor.last_ts);
       }
       continue;
     }
@@ -343,9 +347,10 @@ async function processNewlyClosedIssues() {
     if (conversationMsgs.length < 2) {
       // 对话太少，不适合提取QA
       console.log(`[knowledge] ⏭️ 跳过 #${issue.id}（对话不足2条）`);
-      if (issue.id > cursor.last_msg_id) {
+      if (issue.closed_at > cursor.last_ts || (issue.closed_at === cursor.last_ts && issue.id > cursor.last_msg_id)) {
         cursor.last_msg_id = issue.id;
         cursor.last_ts = issue.closed_at;
+        updateCursor(cursor.last_msg_id, cursor.last_ts);
       }
       continue;
     }
@@ -366,19 +371,18 @@ async function processNewlyClosedIssues() {
 
       // 设备供应商板块额外提取设备知识图谱（issue级别 + 消息集级别双重去重）
       if (sector === '设备供应商' && !isDeviceAlreadyExtracted(issue.id) && !isDeviceMsgSetExtracted(msgIds)) {
-        extractAndSaveDeviceKnowledge(issue, conversationMsgs);
+        await extractAndSaveDeviceKnowledge(issue, conversationMsgs);
       }
     } catch (err) {
       console.error(`[knowledge] 处理 #${issue.id} 失败:`, err.message);
     }
 
-    if (issue.id > cursor.last_msg_id) {
+    if (issue.closed_at > cursor.last_ts || (issue.closed_at === cursor.last_ts && issue.id > cursor.last_msg_id)) {
       cursor.last_msg_id = issue.id;
       cursor.last_ts = issue.closed_at;
+      updateCursor(cursor.last_msg_id, cursor.last_ts);
     }
   }
-
-  updateCursor(cursor.last_msg_id, cursor.last_ts);
 }
 
 // ─── 启动轮询 ────────────────────────────────────────────────────

@@ -1,0 +1,17 @@
+FROM node:18
+
+WORKDIR /app
+
+ENV SKIP_CHROME_INSTALL=true
+ENV PUPPETEER_SKIP_DOWNLOAD=true
+
+COPY package*.json ./
+RUN npm ci --omit=dev --registry=https://registry.npmmirror.com
+
+COPY . .
+
+ENV NODE_ENV=production
+ENV DATA_DIR=/data
+ENV TG_COLLECTOR_TYPE=user
+
+CMD ["node", "scripts/start-tg-collector.js"]

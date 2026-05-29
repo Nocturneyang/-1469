@@ -137,8 +137,10 @@ const displayedPages = computed(() => {
   return pages
 })
 
-const fetchMessages = async () => {
-  loading.value = true
+const initialLoad = ref(true)
+
+const fetchMessages = async (silent = false) => {
+  if (!silent) loading.value = true
   try {
     const res = await api.get('/api/messages', {
       params: {
@@ -147,12 +149,23 @@ const fetchMessages = async () => {
       }
     })
     if (res.success) {
-      messages.value = res.data || []
+      const incoming = res.data || []
+      if (silent && messages.value.length > 0) {
+        // 静默刷新：只把真正新的消息追加到头部，不替换整个列表
+        const existingIds = new Set(messages.value.map(m => m.id))
+        const newMsgs = incoming.filter(m => !existingIds.has(m.id))
+        if (newMsgs.length > 0) {
+          messages.value = [...newMsgs, ...messages.value]
+        }
+      } else {
+        messages.value = incoming
+      }
     }
   } catch (err) {
     console.error('获取消息失败:', err)
   } finally {
     loading.value = false
+    initialLoad.value = false
   }
 }
 
@@ -182,12 +195,13 @@ const formatTime = (timestamp) => {
 
 watch(selectedPlatform, () => {
   currentPage.value = 1
-  fetchMessages()
+  messages.value = []
+  fetchMessages(false)
 })
 
 onMounted(() => {
-  fetchMessages()
-  refreshTimer = setInterval(fetchMessages, 5000)
+  fetchMessages(false)
+  refreshTimer = setInterval(() => fetchMessages(true), 5000)
 })
 
 onUnmounted(() => {

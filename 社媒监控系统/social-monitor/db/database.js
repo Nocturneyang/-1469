@@ -71,8 +71,61 @@ function initSchema() {
             display_name TEXT,
             avatar_url TEXT,
             tenant_id TEXT,
+            health_status TEXT,
+            chrome_rss_mb INTEGER DEFAULT 0,
+            chrome_process_count INTEGER DEFAULT 0,
+            chrome_version TEXT,
+            runtime_provider TEXT DEFAULT 'pm2',
+            pm2_status TEXT,
+            pm2_mode TEXT,
+            pm2_pid INTEGER,
+            pm2_restart_count INTEGER DEFAULT 0,
+            pm2_uptime_seconds INTEGER DEFAULT 0,
+            orchestrator_state TEXT,
+            collector_phase TEXT,
+            collector_run_id TEXT,
+            collector_heartbeat_age_seconds INTEGER,
+            last_runtime_event_at DATETIME,
+            last_restart_reason TEXT,
+            last_supervisor_check_at DATETIME,
             updated_at DATETIME DEFAULT (datetime('now'))
         );
+
+        CREATE TABLE IF NOT EXISTS collector_heartbeats (
+            account_id TEXT NOT NULL,
+            platform TEXT NOT NULL,
+            collector_id TEXT NOT NULL,
+            run_id TEXT,
+            process_pid INTEGER,
+            status TEXT,
+            phase TEXT,
+            health_status TEXT,
+            chrome_rss_mb INTEGER DEFAULT 0,
+            chrome_process_count INTEGER DEFAULT 0,
+            chrome_version TEXT,
+            last_error TEXT,
+            last_ready_at DATETIME,
+            last_message_at DATETIME,
+            started_at DATETIME,
+            updated_at DATETIME DEFAULT (datetime('now')),
+            PRIMARY KEY (account_id, collector_id)
+        );
+
+        CREATE TABLE IF NOT EXISTS wa_runtime_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            account_id TEXT NOT NULL,
+            platform TEXT NOT NULL DEFAULT 'whatsapp',
+            source TEXT NOT NULL DEFAULT 'worker',
+            event_type TEXT NOT NULL,
+            severity TEXT NOT NULL DEFAULT 'info',
+            run_id TEXT,
+            message TEXT,
+            data_json TEXT,
+            created_at DATETIME DEFAULT (datetime('now'))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_collector_heartbeats_platform ON collector_heartbeats(platform, updated_at);
+        CREATE INDEX IF NOT EXISTS idx_wa_runtime_events_account_time ON wa_runtime_events(account_id, created_at);
 
         CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -150,16 +203,81 @@ function initSchema() {
     try {
         const accountsTableInfo = db.prepare("PRAGMA table_info(accounts)").all();
         
-        const columnsToAdd = ['user_id', 'email', 'display_name', 'avatar_url', 'tenant_id'];
-        columnsToAdd.forEach(col => {
+        const columnsToAdd = {
+            user_id: 'TEXT',
+            email: 'TEXT',
+            display_name: 'TEXT',
+            avatar_url: 'TEXT',
+            tenant_id: 'TEXT',
+            health_status: 'TEXT',
+            chrome_rss_mb: 'INTEGER DEFAULT 0',
+            chrome_process_count: 'INTEGER DEFAULT 0',
+            chrome_version: 'TEXT',
+            runtime_provider: "TEXT DEFAULT 'pm2'",
+            pm2_status: 'TEXT',
+            pm2_mode: 'TEXT',
+            pm2_pid: 'INTEGER',
+            pm2_restart_count: 'INTEGER DEFAULT 0',
+            pm2_uptime_seconds: 'INTEGER DEFAULT 0',
+            orchestrator_state: 'TEXT',
+            collector_phase: 'TEXT',
+            collector_run_id: 'TEXT',
+            collector_heartbeat_age_seconds: 'INTEGER',
+            last_runtime_event_at: 'DATETIME',
+            last_restart_reason: 'TEXT',
+            last_supervisor_check_at: 'DATETIME'
+        };
+        Object.entries(columnsToAdd).forEach(([col, type]) => {
             const exists = accountsTableInfo.some(c => c.name === col);
             if (!exists) {
-                db.exec(`ALTER TABLE accounts ADD COLUMN ${col} TEXT`);
+                db.exec(`ALTER TABLE accounts ADD COLUMN ${col} ${type}`);
                 console.log(`Migrated database: added ${col} column to accounts table`);
             }
         });
     } catch (err) {
         console.error('Migration error for accounts table:', err.message);
+    }
+
+    try {
+        db.exec(`
+            CREATE TABLE IF NOT EXISTS collector_heartbeats (
+                account_id TEXT NOT NULL,
+                platform TEXT NOT NULL,
+                collector_id TEXT NOT NULL,
+                run_id TEXT,
+                process_pid INTEGER,
+                status TEXT,
+                phase TEXT,
+                health_status TEXT,
+                chrome_rss_mb INTEGER DEFAULT 0,
+                chrome_process_count INTEGER DEFAULT 0,
+                chrome_version TEXT,
+                last_error TEXT,
+                last_ready_at DATETIME,
+                last_message_at DATETIME,
+                started_at DATETIME,
+                updated_at DATETIME DEFAULT (datetime('now')),
+                PRIMARY KEY (account_id, collector_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS wa_runtime_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                account_id TEXT NOT NULL,
+                platform TEXT NOT NULL DEFAULT 'whatsapp',
+                source TEXT NOT NULL DEFAULT 'worker',
+                event_type TEXT NOT NULL,
+                severity TEXT NOT NULL DEFAULT 'info',
+                run_id TEXT,
+                message TEXT,
+                data_json TEXT,
+                created_at DATETIME DEFAULT (datetime('now'))
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_collector_heartbeats_platform ON collector_heartbeats(platform, updated_at);
+            CREATE INDEX IF NOT EXISTS idx_wa_runtime_events_account_time ON wa_runtime_events(account_id, created_at);
+        `);
+    } catch (err) {
+        console.error('Migration error for collector runtime tables:', err.message);
     }
 }
 
@@ -206,8 +324,90 @@ function updateAccountStatus(id, platform, status, pushname = null, qrCode = nul
     }
 }
 
+function toDateTime(value) {
+    if (!value) return null;
+    if (value instanceof Date) return value.toISOString();
+    if (typeof value === 'number') return new Date(value).toISOString();
+    return value;
+}
+
+function upsertCollectorHeartbeat(data) {
+    try {
+        const stmt = db.prepare(`
+            INSERT INTO collector_heartbeats (
+                account_id, platform, collector_id, run_id, process_pid, status, phase, health_status,
+                chrome_rss_mb, chrome_process_count, chrome_version, last_error,
+                last_ready_at, last_message_at, started_at, updated_at
+            ) VALUES (
+                @account_id, @platform, @collector_id, @run_id, @process_pid, @status, @phase, @health_status,
+                @chrome_rss_mb, @chrome_process_count, @chrome_version, @last_error,
+                @last_ready_at, @last_message_at, @started_at, datetime('now')
+            )
+            ON CONFLICT(account_id, collector_id) DO UPDATE SET
+                run_id = excluded.run_id,
+                process_pid = excluded.process_pid,
+                status = excluded.status,
+                phase = excluded.phase,
+                health_status = excluded.health_status,
+                chrome_rss_mb = COALESCE(excluded.chrome_rss_mb, chrome_rss_mb),
+                chrome_process_count = COALESCE(excluded.chrome_process_count, chrome_process_count),
+                chrome_version = COALESCE(excluded.chrome_version, chrome_version),
+                last_error = excluded.last_error,
+                last_ready_at = COALESCE(excluded.last_ready_at, last_ready_at),
+                last_message_at = COALESCE(excluded.last_message_at, last_message_at),
+                started_at = COALESCE(excluded.started_at, started_at),
+                updated_at = datetime('now')
+        `);
+
+        stmt.run({
+            account_id: data.accountId,
+            platform: data.platform || 'whatsapp',
+            collector_id: data.collectorId || data.accountId,
+            run_id: data.runId || null,
+            process_pid: data.pid || null,
+            status: data.status || null,
+            phase: data.phase || null,
+            health_status: data.healthStatus || data.phase || null,
+            chrome_rss_mb: data.chromeRssMb ?? null,
+            chrome_process_count: data.chromeProcessCount ?? null,
+            chrome_version: data.chromeVersion || null,
+            last_error: data.lastError || null,
+            last_ready_at: toDateTime(data.lastReadyAt),
+            last_message_at: toDateTime(data.lastMessageAt),
+            started_at: toDateTime(data.startedAt)
+        });
+    } catch (err) {
+        console.error('Error saving collector heartbeat:', err.message);
+    }
+}
+
+function recordRuntimeEvent(data) {
+    try {
+        db.prepare(`
+            INSERT INTO wa_runtime_events (
+                account_id, platform, source, event_type, severity, run_id, message, data_json
+            ) VALUES (
+                @account_id, @platform, @source, @event_type, @severity, @run_id, @message, @data_json
+            )
+        `).run({
+            account_id: data.accountId,
+            platform: data.platform || 'whatsapp',
+            source: data.source || 'worker',
+            event_type: data.eventType,
+            severity: data.severity || 'info',
+            run_id: data.runId || null,
+            message: data.message || null,
+            data_json: data.data ? JSON.stringify(data.data) : null
+        });
+    } catch (err) {
+        console.error('Error saving runtime event:', err.message);
+    }
+}
+
 module.exports = {
     db,
     saveMessage,
-    updateAccountStatus
+    updateAccountStatus,
+    upsertCollectorHeartbeat,
+    recordRuntimeEvent
 };

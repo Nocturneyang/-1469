@@ -6,7 +6,7 @@ module.exports = {
     {
       name: "worker-wa-2", // 账号2
       script: "./workers/worker-wa.js",
-      max_memory_restart: '1G',
+      max_memory_restart: '2G',
       instances: 1,
       exec_mode: "fork",
       autorestart: true,
@@ -34,7 +34,7 @@ module.exports = {
       }
     },
     */
-        {
+    {
       name: "worker-wa-nanya_wa",
       script: "./workers/worker-wa.js",
       max_memory_restart: '1G',
@@ -43,6 +43,10 @@ module.exports = {
       exec_mode: "fork",
       autorestart: true,
       watch: false,
+      kill_timeout: 12000,    // 给 SIGTERM handler 足够时间杀掉 Chrome
+      restart_delay: 30000,   // 初始化失败时延迟重启，防止重启风暴
+      max_restarts: 5,
+      min_uptime: "2m",
       env: { NODE_ENV: "production", ACCOUNT_NAME: "nanya_wa" }
     },
         {
@@ -51,8 +55,13 @@ module.exports = {
       max_memory_restart: '1G',
       cron_restart: '0 4 * * *',
       instances: 1,
+      exec_mode: "fork",
       autorestart: true,
       watch: false,
+      kill_timeout: 12000,
+      restart_delay: 30000,
+      max_restarts: 5,
+      min_uptime: "2m",
       env: { NODE_ENV: "production", ACCOUNT_NAME: "yatai-wa" }
     },
         {
@@ -61,8 +70,13 @@ module.exports = {
       max_memory_restart: '1G',
       cron_restart: '0 4 * * *',
       instances: 1,
+      exec_mode: "fork",
       autorestart: true,
       watch: false,
+      kill_timeout: 12000,
+      restart_delay: 30000,
+      max_restarts: 5,
+      min_uptime: "2m",
       env: { NODE_ENV: "production", ACCOUNT_NAME: "wa_oumei2" }
     },
         {
@@ -91,8 +105,13 @@ module.exports = {
       max_memory_restart: '1G',
       cron_restart: '0 4 * * *',
       instances: 1,
+      exec_mode: "fork",
       autorestart: true,
       watch: false,
+      kill_timeout: 12000,
+      restart_delay: 30000,
+      max_restarts: 5,
+      min_uptime: "2m",
       env: { NODE_ENV: "production", ACCOUNT_NAME: "wa_shebi" }
     },
         {
@@ -155,16 +174,6 @@ module.exports = {
         TG_ENABLE_BACKFILL: "true"
       }
     },
-        {
-      name: "worker-wa-yuyin_wa_02",
-      script: "./workers/worker-wa.js",
-      max_memory_restart: '1G',
-      cron_restart: '0 4 * * *',
-      instances: 1,
-      autorestart: true,
-      watch: false,
-      env: { NODE_ENV: "production", ACCOUNT_NAME: "yuyin_wa_02" }
-    },
     // --- Web UI Server ---
     {
       name: "ui-server",
@@ -187,6 +196,22 @@ module.exports = {
       autorestart: true,
       watch: false,
       max_memory_restart: "256M",
+      env: {
+        NODE_ENV: "production",
+      }
+    },
+    // --- WhatsApp Supervisor ---
+    {
+      name: "wa-supervisor",
+      script: "./workers/wa-supervisor.js",
+      instances: 1,
+      exec_mode: "fork",
+      autorestart: true,
+      watch: false,
+      max_memory_restart: "256M",
+      restart_delay: 30000,
+      max_restarts: 5,
+      min_uptime: "2m",
       env: {
         NODE_ENV: "production",
       }
