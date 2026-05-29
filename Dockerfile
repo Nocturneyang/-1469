@@ -21,21 +21,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 COPY 社媒监控系统/social-monitor/package*.json ./
-COPY 社媒监控系统/social-monitor/frontend/package*.json ./frontend/
 COPY 社媒监控系统/social-monitor/scripts/install-chrome.js ./scripts/install-chrome.js
 
 RUN npm ci --omit=dev --registry=https://registry.npmmirror.com
-
-WORKDIR /app/social-monitor/frontend
-RUN npm ci --registry=https://registry.npmmirror.com
 
 WORKDIR /app
 COPY 社媒监控系统/social-monitor ./social-monitor
 COPY docker-entrypoint.sh /docker-entrypoint.sh
 RUN chmod +x /docker-entrypoint.sh
-
-WORKDIR /app/social-monitor/frontend
-RUN npm run build
 
 WORKDIR /app/social-monitor
 RUN npm install -g pm2 --registry=https://registry.npmmirror.com

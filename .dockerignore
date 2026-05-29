@@ -6,7 +6,6 @@
 **/*.sqlite
 **/*.sqlite-*
 **/.wwebjs_cache
-**/frontend/dist
 **/backups
 **/whatsapp-session*
 **/teams-profile-*
