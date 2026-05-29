@@ -20,8 +20,8 @@ module.exports = {
         WA_INIT_COOLDOWN_MS: "30000",
         WA_INIT_QUARANTINE_AFTER: "10",
         WA_INIT_QUARANTINE_MS: "60000",
-        WA_INIT_HARD_TIMEOUT_MS: "180000",
-        WA_AUTH_TIMEOUT_MS: "180000",
+        WA_INIT_HARD_TIMEOUT_MS: "360000",
+        WA_AUTH_TIMEOUT_MS: "300000",
         PUPPETEER_EXECUTABLE_PATH: "/usr/bin/chromium",
         PUPPETEER_SKIP_DOWNLOAD: "true"
       }
