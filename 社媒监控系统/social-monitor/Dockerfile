@@ -29,7 +29,7 @@ COPY . .
 
 # Build frontend after source files are copied
 WORKDIR /app/frontend
-RUN rm -rf dist && npm run build
+RUN rm -rf dist && npm run build && grep -R "DIGEST_LINK_ONLY_ACCOUNTS" dist/assets
 
 WORKDIR /app
 
