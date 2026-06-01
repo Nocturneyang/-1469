@@ -107,6 +107,11 @@ spec:
               value: "redirect"
             - name: SSO_USERINFO_URL
               value: "https://skyline-ark-sso.tyhark.com/token/userinfo"
+            - name: COLLECTOR_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: social-monitor-secrets
+                  key: COLLECTOR_TOKEN
             - name: STORAGE_MIN_FREE_MB
               value: "512"
             - name: STORAGE_MIN_FREE_PERCENT
