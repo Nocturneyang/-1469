@@ -29,7 +29,7 @@ COPY . .
 
 # Build frontend after source files are copied
 WORKDIR /app/frontend
-RUN npm run build
+RUN rm -rf dist && npm run build
 
 WORKDIR /app
 
