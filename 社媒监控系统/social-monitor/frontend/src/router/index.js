@@ -1,13 +1,19 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { useAuthStore } from '@/store/auth'
 import Login from '@/views/Login.vue'
-import { isSsoEnabled, redirectToSsoLogin } from '@/utils/runtime-config'
+import { isSsoEnabled } from '@/utils/runtime-config'
 
 const routes = [
   {
     path: '/login',
     name: 'Login',
     component: Login,
+    meta: { public: true }
+  },
+  {
+    path: '/sso-pending',
+    name: 'SsoPending',
+    component: () => import('@/views/SsoPending.vue'),
     meta: { public: true }
   },
   {
@@ -93,22 +99,21 @@ router.beforeEach(async (to, from, next) => {
 
   if (isSsoEnabled()) {
     if (to.name === 'Login') {
-      redirectToSsoLogin()
-      next(false)
+      next({ name: 'SsoPending' })
+    } else if (to.name === 'SsoPending') {
+      next()
     } else {
       try {
         const user = await authStore.hydrateSsoUser()
         if (!user) {
-          redirectToSsoLogin()
-          next(false)
+          next({ name: 'SsoPending', query: { from: to.fullPath } })
         } else if (to.meta.requiresAdmin && authStore.user?.role !== 'admin') {
           next({ name: 'Home' })
         } else {
           next()
         }
       } catch (_) {
-        redirectToSsoLogin()
-        next(false)
+        next({ name: 'SsoPending', query: { from: to.fullPath } })
       }
     }
   } else if (!to.meta.public && !authStore.isAuthenticated) {
