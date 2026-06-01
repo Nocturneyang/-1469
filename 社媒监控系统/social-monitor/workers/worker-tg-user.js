@@ -78,8 +78,8 @@ function reportHeartbeat(patch = {}) {
         lastMessageAt: runtimeState.lastMessageAt,
         startedAt: runStartedAt
     };
+    upsertCollectorHeartbeat(payload);
     if (collectorClient) collectorClient.heartbeat(payload);
-    else upsertCollectorHeartbeat(payload);
 }
 
 function recordCollectorEvent(eventType, message, severity = 'info', data = null) {
@@ -93,27 +93,22 @@ function recordCollectorEvent(eventType, message, severity = 'info', data = null
         message,
         data
     };
+    recordRuntimeEvent(payload);
     if (collectorClient) collectorClient.event(payload);
-    else recordRuntimeEvent(payload);
 }
 
 async function setAccountStatus(status, pushname = null, qrCode = null) {
     const payload = { id: accountId, platform: 'telegram', status, pushname, qrCode };
-    if (collectorClient) {
-        await collectorClient.accountStatus(payload);
-    } else {
-        updateAccountStatus(payload.id, payload.platform, payload.status, payload.pushname, payload.qrCode);
-    }
+    updateAccountStatus(payload.id, payload.platform, payload.status, payload.pushname, payload.qrCode);
+    if (collectorClient) await collectorClient.accountStatus(payload);
     reportHeartbeat({ status, phase: status, healthStatus: status });
 }
 
 async function persistMessage(payload) {
-    if (collectorClient) {
-        await collectorClient.message(payload);
-    } else {
-        saveMessage(payload);
-    }
+    const localResult = saveMessage(payload);
+    if (collectorClient) await collectorClient.message(payload);
     reportHeartbeat({ lastMessageAt: new Date().toISOString() });
+    return localResult;
 }
 
 // 优先读取账号专属环境变量 TG_API_ID_{NAME} / TG_API_HASH_{NAME}，其次通用变量
