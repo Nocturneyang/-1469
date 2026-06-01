@@ -23,21 +23,31 @@ const Database = require('better-sqlite3');
 const cron = require('node-cron');
 const dingtalk = require('../lib/dingtalk');
 const aiClient = require('../lib/ai-client');
+const { readEnvFile } = require('../lib/env-config');
 
 const ROOT = process.env.DATA_DIR || path.resolve(__dirname, '..');
 const DEFAULT_LINK_ONLY_ACCOUNTS = 'wa-wa_shebi,tgu-tgu_supplier';
-const LINK_ONLY_DIGEST_ACCOUNTS = new Set(
-  (process.env.DIGEST_LINK_ONLY_ACCOUNTS || DEFAULT_LINK_ONLY_ACCOUNTS)
+function getRuntimeEnvValue(key) {
+  return readEnvFile()[key] || process.env[key] || '';
+}
+
+function getLinkOnlyDigestAccounts() {
+  return new Set(
+    (getRuntimeEnvValue('DIGEST_LINK_ONLY_ACCOUNTS') || DEFAULT_LINK_ONLY_ACCOUNTS)
     .split(',')
     .map((item) => item.trim())
     .filter(Boolean)
-);
-const REPORT_PUBLIC_BASE_URL = (
-  process.env.REPORT_PUBLIC_BASE_URL ||
-  process.env.PUBLIC_BASE_URL ||
-  process.env.APP_BASE_URL ||
-  'https://social-monitor.tyhark.com'
-).replace(/\/+$/, '');
+  );
+}
+
+function getReportPublicBaseUrl() {
+  return (
+    getRuntimeEnvValue('REPORT_PUBLIC_BASE_URL') ||
+    getRuntimeEnvValue('PUBLIC_BASE_URL') ||
+    getRuntimeEnvValue('APP_BASE_URL') ||
+    'https://social-monitor.tyhark.com'
+  ).replace(/\/+$/, '');
+}
 
 // ─── 数据库连接 ──────────────────────────────────────────────────
 const sourceDb = new Database(path.join(ROOT, 'db', 'database.sqlite'), { readonly: true });
@@ -145,11 +155,11 @@ function getSilenceThresholdHours(sector) {
 }
 
 function shouldSendDigestAsLink(receiverAccount) {
-  return LINK_ONLY_DIGEST_ACCOUNTS.has(receiverAccount);
+  return getLinkOnlyDigestAccounts().has(receiverAccount);
 }
 
 function buildDailyReportUrl(dateStr, receiverAccount) {
-  const url = new URL('/reports/daily', REPORT_PUBLIC_BASE_URL);
+  const url = new URL('/reports/daily', getReportPublicBaseUrl());
   url.searchParams.set('date', dateStr);
   url.searchParams.set('account', receiverAccount);
   return url.toString();

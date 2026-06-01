@@ -64,6 +64,29 @@
               <button class="el-btn danger" @click="$emit('clear-env', 'DINGTALK_DIGEST')">清空</button>
             </div>
           </div>
+          <div class="digest-mode-card">
+            <div class="digest-mode-head">
+              <div>
+                <div class="cli-label">日报推送形式</div>
+                <div class="cli-hint">选择哪些账号在钉钉中只推送站内日报链接；未选账号继续推送长文日报。</div>
+              </div>
+              <button class="el-btn" :disabled="readonly" @click="saveDigestModes">保存形式</button>
+            </div>
+            <div v-if="digestAccounts.length === 0" class="cli-hint">暂无区域映射账号，请先在下方「区域账号映射」中添加账号。</div>
+            <div v-else class="digest-mode-list">
+              <div v-for="item in digestAccounts" :key="item.account" class="digest-mode-row">
+                <div class="digest-account">
+                  <code>{{ item.account }}</code>
+                  <span>{{ item.platform?.toUpperCase() || '-' }}</span>
+                  <span>{{ item.region || '未知区' }}</span>
+                </div>
+                <select class="field-input digest-select" :disabled="readonly" v-model="digestModeByAccount[item.account]">
+                  <option value="body">长文日报</option>
+                  <option value="link">链接日报</option>
+                </select>
+              </div>
+            </div>
+          </div>
           <!-- 按平台分组的区域配置 -->
           <template v-for="(regions, platform) in getGroupedRegions('DIGEST')" :key="platform">
             <div class="platform-header">
@@ -218,7 +241,7 @@
 </template>
 
 <script setup>
-import { reactive, ref } from 'vue'
+import { computed, reactive, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import api from '@/utils/request'
 
@@ -226,10 +249,11 @@ const props = defineProps({
   envConfig: { type: Object, required: true },
   regionWebhooks: { type: Object, default: () => ({}) },
   loading: { type: Boolean, default: false },
-  availableRegions: { type: Array, default: () => [] }
+  availableRegions: { type: Array, default: () => [] },
+  readonly: { type: Boolean, default: false }
 })
 
-const emit = defineEmits(['save-env', 'clear-env', 'delete-region-wh', 'add-region-wh', 'test-webhook', 'save-region-wh'])
+const emit = defineEmits(['save-env', 'clear-env', 'delete-region-wh', 'add-region-wh', 'test-webhook', 'save-region-wh', 'save-digest-mode'])
 
 const open = reactive({ ALERT: false, DIGEST: false, WEEKLY: false, OPS: false })
 
@@ -240,6 +264,8 @@ const editUrl = ref('')
 const editSecret = ref('')
 const viewVisible = ref(false)
 const viewData = ref({})
+const DEFAULT_LINK_ONLY_ACCOUNTS = ['wa-wa_shebi', 'tgu-tgu_supplier']
+const digestModeByAccount = reactive({})
 
 const regionModalVisible = ref(false)
 const regionModalTitle = ref('')
@@ -263,6 +289,36 @@ const submitEdit = () => {
   if (!editUrl.value) return
   emit('save-env', { key: editKey.value, url: editUrl.value, secret: editSecret.value })
   editVisible.value = false
+}
+
+const parseLinkOnlyAccounts = () => {
+  const raw = props.envConfig?.DIGEST_LINK_ONLY_ACCOUNTS
+  const accounts = raw && String(raw).trim()
+    ? String(raw).split(',').map(item => item.trim()).filter(Boolean)
+    : DEFAULT_LINK_ONLY_ACCOUNTS
+  return new Set(accounts)
+}
+
+const digestAccounts = computed(() => {
+  const seen = new Set()
+  return (props.availableRegions || [])
+    .filter(item => item?.account && !seen.has(item.account) && seen.add(item.account))
+    .sort((a, b) => a.account.localeCompare(b.account))
+})
+
+const refreshDigestModes = () => {
+  const linkAccounts = parseLinkOnlyAccounts()
+  for (const item of digestAccounts.value) {
+    digestModeByAccount[item.account] = linkAccounts.has(item.account) ? 'link' : 'body'
+  }
+}
+
+const saveDigestModes = () => {
+  const accounts = Object.entries(digestModeByAccount)
+    .filter(([, mode]) => mode === 'link')
+    .map(([account]) => account)
+    .sort()
+  emit('save-digest-mode', accounts)
 }
 
 const openViewRegion = (val) => {
@@ -305,6 +361,8 @@ const isSet = (key) => {
   if (props.envConfig?.[setKey] !== undefined) return !!props.envConfig[setKey]
   return !!(v && v !== '' && v !== '未配置')
 }
+
+watch(() => [props.envConfig?.DIGEST_LINK_ONLY_ACCOUNTS, props.availableRegions], refreshDigestModes, { immediate: true, deep: true })
 
 const openRegionModal = (type) => {
   regionForm.type = type
@@ -391,4 +449,11 @@ defineExpose({ openRegionModal })
 .cli-actions { display: flex; gap: 8px; flex-shrink: 0; }
 .btn-add { display: block; margin-top: 10px; background: none; border: 1px dashed var(--border); border-radius: 8px; padding: 8px; width: 100%; cursor: pointer; font-size: 13px; font-weight: 600; color: var(--p); transition: all 0.15s; }
 .btn-add:hover { border-color: var(--p); background: rgba(107,70,193,0.04); }
+.digest-mode-card { margin: 12px 0; padding: 14px 16px; border: 1px solid var(--border); border-radius: 8px; background: #fff; }
+.digest-mode-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+.digest-mode-list { display: grid; gap: 8px; }
+.digest-mode-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 12px; border: 1px solid #edf2f7; border-radius: 8px; background: var(--bg-tint); }
+.digest-account { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 12px; color: var(--t3); }
+.digest-account code { font-size: 12px; color: var(--t); background: rgba(107,70,193,0.08); padding: 2px 6px; border-radius: 6px; }
+.digest-select { width: 132px; min-width: 132px; padding: 6px 8px; font-size: 13px; }
 </style>

@@ -63,6 +63,7 @@
       @delete-region-wh="handleDeleteRegionWh"
       @add-region-wh="handleAddRegionWh"
       @save-region-wh="fetchConfig"
+      @save-digest-mode="handleSaveDigestMode"
     />
 
     <AiEnvConfig
@@ -318,6 +319,23 @@ const handleClearEnv = async (key) => {
     }
   } catch (e) {
     if (e !== 'cancel') ElMessage.error('清空失败')
+  }
+}
+
+const handleSaveDigestMode = async (accounts) => {
+  try {
+    const payload = {
+      DIGEST_LINK_ONLY_ACCOUNTS: Array.isArray(accounts) && accounts.length > 0 ? accounts.join(',') : '__none__'
+    }
+    const res = await api.post('/api/config/env', payload)
+    if (res.success) {
+      ElMessage.success('日报推送形式已保存')
+      fetchConfig()
+    } else {
+      ElMessage.error(res.error || '保存失败')
+    }
+  } catch (e) {
+    ElMessage.error('保存失败')
   }
 }
 
