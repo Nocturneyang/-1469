@@ -52,7 +52,11 @@ module.exports = {
       max_memory_restart: "384M",
       env: {
         NODE_ENV: "production",
-        LOCAL_WA_RUNTIME_ENABLED: "false"
+        LOCAL_WA_RUNTIME_ENABLED: "false",
+        COLLECTOR_TOKEN: process.env.COLLECTOR_TOKEN || "",
+        SSO_ADMIN_USERS: process.env.SSO_ADMIN_USERS || "",
+        SSO_REDIRECT_PARAM: process.env.SSO_REDIRECT_PARAM || "",
+        SSO_USERINFO_URL: process.env.SSO_USERINFO_URL || ""
       }
     },
     {
