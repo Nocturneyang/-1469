@@ -22,7 +22,8 @@ export function redirectToSsoLogin() {
 
   try {
     const url = new URL(loginUrl, window.location.origin)
-    const redirectParam = getRuntimeConfig().ssoRedirectParam || import.meta.env.VITE_SSO_REDIRECT_PARAM || ''
+    const configuredRedirectParam = getRuntimeConfig().ssoRedirectParam || import.meta.env.VITE_SSO_REDIRECT_PARAM || ''
+    const redirectParam = configuredRedirectParam || (url.hostname === 'skyline-ark-sso.tyhark.com' ? 'redirect' : '')
     if (redirectParam) {
       url.searchParams.set(redirectParam, window.location.href)
     }
