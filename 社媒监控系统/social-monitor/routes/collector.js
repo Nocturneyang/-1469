@@ -140,6 +140,40 @@ router.post('/messages', (req, res) => {
     }
 });
 
+router.post('/messages/batch', (req, res) => {
+    try {
+        const messages = Array.isArray(req.body?.messages) ? req.body.messages : [];
+        if (!messages.length) {
+            return res.status(400).json({ success: false, error: 'messages array is required' });
+        }
+
+        let inserted = 0;
+        let skipped = 0;
+        const persistBatch = db.transaction(() => {
+            for (const body of messages) {
+                if (!body || !body.platform || !body.receiver_account || !body.message_id) {
+                    skipped += 1;
+                    continue;
+                }
+                const result = saveMessage(body);
+                inserted += result?.changes || 0;
+            }
+        });
+
+        persistBatch();
+        res.json({
+            success: true,
+            received: messages.length,
+            inserted,
+            duplicates: messages.length - inserted - skipped,
+            skipped
+        });
+    } catch (err) {
+        console.error('[Collector API] message batch failed:', err.message);
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
 router.post('/media', (req, res) => {
     try {
         const body = req.body || {};
