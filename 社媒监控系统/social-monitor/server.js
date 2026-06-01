@@ -510,7 +510,7 @@ app.use('/api', analyticsRoutes);
 
 // 以下接口需要 admin 权限
 app.use('/api/accounts', requireAdmin, createAccountsRouter({ safeWriteEcosystem }));
-app.use('/api', requireAdmin, configRoutes);
+app.use('/api', configRoutes);
 app.use('/api', requireAdmin, logsRoutes);
 app.use('/api/tg-user', requireAdmin, createTgUserRouter({ safeWriteEcosystem }));
 app.use('/api/accounts/create-tg-user', requireAdmin, (req, res, next) => {

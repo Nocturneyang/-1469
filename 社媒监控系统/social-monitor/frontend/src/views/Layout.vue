@@ -84,12 +84,14 @@ const navSections = computed(() => [
   },
   {
     title: "系统管理",
-    items: authStore.isAdmin ? [
-      { path: "/admin/accounts", label: "帐号管理", icon: "👥" },
+    items: [
       { path: "/admin/config", label: "系统配置", icon: "⚙️" },
-      { path: "/admin/users", label: "权限管理", icon: "🔐" },
-      { path: "/admin/logs", label: "系统日志", icon: "📋" },
-    ] : []
+      ...(authStore.isAdmin ? [
+        { path: "/admin/accounts", label: "帐号管理", icon: "👥" },
+        { path: "/admin/users", label: "权限管理", icon: "🔐" },
+        { path: "/admin/logs", label: "系统日志", icon: "📋" },
+      ] : [])
+    ]
   }
 ])
 
