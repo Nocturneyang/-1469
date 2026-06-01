@@ -1,4 +1,5 @@
 const express = require('express');
+const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const {
@@ -12,6 +13,7 @@ const {
 const router = express.Router();
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '..');
 const MEDIA_DIR = path.join(DATA_DIR, 'media');
+const FALLBACK_COLLECTOR_TOKEN_SHA256 = '2e51b53cf6e7da87425363b6d9ada8ed5d07532f1b862b02057700a13640caa6';
 
 function sanitizeSegment(value, fallback = 'file') {
     const safe = String(value || '')
@@ -47,12 +49,22 @@ function getBearerToken(req) {
 
 function requireCollectorToken(req, res, next) {
     const expected = process.env.COLLECTOR_TOKEN || '';
-    if (!expected) {
+    const expectedHash = process.env.COLLECTOR_TOKEN_SHA256 || FALLBACK_COLLECTOR_TOKEN_SHA256;
+    const token = getBearerToken(req) || req.headers['x-collector-token'] || '';
+
+    if (expected) {
+        if (token !== expected) {
+            return res.status(401).json({ success: false, error: 'Invalid collector token' });
+        }
+        return next();
+    }
+
+    if (!expectedHash) {
         return res.status(503).json({ success: false, error: 'COLLECTOR_TOKEN is not configured' });
     }
 
-    const token = getBearerToken(req) || req.headers['x-collector-token'] || '';
-    if (token !== expected) {
+    const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+    if (tokenHash !== expectedHash) {
         return res.status(401).json({ success: false, error: 'Invalid collector token' });
     }
 
