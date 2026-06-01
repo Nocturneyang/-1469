@@ -39,6 +39,7 @@
               </div>
               <div class="cli-actions">
                 <button class="el-btn" @click="openViewRegion(val)">查看</button>
+                <button class="el-btn" :disabled="readonly" @click="openEditRegionWebhook('ALERT', platform, region, val)">编辑</button>
                 <button class="el-btn danger" @click="$emit('delete-region-wh', 'ALERT_' + platform + '_' + region)">删除</button>
               </div>
             </div>
@@ -64,29 +65,6 @@
               <button class="el-btn danger" @click="$emit('clear-env', 'DINGTALK_DIGEST')">清空</button>
             </div>
           </div>
-          <div class="digest-mode-card">
-            <div class="digest-mode-head">
-              <div>
-                <div class="cli-label">日报推送形式</div>
-                <div class="cli-hint">选择哪些账号在钉钉中只推送站内日报链接；未选账号继续推送长文日报。</div>
-              </div>
-              <button class="el-btn" :disabled="readonly" @click="saveDigestModes">保存形式</button>
-            </div>
-            <div v-if="digestAccounts.length === 0" class="cli-hint">暂无区域映射账号，请先在下方「区域账号映射」中添加账号。</div>
-            <div v-else class="digest-mode-list">
-              <div v-for="item in digestAccounts" :key="item.account" class="digest-mode-row">
-                <div class="digest-account">
-                  <code>{{ item.account }}</code>
-                  <span>{{ item.platform?.toUpperCase() || '-' }}</span>
-                  <span>{{ item.region || '未知区' }}</span>
-                </div>
-                <select class="field-input digest-select" :disabled="readonly" v-model="digestModeByAccount[item.account]">
-                  <option value="body">长文日报</option>
-                  <option value="link">链接日报</option>
-                </select>
-              </div>
-            </div>
-          </div>
           <!-- 按平台分组的区域配置 -->
           <template v-for="(regions, platform) in getGroupedRegions('DIGEST')" :key="platform">
             <div class="platform-header">
@@ -95,11 +73,17 @@
             </div>
             <div class="cli" v-for="(val, region) in regions" :key="region">
               <div style="flex:1">
-                <div class="cli-label">{{ region }}</div>
+                <div class="cli-row">
+                  <div class="cli-label">{{ region }}</div>
+                  <span class="digest-mode-pill" :class="{ link: getRegionDigestMode(platform, region) === 'link' }">
+                    {{ getRegionDigestMode(platform, region) === 'link' ? '链接日报' : '长文日报' }}
+                  </span>
+                </div>
                 <div class="cli-url">{{ getUrlPreview(val) }}</div>
               </div>
               <div class="cli-actions">
                 <button class="el-btn" @click="openViewRegion(val)">查看</button>
+                <button class="el-btn" :disabled="readonly" @click="openEditRegionWebhook('DIGEST', platform, region, val)">编辑</button>
                 <button class="el-btn danger" @click="$emit('delete-region-wh', 'DIGEST_' + platform + '_' + region)">删除</button>
               </div>
             </div>
@@ -137,6 +121,7 @@
               </div>
               <div class="cli-actions">
                 <button class="el-btn" @click="openViewRegion(val)">查看</button>
+                <button class="el-btn" :disabled="readonly" @click="openEditRegionWebhook('WEEKLY', platform, region, val)">编辑</button>
                 <button class="el-btn danger" @click="$emit('delete-region-wh', 'WEEKLY_' + platform + '_' + region)">删除</button>
               </div>
             </div>
@@ -207,7 +192,7 @@
         <h3>{{ regionModalTitle }}</h3>
         <div class="field-group">
           <label class="field-label">生效平台</label>
-          <select class="field-input" v-model="regionForm.platform">
+          <select class="field-input" v-model="regionForm.platform" :disabled="regionForm.mode === 'edit'">
             <option value="wa">WhatsApp</option>
             <option value="tg">Telegram Bot</option>
             <option value="tgu">Telegram 用户账号</option>
@@ -217,11 +202,26 @@
         <div class="field-group">
           <label class="field-label">生效区域（可多选）</label>
           <div style="max-height:200px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;padding:8px">
-            <label v-for="region in availableRegions" :key="region.region" style="display:block;margin-bottom:6px;cursor:pointer">
-              <input type="checkbox" :value="region.region" v-model="regionForm.regions" style="margin-right:8px">
-              {{ region.region }} ({{ region.account }})
+            <label v-for="region in modalRegionOptions" :key="region.region" style="display:block;margin-bottom:6px;cursor:pointer">
+              <input
+                type="checkbox"
+                :value="region.region"
+                v-model="regionForm.regions"
+                :disabled="regionForm.mode === 'edit'"
+                style="margin-right:8px"
+              >
+              {{ region.region }} ({{ region.accounts.join('、') }})
             </label>
+            <div v-if="modalRegionOptions.length === 0" class="cli-hint">当前平台暂无区域映射，请先在「区域账号映射」中添加账号。</div>
           </div>
+        </div>
+        <div v-if="regionForm.type === 'DIGEST'" class="field-group">
+          <label class="field-label">日报推送形式</label>
+          <select class="field-input" v-model="regionForm.pushMode">
+            <option value="body">长文日报</option>
+            <option value="link">日报链接</option>
+          </select>
+          <div class="field-hint">保存后，对所选平台和区域下的账号生效；链接日报只在钉钉推送入口链接，完整内容仍在生产前端查看。</div>
         </div>
         <div class="field-group">
           <label class="field-label">Webhook URL</label>
@@ -270,11 +270,13 @@ const digestModeByAccount = reactive({})
 const regionModalVisible = ref(false)
 const regionModalTitle = ref('')
 const regionForm = reactive({
+  mode: 'add',
   type: '',
   platform: 'wa',
   regions: [],
   url: '',
-  secret: ''
+  secret: '',
+  pushMode: 'body'
 })
 
 const openEdit = (key, title) => {
@@ -296,7 +298,7 @@ const parseLinkOnlyAccounts = () => {
   const accounts = raw && String(raw).trim()
     ? String(raw).split(',').map(item => item.trim()).filter(Boolean)
     : DEFAULT_LINK_ONLY_ACCOUNTS
-  return new Set(accounts)
+  return new Set(accounts.filter(item => item !== '__none__'))
 }
 
 const digestAccounts = computed(() => {
@@ -320,6 +322,34 @@ const saveDigestModes = () => {
     .sort()
   emit('save-digest-mode', accounts)
 }
+
+const getAccountsForRegionSelection = (platform, regions) => {
+  const regionSet = new Set(regions || [])
+  return (props.availableRegions || [])
+    .filter(item => item?.account && item.platform === platform && regionSet.has(item.region))
+    .map(item => item.account)
+}
+
+const getRegionDigestMode = (platform, region) => {
+  const accounts = getAccountsForRegionSelection(platform, [region])
+  if (accounts.length === 0) return 'body'
+  const linkAccounts = parseLinkOnlyAccounts()
+  return accounts.every(account => linkAccounts.has(account)) ? 'link' : 'body'
+}
+
+const modalRegionOptions = computed(() => {
+  const grouped = new Map()
+  for (const item of props.availableRegions || []) {
+    if (!item?.region || item.platform !== regionForm.platform) continue
+    if (!grouped.has(item.region)) {
+      grouped.set(item.region, { region: item.region, accounts: [] })
+    }
+    if (item.account) grouped.get(item.region).accounts.push(item.account)
+  }
+  return Array.from(grouped.values())
+    .map(item => ({ ...item, accounts: item.accounts.sort() }))
+    .sort((a, b) => a.region.localeCompare(b.region))
+})
 
 const openViewRegion = (val) => {
   viewData.value = typeof val === 'object' ? val : { url: String(val) }
@@ -363,13 +393,18 @@ const isSet = (key) => {
 }
 
 watch(() => [props.envConfig?.DIGEST_LINK_ONLY_ACCOUNTS, props.availableRegions], refreshDigestModes, { immediate: true, deep: true })
+watch(() => regionForm.platform, () => {
+  if (regionForm.mode === 'add') regionForm.regions = []
+})
 
 const openRegionModal = (type) => {
+  regionForm.mode = 'add'
   regionForm.type = type
   regionForm.platform = 'wa'
   regionForm.regions = []
   regionForm.url = ''
   regionForm.secret = ''
+  regionForm.pushMode = 'body'
 
   const typeLabels = {
     ALERT: '业务告警',
@@ -378,6 +413,47 @@ const openRegionModal = (type) => {
   }
   regionModalTitle.value = '新增 ' + (typeLabels[type] || type) + ' 区域 Webhook'
   regionModalVisible.value = true
+}
+
+const openEditRegionWebhook = (type, platform, region, val) => {
+  const data = typeof val === 'object' ? val : { url: String(val) }
+  const typeLabels = {
+    ALERT: '业务告警',
+    DIGEST: '日报',
+    WEEKLY: '周报'
+  }
+  regionForm.mode = 'edit'
+  regionForm.type = type
+  regionForm.platform = platform
+  regionForm.regions = [region]
+  regionForm.url = data.url || ''
+  regionForm.secret = data.secret || ''
+  regionForm.pushMode = type === 'DIGEST' ? getRegionDigestMode(platform, region) : 'body'
+  regionModalTitle.value = '编辑 ' + (typeLabels[type] || type) + ' 区域 Webhook'
+  regionModalVisible.value = true
+}
+
+const saveDigestModeForRegionForm = async () => {
+  if (regionForm.type !== 'DIGEST') return
+  const affectedAccounts = getAccountsForRegionSelection(regionForm.platform, regionForm.regions)
+  if (affectedAccounts.length === 0) return
+
+  const linkAccounts = parseLinkOnlyAccounts()
+  for (const account of affectedAccounts) {
+    if (regionForm.pushMode === 'link') {
+      linkAccounts.add(account)
+      digestModeByAccount[account] = 'link'
+    } else {
+      linkAccounts.delete(account)
+      digestModeByAccount[account] = 'body'
+    }
+  }
+
+  const value = Array.from(linkAccounts).sort().join(',') || '__none__'
+  const res = await api.post('/api/config/env', { DIGEST_LINK_ONLY_ACCOUNTS: value })
+  if (!res.success) {
+    throw new Error(res.error || '日报推送形式保存失败')
+  }
 }
 
 const submitRegionWebhook = async () => {
@@ -399,6 +475,7 @@ const submitRegionWebhook = async () => {
       secret: regionForm.secret
     })
     if (res.success) {
+      await saveDigestModeForRegionForm()
       ElMessage.success('区域 Webhook 保存成功')
       regionModalVisible.value = false
       emit('save-region-wh')
@@ -406,7 +483,7 @@ const submitRegionWebhook = async () => {
       ElMessage.error(res.error || '保存失败')
     }
   } catch (e) {
-    ElMessage.error('保存失败')
+    ElMessage.error(e.message || '保存失败')
   }
 }
 
@@ -449,11 +526,7 @@ defineExpose({ openRegionModal })
 .cli-actions { display: flex; gap: 8px; flex-shrink: 0; }
 .btn-add { display: block; margin-top: 10px; background: none; border: 1px dashed var(--border); border-radius: 8px; padding: 8px; width: 100%; cursor: pointer; font-size: 13px; font-weight: 600; color: var(--p); transition: all 0.15s; }
 .btn-add:hover { border-color: var(--p); background: rgba(107,70,193,0.04); }
-.digest-mode-card { margin: 12px 0; padding: 14px 16px; border: 1px solid var(--border); border-radius: 8px; background: #fff; }
-.digest-mode-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
-.digest-mode-list { display: grid; gap: 8px; }
-.digest-mode-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 12px; border: 1px solid #edf2f7; border-radius: 8px; background: var(--bg-tint); }
-.digest-account { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 12px; color: var(--t3); }
-.digest-account code { font-size: 12px; color: var(--t); background: rgba(107,70,193,0.08); padding: 2px 6px; border-radius: 6px; }
-.digest-select { width: 132px; min-width: 132px; padding: 6px 8px; font-size: 13px; }
+.digest-mode-pill { font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 999px; background: rgba(107,70,193,0.08); color: #6b46c1; }
+.digest-mode-pill.link { background: rgba(49,130,206,0.12); color: #2b6cb0; }
+.field-hint { font-size: 12px; color: var(--t3); margin-top: 6px; line-height: 1.5; }
 </style>
