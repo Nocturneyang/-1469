@@ -301,7 +301,7 @@ function initSchema() {
     }
 
     try {
-        const seedAdmins = String(process.env.SSO_BOOTSTRAP_ADMINS || process.env.SSO_ADMIN_USERS || '杨杰')
+        const seedAdmins = String(process.env.SSO_BOOTSTRAP_ADMINS || process.env.SSO_ADMIN_USERS || '1469,杨杰')
             .split(',')
             .map(item => item.trim())
             .filter(Boolean);
