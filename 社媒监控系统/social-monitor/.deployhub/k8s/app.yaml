@@ -103,6 +103,10 @@ spec:
               value: "true"
             - name: SSO_LOGIN_URL
               value: "https://skyline-ark-sso.tyhark.com/login"
+            - name: SSO_REDIRECT_PARAM
+              value: "redirect"
+            - name: SSO_USERINFO_URL
+              value: "https://skyline-ark-sso.tyhark.com/token/userinfo"
             - name: STORAGE_MIN_FREE_MB
               value: "512"
             - name: STORAGE_MIN_FREE_PERCENT

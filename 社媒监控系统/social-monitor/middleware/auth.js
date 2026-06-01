@@ -26,6 +26,19 @@ function readHeader(req, names) {
     return '';
 }
 
+function readCookie(req, name) {
+    const cookieHeader = req.headers.cookie;
+    if (!cookieHeader) return '';
+    const target = `${name}=`;
+    const parts = String(cookieHeader).split(';');
+    for (const part of parts) {
+        const item = part.trim();
+        if (!item.startsWith(target)) continue;
+        return decodeURIComponent(item.slice(target.length));
+    }
+    return '';
+}
+
 function normalizeRole(role) {
     const normalized = String(role || '').trim().toLowerCase();
     if (['admin', 'administrator', 'owner', 'super_admin'].includes(normalized)) return 'admin';
@@ -126,6 +139,12 @@ function getBearerToken(req) {
     return authHeader && authHeader.startsWith('Bearer ') ? authHeader.slice(7).trim() : '';
 }
 
+function getSsoToken(req) {
+    return getBearerToken(req) ||
+        readHeader(req, ['satoken', 'x-sso-token', 'x-auth-token']) ||
+        readCookie(req, 'satoken');
+}
+
 function verifyJwt(token) {
     if (!token) return null;
     try {
@@ -139,15 +158,21 @@ function mapRemoteUserInfo(payload) {
     const data = payload && (payload.data || payload.user || payload.result || payload);
     if (!data || typeof data !== 'object') return null;
     const username = data.username || data.name || data.loginName || data.account || data.userName || data.nickName;
-    const id = data.id || data.userId || data.uid || username;
+    const id = data.id || data.userId || data.user_id || data.uid || username;
     if (!id && !username) return null;
+    const hasAdminRole = data.is_admin === true ||
+        data.isAdmin === true ||
+        (Array.isArray(data.role) && data.role.some((item) => {
+            if (typeof item === 'string') return item.toLowerCase() === 'admin';
+            return String(item?.roleCode || item?.code || item?.name || '').toLowerCase() === 'admin';
+        }));
     return applyAdminPolicy({
         id,
         username: username || String(id),
         email: data.email || '',
         mobile: data.mobile || data.phone || data.phoneNumber || '',
         department: data.department || data.deptName || data.orgName || '',
-        role: data.role || data.userRole || data.permission
+        role: hasAdminRole ? 'admin' : (data.role || data.userRole || data.permission)
     });
 }
 
@@ -176,17 +201,18 @@ async function getSsoUserFromRemote(req, token) {
 }
 
 async function resolveAuthenticatedUser(req) {
-    const token = getBearerToken(req);
-    const jwtUser = verifyJwt(token);
+    const bearerToken = getBearerToken(req);
+    const jwtUser = verifyJwt(bearerToken);
     if (jwtUser) return { user: jwtUser, source: 'jwt' };
 
     const ssoHeaderUser = getSsoUserFromHeaders(req);
     if (ssoHeaderUser) return { user: ssoHeaderUser, source: 'sso-header' };
 
+    const token = getSsoToken(req);
     const ssoRemoteUser = await getSsoUserFromRemote(req, token);
     if (ssoRemoteUser) return { user: ssoRemoteUser, source: 'sso-remote' };
 
-    return { user: null, source: null, hasToken: Boolean(token) };
+    return { user: null, source: null, hasToken: Boolean(bearerToken || token) };
 }
 
 async function authenticateToken(req, res, next) {
