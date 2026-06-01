@@ -22,11 +22,13 @@ export function redirectToSsoLogin() {
 
   try {
     const url = new URL(loginUrl, window.location.origin)
-    url.searchParams.set('redirect_uri', window.location.href)
+    const redirectParam = getRuntimeConfig().ssoRedirectParam || import.meta.env.VITE_SSO_REDIRECT_PARAM || ''
+    if (redirectParam) {
+      url.searchParams.set(redirectParam, window.location.href)
+    }
     window.location.assign(url.toString())
   } catch (_) {
-    const separator = loginUrl.includes('?') ? '&' : '?'
-    window.location.assign(`${loginUrl}${separator}redirect_uri=${encodeURIComponent(window.location.href)}`)
+    window.location.assign(loginUrl)
   }
 
   return true

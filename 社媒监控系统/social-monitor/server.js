@@ -128,7 +128,8 @@ app.get(['/readyz', '/api/health'], (req, res) => {
 function sendRuntimeConfig(req, res) {
     const config = {
         ssoEnabled: isSsoEnabled(),
-        ssoLoginUrl: process.env.SSO_LOGIN_URL || ''
+        ssoLoginUrl: process.env.SSO_LOGIN_URL || '',
+        ssoRedirectParam: process.env.SSO_REDIRECT_PARAM || ''
     };
     const body = `window.__SOCIAL_MONITOR_CONFIG__ = ${JSON.stringify(config).replace(/</g, '\\u003c')};\n`;
     res.type('application/javascript').send(body);
