@@ -8,12 +8,26 @@ const {
     getWaChromeStats,
     getWaWebVersionCacheInfo
 } = require('../lib/wa-chrome-runtime');
-const { writeEnvKeys } = require('../lib/env-config');
+const { readEnvFile, writeEnvKeys } = require('../lib/env-config');
 const puppeteer = require('puppeteer');
 
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '..');
 const WA_ACCOUNTS_CONFIG_PATH = path.join(DATA_DIR, 'config', 'wa-accounts.json');
 const LOCAL_WA_RUNTIME_ENABLED = process.env.LOCAL_WA_RUNTIME_ENABLED !== 'false';
+
+function getConfiguredEnvValue(key) {
+    return process.env[key] || readEnvFile()[key] || '';
+}
+
+function applyCollectorEnv(env, collectorId) {
+    const collectorApiUrl = getConfiguredEnvValue('COLLECTOR_API_URL');
+    if (!collectorApiUrl) return env;
+
+    env.COLLECTOR_API_URL = collectorApiUrl;
+    env.COLLECTOR_TOKEN = getConfiguredEnvValue('COLLECTOR_TOKEN');
+    env.COLLECTOR_ID = collectorId;
+    return env;
+}
 
 function collectWaChromeStats() {
     return new Promise((resolve) => {
@@ -222,8 +236,9 @@ function removeAppFromEcosystem(ecoPath, workerName) {
 }
 
 function buildWaAppConfig(accountName) {
-    const env = {
+    const env = applyCollectorEnv({
         NODE_ENV: 'production',
+        DATA_DIR,
         ACCOUNT_NAME: accountName,
         WA_ORCHESTRATOR_MANAGED_INIT: 'true',
         WA_INIT_COOLDOWN_MS: '30000',
@@ -235,13 +250,7 @@ function buildWaAppConfig(accountName) {
         WA_QR_IDLE_TIMEOUT_MS: '180000',
         PUPPETEER_EXECUTABLE_PATH: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium',
         PUPPETEER_SKIP_DOWNLOAD: 'true'
-    };
-
-    if (process.env.COLLECTOR_API_URL) {
-        env.COLLECTOR_API_URL = process.env.COLLECTOR_API_URL;
-        env.COLLECTOR_TOKEN = process.env.COLLECTOR_TOKEN || '';
-        env.COLLECTOR_ID = process.env.COLLECTOR_ID || `pm2:${accountName}`;
-    }
+    }, `pm2:${accountName}`);
 
     return {
         name: `worker-wa-${accountName}`,
@@ -261,17 +270,20 @@ function buildWaAppConfig(accountName) {
 }
 
 function buildTgBotAppConfig(accountName, token) {
+    const env = applyCollectorEnv({
+        NODE_ENV: 'production',
+        DATA_DIR,
+        TG_ACCOUNT_NAME: accountName,
+        TG_BOT_TOKEN: token
+    }, `pm2:tg:${accountName}`);
+
     return {
         name: `worker-tg-${accountName}`,
         script: './workers/worker-tg.js',
         instances: 1,
         autorestart: true,
         watch: false,
-        env: {
-            NODE_ENV: 'production',
-            TG_ACCOUNT_NAME: accountName,
-            TG_BOT_TOKEN: token
-        }
+        env
     };
 }
 

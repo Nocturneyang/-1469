@@ -10,9 +10,24 @@ const { getTasks, pauseTasks, resumeTasks, resetTask } = require('../lib/tg-back
 
 function createTgUserRouter({ safeWriteEcosystem }) {
     const router = express.Router();
+    const LOCAL_TG_RUNTIME_ENABLED = process.env.LOCAL_TG_RUNTIME_ENABLED !== 'false';
 
     const loginSessions = new Map();
     const LOGIN_TIMEOUT_MS = 5 * 60 * 1000;
+
+    function getConfiguredEnvValue(key) {
+        return process.env[key] || readEnvFile()[key] || '';
+    }
+
+    function applyCollectorEnv(env, collectorId) {
+        const collectorApiUrl = getConfiguredEnvValue('COLLECTOR_API_URL');
+        if (!collectorApiUrl) return env;
+
+        env.COLLECTOR_API_URL = collectorApiUrl;
+        env.COLLECTOR_TOKEN = getConfiguredEnvValue('COLLECTOR_TOKEN');
+        env.COLLECTOR_ID = collectorId;
+        return env;
+    }
 
     function cleanupLoginSession(accountName) {
         const s = loginSessions.get(accountName);
@@ -415,10 +430,40 @@ function createTgUserRouter({ safeWriteEcosystem }) {
             });
             saveRateLimit(id, cfg);
 
+            if (!LOCAL_TG_RUNTIME_ENABLED) {
+                db.prepare(`
+                    INSERT INTO accounts (id, platform, status, health_status, runtime_provider, updated_at)
+                    VALUES (?, 'telegram', 'remote_pending', 'remote_collector_required', 'remote-collector', datetime('now'))
+                    ON CONFLICT(id) DO UPDATE SET
+                        status = excluded.status,
+                        health_status = excluded.health_status,
+                        runtime_provider = excluded.runtime_provider,
+                        updated_at = datetime('now')
+                `).run(`tgu-${id}`);
+
+                return res.json({
+                    success: true,
+                    message: `TG 用户账号 tgu-${id} 已在生产端登记；请在本地 collector 启动同名账号并配置 COLLECTOR_API_URL/COLLECTOR_TOKEN。`
+                });
+            }
+
             const ecoPath = path.join(dataDir, 'ecosystem.config.js');
             if (fs.existsSync(ecoPath)) {
                 let eco = fs.readFileSync(ecoPath, 'utf8');
                 if (!eco.includes(workerName)) {
+                    const appEnv = applyCollectorEnv({
+                        NODE_ENV: 'production',
+                        DATA_DIR: dataDir,
+                        TG_ACCOUNT_NAME: id,
+                        TG_WARMUP_SECONDS: String(cfg.warmup_seconds),
+                        TG_DAILY_LIMIT: String(cfg.daily_limit),
+                        TG_BATCH_SIZE: String(cfg.batch_size),
+                        TG_SLEEP_MIN_MS: String(cfg.sleep_min_ms),
+                        TG_SLEEP_MAX_MS: String(cfg.sleep_max_ms),
+                        TG_BACKFILL_DAYS: String(cfg.backfill_days),
+                        TG_ENABLE_BACKFILL: String(cfg.enable_backfill)
+                    }, `pm2:tgu:${id}`);
+
                     const insertStr = `    {
       name: "${workerName}",
       script: "./workers/worker-tg-user.js",
@@ -427,18 +472,7 @@ function createTgUserRouter({ safeWriteEcosystem }) {
       autorestart: true,
       watch: false,
       max_memory_restart: '512M',
-      env: {
-        NODE_ENV: "production",
-        DATA_DIR: ${JSON.stringify(dataDir)},
-        TG_ACCOUNT_NAME: "${id}",
-        TG_WARMUP_SECONDS: "${cfg.warmup_seconds}",
-        TG_DAILY_LIMIT: "${cfg.daily_limit}",
-        TG_BATCH_SIZE: "${cfg.batch_size}",
-        TG_SLEEP_MIN_MS: "${cfg.sleep_min_ms}",
-        TG_SLEEP_MAX_MS: "${cfg.sleep_max_ms}",
-        TG_BACKFILL_DAYS: "${cfg.backfill_days}",
-        TG_ENABLE_BACKFILL: "${cfg.enable_backfill}"
-      }
+      env: ${JSON.stringify(appEnv, null, 8).replace(/\n/g, '\n      ')}
     },\n    // --- Web UI Server ---`;
                     eco = eco.replace('// --- Web UI Server ---', insertStr);
                     safeWriteEcosystem(eco);
@@ -448,7 +482,7 @@ function createTgUserRouter({ safeWriteEcosystem }) {
             db.prepare(`INSERT OR REPLACE INTO accounts (id, platform, status, updated_at) VALUES (?, 'telegram', 'idle', datetime('now'))`).run(`tgu-${id}`);
 
             const { spawn, exec } = require('child_process');
-            const spawnEnv = {
+            const spawnEnv = applyCollectorEnv({
                 PATH: process.env.PATH,
                 HOME: process.env.HOME,
                 NODE_ENV: 'production',
@@ -463,7 +497,7 @@ function createTgUserRouter({ safeWriteEcosystem }) {
                 TG_SLEEP_MAX_MS: String(cfg.sleep_max_ms),
                 TG_BACKFILL_DAYS: String(cfg.backfill_days),
                 TG_ENABLE_BACKFILL: String(cfg.enable_backfill)
-            };
+            }, `pm2:tgu:${id}`);
             const pm2 = spawn('npx', ['pm2', 'start', './workers/worker-tg-user.js', '--name', workerName], {
                 env: spawnEnv,
                 stdio: 'inherit'
