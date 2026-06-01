@@ -43,20 +43,13 @@ const runId = process.env.WA_RUN_ID || `${accountName}-${Date.now()}-${process.p
 const runStartedAt = new Date().toISOString();
 const collectorApiUrl = process.env.COLLECTOR_API_URL || '';
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '..');
-let db = null;
-let saveMessage = null;
-let updateAccountStatus = null;
-let upsertCollectorHeartbeat = null;
-let recordRuntimeEvent = null;
-if (!collectorApiUrl) {
-    ({
-        db,
-        saveMessage,
-        updateAccountStatus,
-        upsertCollectorHeartbeat,
-        recordRuntimeEvent
-    } = require('../db/database'));
-}
+const {
+    db,
+    saveMessage,
+    updateAccountStatus,
+    upsertCollectorHeartbeat,
+    recordRuntimeEvent
+} = require('../db/database');
 const legacySessionPath = path.join(DATA_DIR, `whatsapp-session-${accountName}`);
 const legacyChromiumDataDir = path.join(legacySessionPath, 'session');
 const authDataPath = process.env.WA_AUTH_DATA_PATH || path.join(DATA_DIR, '.wwebjs_auth');
@@ -119,11 +112,8 @@ function reportHeartbeat(patch = {}) {
         startedAt: runStartedAt
     };
 
-    if (collectorClient) {
-        collectorClient.heartbeat(payload);
-    } else {
-        upsertCollectorHeartbeat(payload);
-    }
+    upsertCollectorHeartbeat(payload);
+    if (collectorClient) collectorClient.heartbeat(payload);
 }
 
 function transitionRuntime(phase, status = runtimeState.status, message = null, severity = 'info', data = null) {
@@ -139,11 +129,8 @@ function transitionRuntime(phase, status = runtimeState.status, message = null, 
             message,
             data
         };
-        if (collectorClient) {
-            collectorClient.event(payload);
-        } else {
-            recordRuntimeEvent(payload);
-        }
+        recordRuntimeEvent(payload);
+        if (collectorClient) collectorClient.event(payload);
     }
 }
 
@@ -157,30 +144,28 @@ function persistAccountStatus(status, pushname = null, qrCode = null, extra = {}
         ...extra
     };
 
-    if (collectorClient) {
-        collectorClient.accountStatus(payload);
-    } else if (updateAccountStatus) {
-        updateAccountStatus(accountId, 'whatsapp', status, pushname, qrCode);
-        if (extra.chromeVersion) {
-            try {
-                db.prepare(`
-                    UPDATE accounts
-                    SET chrome_version = ?, updated_at = datetime('now')
-                    WHERE id = ?
-                `).run(extra.chromeVersion, accountId);
-            } catch (e) {
-                console.error('[WA] Chrome version update error:', e.message);
-            }
+    updateAccountStatus(accountId, 'whatsapp', status, pushname, qrCode);
+    if (extra.chromeVersion) {
+        try {
+            db.prepare(`
+                UPDATE accounts
+                SET chrome_version = ?, updated_at = datetime('now')
+                WHERE id = ?
+            `).run(extra.chromeVersion, accountId);
+        } catch (e) {
+            console.error('[WA] Chrome version update error:', e.message);
         }
     }
+    if (collectorClient) collectorClient.accountStatus(payload);
 }
 
 async function persistMessage(data) {
+    const localResult = saveMessage(data);
     if (collectorClient) {
         const ok = await collectorClient.message(data);
-        return ok ? { changes: 1 } : null;
+        return ok ? { changes: 1, local_changes: localResult?.changes || 0 } : localResult;
     }
-    return saveMessage(data);
+    return localResult;
 }
 
 async function persistMedia({ media, messageId, ext }) {
@@ -194,7 +179,18 @@ async function persistMedia({ media, messageId, ext }) {
             ext,
             data: media.data
         });
-        return result?.success ? result.media_path : null;
+        if (result?.success && result.media_path) {
+            try {
+                const absolutePath = path.join(DATA_DIR, result.media_path);
+                fs.mkdirSync(path.dirname(absolutePath), { recursive: true });
+                if (!fs.existsSync(absolutePath)) {
+                    fs.writeFileSync(absolutePath, Buffer.from(media.data, 'base64'));
+                }
+            } catch (err) {
+                console.warn(`[WA:${accountName}] Failed to mirror media locally: ${err.message}`);
+            }
+            return result.media_path;
+        }
     }
 
     const fileName = `wa_${messageId}_${Date.now()}.${ext}`;
