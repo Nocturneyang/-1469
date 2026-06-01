@@ -24,27 +24,6 @@ module.exports = {
       }
     },
     {
-      name: "worker-tgu-laffic_service",
-      script: "./workers/worker-tg-user.js",
-      instances: 1,
-      exec_mode: "fork",
-      autorestart: true,
-      watch: false,
-      max_memory_restart: "512M",
-      env: {
-        NODE_ENV: "production",
-        DATA_DIR: process.env.DATA_DIR || "/data",
-        TG_ACCOUNT_NAME: "laffic_service",
-        TG_WARMUP_SECONDS: "600",
-        TG_DAILY_LIMIT: "2000",
-        TG_BATCH_SIZE: "100",
-        TG_SLEEP_MIN_MS: "3000",
-        TG_SLEEP_MAX_MS: "8000",
-        TG_BACKFILL_DAYS: "0",
-        TG_ENABLE_BACKFILL: "true"
-      }
-    },
-    {
       name: "ui-server",
       script: "./server.js",
       instances: 1,
