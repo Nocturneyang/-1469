@@ -43,8 +43,6 @@ export const useAuthStore = defineStore('auth', {
     },
 
     async hydrateSsoUser() {
-      if (this.user) return this.user
-
       const token = this.getSsoTokenFromUrl()
       const headers = {}
       if (token) headers.Authorization = `Bearer ${token}`

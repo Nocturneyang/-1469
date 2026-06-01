@@ -6,6 +6,13 @@ const { JWT_SECRET, authenticateToken, requireAdmin } = require('../middleware/a
 
 const router = express.Router();
 
+function normalizeSsoAdminInput(body = {}) {
+    const identity = String(body.identity || '').trim();
+    const displayName = String(body.display_name || body.displayName || identity).trim();
+    const note = String(body.note || '').trim();
+    return { identity, displayName, note };
+}
+
 router.post('/login', (req, res) => {
     const { username, password } = req.body;
     if (!username || !password) {
@@ -78,6 +85,55 @@ router.get('/users', authenticateToken, requireAdmin, (req, res) => {
         res.json({ success: true, data: users });
     } catch (err) {
         console.error('Get Users Error:', err);
+        res.status(500).json({ success: false, error: '服务器内部错误' });
+    }
+});
+
+router.get('/sso-admins', authenticateToken, requireAdmin, (req, res) => {
+    try {
+        const rows = db.prepare(`
+            SELECT id, identity, display_name, note, created_by, created_at, updated_at
+            FROM sso_admins
+            ORDER BY updated_at DESC, id DESC
+        `).all();
+        res.json({ success: true, data: rows });
+    } catch (err) {
+        console.error('Get SSO Admins Error:', err);
+        res.status(500).json({ success: false, error: '服务器内部错误' });
+    }
+});
+
+router.post('/sso-admins', authenticateToken, requireAdmin, (req, res) => {
+    const { identity, displayName, note } = normalizeSsoAdminInput(req.body);
+    if (!identity) {
+        return res.status(400).json({ success: false, error: '请输入钉钉身份标识' });
+    }
+
+    try {
+        db.prepare(`
+            INSERT INTO sso_admins (identity, display_name, note, created_by)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(identity) DO UPDATE SET
+                display_name = excluded.display_name,
+                note = excluded.note,
+                updated_at = datetime('now')
+        `).run(identity, displayName || identity, note, req.user?.username || 'admin');
+        res.json({ success: true, message: '钉钉管理员已保存' });
+    } catch (err) {
+        console.error('Save SSO Admin Error:', err);
+        res.status(500).json({ success: false, error: '服务器内部错误' });
+    }
+});
+
+router.delete('/sso-admins/:id', authenticateToken, requireAdmin, (req, res) => {
+    try {
+        const result = db.prepare('DELETE FROM sso_admins WHERE id = ?').run(req.params.id);
+        if (!result.changes) {
+            return res.status(404).json({ success: false, error: '记录不存在' });
+        }
+        res.json({ success: true, message: '钉钉管理员已删除' });
+    } catch (err) {
+        console.error('Delete SSO Admin Error:', err);
         res.status(500).json({ success: false, error: '服务器内部错误' });
     }
 });

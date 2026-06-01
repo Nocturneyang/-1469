@@ -1,8 +1,34 @@
 <template>
   <div class="user-management">
     <div class="panel">
-      <div class="panel-title">👥 用户管理</div>
-      <p style="font-size:13px;color:var(--t3);margin-bottom:24px">管理系统用户，包括创建、修改密码、修改角色和删除用户。</p>
+      <div class="panel-title">🔐 钉钉 SSO 管理员</div>
+      <p style="font-size:13px;color:var(--t3);margin-bottom:18px;line-height:1.7">
+        钉钉登录用户默认是游客。把姓名、工号、邮箱或手机号加入此列表后，匹配到的钉钉账号会获得管理员权限。
+      </p>
+
+      <div class="sso-form">
+        <el-input v-model="ssoAdminForm.identity" placeholder="身份标识，如：杨杰 / 工号 / 邮箱 / 手机号" />
+        <el-input v-model="ssoAdminForm.display_name" placeholder="显示名称，可选" />
+        <el-input v-model="ssoAdminForm.note" placeholder="备注，可选" />
+        <el-button type="primary" @click="handleSaveSsoAdmin">保存管理员</el-button>
+      </div>
+
+      <el-table :data="ssoAdmins" style="width:100%;margin-top:16px">
+        <el-table-column prop="identity" label="匹配标识" min-width="180" />
+        <el-table-column prop="display_name" label="显示名称" min-width="140" />
+        <el-table-column prop="note" label="备注" min-width="180" />
+        <el-table-column prop="updated_at" label="更新时间" width="180" />
+        <el-table-column label="操作" width="120">
+          <template #default="{ row }">
+            <el-button size="small" type="danger" @click="handleDeleteSsoAdmin(row)">移除</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+    </div>
+
+    <div class="panel">
+      <div class="panel-title">👥 本地账号管理</div>
+      <p style="font-size:13px;color:var(--t3);margin-bottom:24px">保留给非 SSO 环境使用；生产钉钉登录主要使用上方 SSO 管理员列表控制权限。</p>
 
       <el-button type="primary" @click="openCreateModal" style="margin-bottom:16px">
         + 新增用户
@@ -89,6 +115,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import api from '@/utils/request'
 
 const users = ref([])
+const ssoAdmins = ref([])
 const createModalVisible = ref(false)
 const passwordModalVisible = ref(false)
 const roleModalVisible = ref(false)
@@ -101,6 +128,12 @@ const createForm = reactive({
   username: '',
   password: '',
   role: 'view'
+})
+
+const ssoAdminForm = reactive({
+  identity: '',
+  display_name: '',
+  note: ''
 })
 
 const passwordForm = reactive({
@@ -129,6 +162,50 @@ const fetchUsers = async () => {
     }
   } catch (err) {
     ElMessage.error('获取用户列表失败')
+  }
+}
+
+const fetchSsoAdmins = async () => {
+  try {
+    const res = await api.get('/api/auth/sso-admins')
+    if (res.success) {
+      ssoAdmins.value = res.data || []
+    }
+  } catch (err) {
+    ElMessage.error('获取钉钉管理员失败')
+  }
+}
+
+const handleSaveSsoAdmin = async () => {
+  if (!ssoAdminForm.identity.trim()) {
+    ElMessage.warning('请输入身份标识')
+    return
+  }
+
+  try {
+    const res = await api.post('/api/auth/sso-admins', ssoAdminForm)
+    if (res.success) {
+      ElMessage.success(res.message || '保存成功')
+      ssoAdminForm.identity = ''
+      ssoAdminForm.display_name = ''
+      ssoAdminForm.note = ''
+      fetchSsoAdmins()
+    }
+  } catch (err) {
+    ElMessage.error('保存钉钉管理员失败')
+  }
+}
+
+const handleDeleteSsoAdmin = async (item) => {
+  try {
+    await ElMessageBox.confirm(`确定移除「${item.display_name || item.identity}」的管理员权限吗？`, '确认移除', { type: 'warning' })
+    const res = await api.delete(`/api/auth/sso-admins/${item.id}`)
+    if (res.success) {
+      ElMessage.success(res.message || '已移除')
+      fetchSsoAdmins()
+    }
+  } catch (err) {
+    if (err !== 'cancel') ElMessage.error('移除钉钉管理员失败')
   }
 }
 
@@ -214,11 +291,25 @@ const handleDelete = async (user) => {
 
 onMounted(() => {
   fetchUsers()
+  fetchSsoAdmins()
 })
 </script>
 
 <style scoped>
 .user-management {
   padding: 20px;
+}
+
+.sso-form {
+  display: grid;
+  grid-template-columns: minmax(180px, 1.3fr) minmax(140px, 1fr) minmax(160px, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+}
+
+@media (max-width: 960px) {
+  .sso-form {
+    grid-template-columns: 1fr;
+  }
 }
 </style>

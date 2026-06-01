@@ -87,6 +87,7 @@ const navSections = computed(() => [
     items: authStore.isAdmin ? [
       { path: "/admin/accounts", label: "帐号管理", icon: "👥" },
       { path: "/admin/config", label: "系统配置", icon: "⚙️" },
+      { path: "/admin/users", label: "权限管理", icon: "🔐" },
       { path: "/admin/logs", label: "系统日志", icon: "📋" },
     ] : []
   }
@@ -104,6 +105,7 @@ const titleMap = {
   '/daily-digest': '日报汇总 Daily Digest',
   '/admin/accounts': '帐号管理 Accounts',
   '/admin/config': '系统配置 Config',
+  '/admin/users': '权限管理 Access',
   '/knowledge': 'QA 知识库',
   '/profiles': '供应商画像 Supplier Profiles',
   '/devicekb': '设备知识库 Device KB',

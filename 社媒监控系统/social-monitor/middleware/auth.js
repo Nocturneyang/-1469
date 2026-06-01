@@ -35,11 +35,39 @@ function normalizeRole(role) {
 
 function applyAdminPolicy(user) {
     const admins = parseList(process.env.SSO_ADMIN_USERS);
-    const identity = [user.id, user.username, user.email].filter(Boolean).map(String);
-    if (user.role === 'admin' || admins.includes('*') || identity.some((item) => admins.includes(item))) {
+    const identity = getUserIdentities(user);
+    if (
+        user.role === 'admin' ||
+        admins.includes('*') ||
+        identity.some((item) => admins.includes(item)) ||
+        isSsoAdminIdentity(identity)
+    ) {
         return { ...user, role: 'admin' };
     }
-    return { ...user, role: normalizeRole(user.role) };
+    return { ...user, role: isSsoEnabled() ? 'viewer' : normalizeRole(user.role) };
+}
+
+function getUserIdentities(user) {
+    return [
+        user.id,
+        user.username,
+        user.email,
+        user.mobile,
+        user.department
+    ].filter(Boolean).map(item => String(item).trim()).filter(Boolean);
+}
+
+function isSsoAdminIdentity(identities) {
+    if (!isSsoEnabled() || !identities.length) return false;
+    try {
+        const { db } = require('../db/database');
+        const rows = db.prepare('SELECT identity FROM sso_admins').all();
+        const adminSet = new Set(rows.map(row => String(row.identity || '').trim()).filter(Boolean));
+        return identities.some(identity => adminSet.has(identity));
+    } catch (err) {
+        console.warn('[auth] Failed to read sso_admins:', err.message);
+        return false;
+    }
 }
 
 function parseSsoUserHeader(req) {
@@ -54,6 +82,8 @@ function parseSsoUserHeader(req) {
             id,
             username: username || String(id),
             email: parsed.email || '',
+            mobile: parsed.mobile || parsed.phone || parsed.phoneNumber || '',
+            department: parsed.department || parsed.deptName || parsed.orgName || '',
             role: parsed.role || parsed.userRole || parsed.permission
         });
     } catch (_) {
@@ -85,6 +115,8 @@ function getSsoUserFromHeaders(req) {
         id: id || username || email,
         username: username || email || String(id),
         email,
+        mobile: readHeader(req, ['x-user-mobile', 'x-user-phone', 'x-sso-mobile']),
+        department: readHeader(req, ['x-user-department', 'x-user-dept', 'x-sso-department']),
         role
     });
 }
@@ -113,6 +145,8 @@ function mapRemoteUserInfo(payload) {
         id,
         username: username || String(id),
         email: data.email || '',
+        mobile: data.mobile || data.phone || data.phoneNumber || '',
+        department: data.department || data.deptName || data.orgName || '',
         role: data.role || data.userRole || data.permission
     });
 }

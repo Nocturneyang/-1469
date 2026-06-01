@@ -124,6 +124,16 @@ function initSchema() {
             created_at DATETIME DEFAULT (datetime('now'))
         );
 
+        CREATE TABLE IF NOT EXISTS sso_admins (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            identity TEXT NOT NULL UNIQUE,
+            display_name TEXT,
+            note TEXT,
+            created_by TEXT,
+            created_at DATETIME DEFAULT (datetime('now')),
+            updated_at DATETIME DEFAULT (datetime('now'))
+        );
+
         CREATE INDEX IF NOT EXISTS idx_collector_heartbeats_platform ON collector_heartbeats(platform, updated_at);
         CREATE INDEX IF NOT EXISTS idx_wa_runtime_events_account_time ON wa_runtime_events(account_id, created_at);
 
@@ -275,9 +285,36 @@ function initSchema() {
 
             CREATE INDEX IF NOT EXISTS idx_collector_heartbeats_platform ON collector_heartbeats(platform, updated_at);
             CREATE INDEX IF NOT EXISTS idx_wa_runtime_events_account_time ON wa_runtime_events(account_id, created_at);
+
+            CREATE TABLE IF NOT EXISTS sso_admins (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                identity TEXT NOT NULL UNIQUE,
+                display_name TEXT,
+                note TEXT,
+                created_by TEXT,
+                created_at DATETIME DEFAULT (datetime('now')),
+                updated_at DATETIME DEFAULT (datetime('now'))
+            );
         `);
     } catch (err) {
         console.error('Migration error for collector runtime tables:', err.message);
+    }
+
+    try {
+        const seedAdmins = String(process.env.SSO_BOOTSTRAP_ADMINS || process.env.SSO_ADMIN_USERS || '杨杰')
+            .split(',')
+            .map(item => item.trim())
+            .filter(Boolean);
+        const stmt = db.prepare(`
+            INSERT INTO sso_admins (identity, display_name, note, created_by)
+            VALUES (?, ?, 'bootstrap', 'system')
+            ON CONFLICT(identity) DO NOTHING
+        `);
+        for (const identity of seedAdmins) {
+            stmt.run(identity, identity);
+        }
+    } catch (err) {
+        console.error('Migration error for sso_admins seed:', err.message);
     }
 }
 
