@@ -12,6 +12,7 @@ module.exports = {
       max_memory_restart: "512M",
       env: {
         NODE_ENV: "production",
+        DATA_DIR: process.env.DATA_DIR || "/data",
         TG_ACCOUNT_NAME: "tgu_supplier",
         TG_WARMUP_SECONDS: "600",
         TG_DAILY_LIMIT: "2000",
@@ -32,6 +33,7 @@ module.exports = {
       max_memory_restart: "512M",
       env: {
         NODE_ENV: "production",
+        DATA_DIR: process.env.DATA_DIR || "/data",
         TG_ACCOUNT_NAME: "laffic_service",
         TG_WARMUP_SECONDS: "600",
         TG_DAILY_LIMIT: "2000",
@@ -52,6 +54,7 @@ module.exports = {
       max_memory_restart: "384M",
       env: {
         NODE_ENV: "production",
+        DATA_DIR: process.env.DATA_DIR || "/data",
         LOCAL_WA_RUNTIME_ENABLED: "false",
         COLLECTOR_TOKEN: process.env.COLLECTOR_TOKEN || "",
         SSO_ADMIN_USERS: process.env.SSO_ADMIN_USERS || "",
@@ -68,7 +71,8 @@ module.exports = {
       watch: false,
       max_memory_restart: "256M",
       env: {
-        NODE_ENV: "production"
+        NODE_ENV: "production",
+        DATA_DIR: process.env.DATA_DIR || "/data"
       }
     },
     {
@@ -80,7 +84,8 @@ module.exports = {
       watch: false,
       max_memory_restart: "512M",
       env: {
-        NODE_ENV: "production"
+        NODE_ENV: "production",
+        DATA_DIR: process.env.DATA_DIR || "/data"
       }
     },
     {
@@ -92,7 +97,8 @@ module.exports = {
       watch: false,
       max_memory_restart: "256M",
       env: {
-        NODE_ENV: "production"
+        NODE_ENV: "production",
+        DATA_DIR: process.env.DATA_DIR || "/data"
       }
     },
     {
@@ -104,7 +110,8 @@ module.exports = {
       watch: false,
       max_memory_restart: "256M",
       env: {
-        NODE_ENV: "production"
+        NODE_ENV: "production",
+        DATA_DIR: process.env.DATA_DIR || "/data"
       }
     },
     {
@@ -116,7 +123,8 @@ module.exports = {
       watch: false,
       max_memory_restart: "256M",
       env: {
-        NODE_ENV: "production"
+        NODE_ENV: "production",
+        DATA_DIR: process.env.DATA_DIR || "/data"
       }
     },
     {
@@ -128,7 +136,8 @@ module.exports = {
       watch: false,
       max_memory_restart: "256M",
       env: {
-        NODE_ENV: "production"
+        NODE_ENV: "production",
+        DATA_DIR: process.env.DATA_DIR || "/data"
       }
     },
     {
@@ -140,7 +149,8 @@ module.exports = {
       watch: false,
       max_memory_restart: "256M",
       env: {
-        NODE_ENV: "production"
+        NODE_ENV: "production",
+        DATA_DIR: process.env.DATA_DIR || "/data"
       }
     },
     {
@@ -152,7 +162,8 @@ module.exports = {
       watch: false,
       max_memory_restart: "256M",
       env: {
-        NODE_ENV: "production"
+        NODE_ENV: "production",
+        DATA_DIR: process.env.DATA_DIR || "/data"
       }
     }
   ]

@@ -397,6 +397,8 @@ function createTgUserRouter({ safeWriteEcosystem }) {
 
         try {
             const workerName = `worker-tgu-${id}`;
+            const dataDir = process.env.DATA_DIR || path.join(__dirname, '..');
+            const accountKey = id.toUpperCase().replace(/-/g, '_');
             const cfg = {
                 warmup_seconds: warmup_seconds || 600,
                 daily_limit: daily_limit || 2000,
@@ -407,9 +409,13 @@ function createTgUserRouter({ safeWriteEcosystem }) {
                 enable_backfill: enable_backfill !== undefined ? enable_backfill : true
             };
 
+            writeEnvKeys({
+                [`TG_API_ID_${accountKey}`]: String(api_id),
+                [`TG_API_HASH_${accountKey}`]: api_hash
+            });
             saveRateLimit(id, cfg);
 
-            const ecoPath = path.join(process.env.DATA_DIR || path.join(__dirname, '..'), 'ecosystem.config.js');
+            const ecoPath = path.join(dataDir, 'ecosystem.config.js');
             if (fs.existsSync(ecoPath)) {
                 let eco = fs.readFileSync(ecoPath, 'utf8');
                 if (!eco.includes(workerName)) {
@@ -423,6 +429,7 @@ function createTgUserRouter({ safeWriteEcosystem }) {
       max_memory_restart: '512M',
       env: {
         NODE_ENV: "production",
+        DATA_DIR: ${JSON.stringify(dataDir)},
         TG_ACCOUNT_NAME: "${id}",
         TG_WARMUP_SECONDS: "${cfg.warmup_seconds}",
         TG_DAILY_LIMIT: "${cfg.daily_limit}",
@@ -441,11 +448,11 @@ function createTgUserRouter({ safeWriteEcosystem }) {
             db.prepare(`INSERT OR REPLACE INTO accounts (id, platform, status, updated_at) VALUES (?, 'telegram', 'idle', datetime('now'))`).run(`tgu-${id}`);
 
             const { spawn, exec } = require('child_process');
-            const accountKey = id.toUpperCase().replace(/-/g, '_');
             const spawnEnv = {
                 PATH: process.env.PATH,
                 HOME: process.env.HOME,
                 NODE_ENV: 'production',
+                DATA_DIR: dataDir,
                 TG_ACCOUNT_NAME: id,
                 [`TG_API_ID_${accountKey}`]: String(api_id),
                 [`TG_API_HASH_${accountKey}`]: api_hash,
