@@ -88,7 +88,7 @@ const router = createRouter({
   routes
 })
 
-router.beforeEach((to, from, next) => {
+router.beforeEach(async (to, from, next) => {
   const authStore = useAuthStore()
 
   if (isSsoEnabled()) {
@@ -96,7 +96,20 @@ router.beforeEach((to, from, next) => {
       redirectToSsoLogin()
       next(false)
     } else {
-      next()
+      try {
+        const user = await authStore.hydrateSsoUser()
+        if (!user) {
+          redirectToSsoLogin()
+          next(false)
+        } else if (to.meta.requiresAdmin && authStore.user?.role !== 'admin') {
+          next({ name: 'Home' })
+        } else {
+          next()
+        }
+      } catch (_) {
+        redirectToSsoLogin()
+        next(false)
+      }
     }
   } else if (!to.meta.public && !authStore.isAuthenticated) {
     next({ name: 'Login' })

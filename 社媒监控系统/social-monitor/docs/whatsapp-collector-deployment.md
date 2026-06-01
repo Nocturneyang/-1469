@@ -2,16 +2,25 @@
 
 ## 主系统
 
-`social-monitor` App ID 58 只保留 Web/API/DB/分析/调度能力：
+`social-monitor` App ID 58 只保留 Web/API/DB/分析/collector 接收能力：
 
 - 镜像：`Dockerfile`
 - PVC：`/data`，10Gi，ReadWriteMany
-- 资源：requests `500m / 1Gi`，limits `2 / 3Gi`
+- 资源：requests `1CPU / 3Gi`，limits `4CPU / 8Gi`
 - 部署模板：`.deployhub/k8s/app.yaml`
 - 敏感配置：建议通过 `social-monitor-secrets` 注入，例如 `COLLECTOR_TOKEN`、AI Key、钉钉 Webhook
 - Deploy Hub 要求 skyline-ark-sso；当前已开启 `sso: true`，后端支持 `/token/userinfo`，前端会通过 `/runtime-config.js` 读取 SSO 配置并在 401 时跳转统一登录页
 
-主系统组件不运行 WA worker；镜像中包含 Chromium，是为了让同一镜像也能作为 WA collector 组件启动。
+主系统组件默认不运行 WA worker，也不运行 `wa-supervisor`。镜像中仍包含 Chromium，是为了让同一镜像在本地或独立 collector 角色下复用。
+
+生产环境必须设置：
+
+```bash
+LOCAL_WA_RUNTIME_ENABLED=false
+COLLECTOR_TOKEN=生产端接收令牌
+```
+
+`LOCAL_WA_RUNTIME_ENABLED=false` 会让生产端新增 WA 时只登记账号，不修改生产 PM2，也不在生产 Pod 内启动 Chrome。
 
 ### 健康检查
 
@@ -68,52 +77,63 @@ npm run db:backup:prune -- --execute
 - `SSO_USERINFO_URL` 可选；网关注入 `x-user-*` 用户头时可不配置
 - `SSO_ADMIN_USERS` 可选；逗号分隔，匹配 SSO 的 id/username/email，用于授予后台管理权限
 
-## 单镜像单组件多进程
+## 生产轻量主系统
 
 当前 Deploy Hub/Rainbond 使用单镜像模式。根目录 `Dockerfile` 会把主系统、分析器、WA/TG worker、collector 协议、Chromium 运行时都打进同一个镜像。
 
-当前线上策略是不依赖 Rainbond 管理端启动每个账号组件：
+当前线上策略是生产只跑轻量主系统：
 
 - Rainbond 只启动 `social-monitor` 一个组件。
-- 容器内由 PM2 启动 `ui-server`、分析器、`wa-supervisor`、WA worker、TG user worker。
-- 前端新增或重登账号时，后端继续修改 `/data/ecosystem.config.js` 并调用 PM2 启动进程。
+- 容器内 PM2 启动 `ui-server`、分析器和必要的轻量 TG user worker。
+- 生产 PM2 基线不包含 WA worker，不包含 `wa-supervisor`。
+- 前端新增 WA 时只在生产数据库登记，真正的 WA Chrome 进程放到本地 collector 机器启动。
 
 根目录 `docker-entrypoint.sh` 会把随镜像发布的 `ecosystem.cloud.config.js` 同步到 `/data/ecosystem.config.js`。每次需要重置线上 PM2 基线时提升 `CLOUD_ECOSYSTEM_VERSION` 默认值；入口脚本会先备份旧配置再覆盖。
 
 镜像入口仍保留 `ACCOUNT_NAME` / `TG_ACCOUNT_NAME` 的单进程分流能力，作为未来硬隔离 collector 的备用方案，但当前 Deploy Hub 配置不再创建独立 collector Deployment。
 
-## WA Worker
+## 本地 WA Collector
 
-当前线上 WA 账号在 `social-monitor` 组件内以 PM2 worker 方式运行：
+当前 WA 账号在本地机器以 PM2 worker 方式运行，并上报生产 collector API：
 
-- 镜像：与主系统相同的单镜像
-- 启动方式：`ecosystem.cloud.config.js` 或前端动态写入 `/data/ecosystem.config.js`
-- PVC：共用主系统 `/data`，用于 SQLite、媒体、WA session、PM2 配置
-- 当前主组件资源：requests `1CPU / 3Gi`，limits `4CPU / 8Gi`
+- 启动方式：`ecosystem.local-collectors.config.js`
+- 默认账号：`nanya_wa`、`wa_oumei2`、`wa_shebi`
+- 本地数据：WA session、collector outbox 和本地运行状态文件留在本机 `DATA_DIR`
+- 生产数据：消息、媒体、心跳和运行事件通过 `/api/collector/*` 写入生产 SQLite
 - WA worker 必填环境变量：
   - `ACCOUNT_NAME`
-  - `DATA_DIR=/data`，由入口脚本统一设置
-  - `PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium`
+  - `COLLECTOR_API_URL=https://social-monitor.tyhark.com`
+  - `COLLECTOR_TOKEN`，必须与生产端一致
 
-PM2 和 `wa-supervisor` 仍然会记录心跳、初始化阶段、Chrome RSS、无 Chrome、重启保护等状态。区别只是运行位置从 Rainbond 独立组件改回同一个 Pod 内部。
+启动本地 collector：
 
-### 长期资源口径
+```bash
+cd 社媒监控系统/social-monitor
+export COLLECTOR_API_URL=https://social-monitor.tyhark.com
+export COLLECTOR_TOKEN=生产端接收令牌
+npm run wa:collectors:local
+npx pm2 save
+```
 
-如果坚持不通过管理端启动账号组件，长期 5 个以上 WA 账号就需要把 `social-monitor` 这个唯一组件整体扩容：
+本地 `wa-supervisor` 会记录初始化阶段、Chrome RSS、无 Chrome、重启保护等状态；WA worker 会把心跳同步到生产，因此生产前端仍能看到账号状态和二维码。
 
-- 当前 1 个 WA + 2 个 TG：requests `1CPU / 3Gi`，limits `4CPU / 8Gi`。
-- 3 个 WA + 2 个 TG：建议 requests `2CPU / 8Gi`，limits `6CPU / 16Gi`。
-- 5 个 WA + 2 个 TG：建议 requests `3CPU / 12Gi`，limits `8CPU / 24Gi`。
-- 节点可用内存建议不低于 `32Gi`，给系统、镜像缓存、SQLite、媒体处理和 Chrome 峰值留余量。
+### 资源口径
 
-这种模式的好处是前端可以直接新增、扫码、重登，不再卡 Rainbond 组件启动；代价是多个 Chrome 共享同一个 Pod 内存上限，某个账号异常膨胀时仍可能影响主系统。因此必须保留 `wa-supervisor` 的串行初始化、RSS 巡检和重启保护。
+生产不再按 WA Chrome 峰值规划内存。WA Chrome 资源按本地机器规划：
+
+- 3 个 WA 稳态约 `2GB` Chrome RSS。
+- 5 个 WA 稳态约 `3GB - 6GB`。
+- 单账号异常峰值可能到 `2GB - 3GB`，本地 16GB 机器可承接波动。
+
+不要让同一个 WA 账号在本地和生产同时运行；同一个账号只保留一个有效 Chrome session。
 
 ## Orchestrator RuntimeAdapter
 
-本地仍使用 PM2：
+本地 collector 使用 PM2：
 
 ```bash
 WA_RUNTIME_ADAPTER=pm2
+WA_PM2_ECOSYSTEM_FILE=ecosystem.local-collectors.config.js
 ```
 
 如果未来重新采用硬隔离 collector，主系统的 `wa-supervisor` 可切到 Kubernetes/Rainbond 适配器：
@@ -146,7 +166,7 @@ WA_K8S_DEPLOYMENT_MAP={"nanya_wa":"wa-collector-nanya-wa"}
 
 ## 迁移顺序
 
-1. 部署单镜像单组件版本，确认 `social-monitor` Pod 资源不低于当前账号规模。
+1. 部署生产轻量主系统，确认 `LOCAL_WA_RUNTIME_ENABLED=false` 和 `COLLECTOR_TOKEN` 已配置。
 2. 先检查试点账号和 TG 用户号的迁移条件：
 
 ```bash
@@ -161,7 +181,7 @@ npm run collector:migration:status -- \
   --exclude mason_text,TG_kaxian
 ```
 
-3. 试点 WA 账号 `wa_shebi` 由 `ecosystem.cloud.config.js` 直接启动，系统账号 ID 是 `wa-wa_shebi`。
-4. TG 用户号本轮只启动 `tgu_supplier` 和 `laffic_service`；`mason_text`、`TG_kaxian` 暂不迁移。
-5. 前端确认账号心跳、消息、媒体路径都能更新。
-6. 观察 24 小时后，再逐个通过前端新增或重登其他 WA 账号。
+3. 在生产确认没有 `worker-wa-*` 和 `wa-supervisor` 进程。
+4. 在本地启动 `ecosystem.local-collectors.config.js`，扫码登录 `nanya_wa`、`wa_oumei2`、`wa_shebi`。
+5. 前端确认账号心跳、二维码、消息、媒体路径都能更新。
+6. 观察 24 小时后，后续新增 WA 默认写入本地 collector 配置并在本地启动。

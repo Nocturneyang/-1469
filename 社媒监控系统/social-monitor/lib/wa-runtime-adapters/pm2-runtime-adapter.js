@@ -57,7 +57,8 @@ class Pm2RuntimeAdapter {
 
     startCollector(accountName) {
         const workerName = this.workerName(accountName);
-        return this.runPm2(['start', 'ecosystem.config.js', '--only', workerName, '--env', 'production']);
+        const ecosystemFile = process.env.WA_PM2_ECOSYSTEM_FILE || 'ecosystem.config.js';
+        return this.runPm2(['start', ecosystemFile, '--only', workerName, '--env', 'production']);
     }
 
     deleteCollector(accountName) {

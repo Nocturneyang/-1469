@@ -2,7 +2,7 @@
 
 ## 目标
 
-将 WhatsApp 从无治理的主进程里拆出来，形成“PM2 多进程托管 + 状态调度中心化 + 可替代通道预留”的架构。当前线上约束是不通过 Rainbond 管理端逐个启动账号组件，所以采用单镜像、单 Rainbond 组件、容器内 PM2 多进程模式。
+将 WhatsApp 从生产主进程里拆出来，形成“生产轻量主系统 + 本地 PM2 collector + collector API 上报 + 可替代通道预留”的架构。当前资源结论是生产 3Gi 不适合继续承载多个 WA Chrome，本地 16GB 机器承载多 WA 更稳。
 
 ## 阶段 1：运行态账本（已落地）
 
@@ -41,15 +41,16 @@
 
 后续可继续把主系统本地媒体存储替换成对象存储，避免 App ID 58 的 10GiB PVC 被图片/视频长期占满。
 
-## 阶段 4：Rainbond 单组件上线
+## 阶段 4：生产轻量化 + 本地 Collector
 
-- `social-monitor` App ID 58 使用单镜像单组件模式：Rainbond 只启动主组件，容器内 PM2 启动 Web/API、分析器、WA worker、TG user worker。
-- 当前试点资源为 requests `1CPU / 3Gi`、limits `4CPU / 8Gi`，覆盖 `wa_shebi` + `tgu_supplier` + `laffic_service`。
-- 长期 5 个以上 WA 账号如果仍坚持单组件模式，建议把主组件提高到 requests `3CPU / 12Gi`、limits `8CPU / 24Gi`。
-- Orchestrator 通过 PM2 RuntimeAdapter 管理账号进程，前端新增/重登账号不需要管理员启动 Rainbond 组件。
+- `social-monitor` App ID 58 使用单镜像单组件模式：Rainbond 只启动主组件，容器内 PM2 启动 Web/API、分析器和必要的轻量 TG user worker。
+- 生产设置 `LOCAL_WA_RUNTIME_ENABLED=false`，`ecosystem.cloud.config.js` 不包含 `worker-wa-*`，也不包含 `wa-supervisor`。
+- 前端新增 WA 时只在生产数据库登记为 `remote_pending`，不会在生产 PM2 里启动 Chrome。
+- 本地使用 `ecosystem.local-collectors.config.js` 启动 `nanya_wa`、`wa_oumei2`、`wa_shebi`，并通过 `COLLECTOR_API_URL` / `COLLECTOR_TOKEN` 上报生产。
+- 本地 Orchestrator 通过 PM2 RuntimeAdapter 管理账号进程，`WA_PM2_ECOSYSTEM_FILE=ecosystem.local-collectors.config.js`。
 - 根 `Dockerfile` 包含 Chromium，确保同一镜像里的 WA worker 可以启动 Chrome。
 - 新增 `.dockerignore`，避免把本地 session、SQLite、media、node_modules 打入主系统或 collector 镜像。
-- 新增 `.deployhub/k8s/app.yaml`，固化 App ID 58 的 10Gi PVC 和当前单组件资源规格。
+- `.deployhub/k8s/app.yaml` 固化 App ID 58 的 10Gi PVC、当前主组件资源规格和 `LOCAL_WA_RUNTIME_ENABLED=false`。
 - 保留 `npm run wa:collector:manifest` 作为未来硬隔离方案工具，但当前 Deploy Hub 不再使用独立 collector manifest。
 - 主系统已补齐 skyline-ark-sso 兼容：`sso: true`、`/token/userinfo`、运行时 `/runtime-config.js`、前端 401 统一登录跳转。
 

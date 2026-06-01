@@ -100,6 +100,7 @@ const runtimeState = {
 
 function reportHeartbeat(patch = {}) {
     Object.assign(runtimeState, patch);
+    const chromeSnapshot = getAccountChromeRuntimeSnapshot();
     const payload = {
         accountId,
         platform: 'whatsapp',
@@ -109,6 +110,8 @@ function reportHeartbeat(patch = {}) {
         status: runtimeState.status,
         phase: runtimeState.phase,
         healthStatus: runtimeState.healthStatus,
+        chromeRssMb: chromeSnapshot.rssMb,
+        chromeProcessCount: chromeSnapshot.processCount,
         chromeVersion: chromeRuntime.chromeVersion || 'unknown',
         lastError: runtimeState.lastError,
         lastReadyAt: runtimeState.lastReadyAt,
@@ -256,6 +259,33 @@ function findAccountBrowserPids() {
         return pids;
     } catch (_) {
         return [];
+    }
+}
+
+function getAccountChromeRuntimeSnapshot() {
+    const { execSync } = require('child_process');
+    try {
+        const stdout = execSync('ps -axo pid,rss,command', { encoding: 'utf8', timeout: 5000, shell: '/bin/bash' });
+        const profileDirs = getBrowserProfileDirs();
+        let rssKb = 0;
+        let processCount = 0;
+
+        for (const line of stdout.split('\n')) {
+            const match = line.trim().match(/^(\d+)\s+(\d+)\s+(.+)$/);
+            if (!match) continue;
+            const pid = Number(match[1]);
+            if (!Number.isFinite(pid) || pid === process.pid) continue;
+            if (!profileDirs.some(profileDir => match[3].includes(profileDir))) continue;
+            rssKb += Number(match[2]) || 0;
+            processCount += 1;
+        }
+
+        return {
+            rssMb: Math.round(rssKb / 1024),
+            processCount
+        };
+    } catch (_) {
+        return { rssMb: null, processCount: null };
     }
 }
 

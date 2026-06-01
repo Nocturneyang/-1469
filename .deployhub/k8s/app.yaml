@@ -100,6 +100,8 @@ spec:
               value: "true"
             - name: PUPPETEER_SKIP_DOWNLOAD
               value: "true"
+            - name: LOCAL_WA_RUNTIME_ENABLED
+              value: "false"
             - name: SSO_ENABLED
               value: "true"
             - name: SSO_LOGIN_URL

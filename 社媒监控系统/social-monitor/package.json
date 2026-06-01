@@ -14,6 +14,7 @@
     "wa:runtime": "node scripts/wa-runtime-status.js",
     "wa:supervisor": "node workers/wa-supervisor.js",
     "wa:collector": "node scripts/start-wa-collector.js",
+    "wa:collectors:local": "npx pm2 start ecosystem.local-collectors.config.js --env production",
     "wa:collector:manifest": "node scripts/render-wa-collector-manifest.js",
     "tg:collector": "node scripts/start-tg-collector.js",
     "tg:collector:manifest": "node scripts/render-tg-collector-manifest.js",

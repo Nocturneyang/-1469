@@ -13,7 +13,7 @@ const api = axios.create({
 api.interceptors.request.use(
   (config) => {
     const authStore = useAuthStore()
-    if (authStore.token) {
+    if (authStore.token && !(isSsoEnabled() && authStore.token === '__sso__')) {
       config.headers.Authorization = `Bearer ${authStore.token}`
     }
     return config

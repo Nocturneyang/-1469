@@ -1,33 +1,7 @@
 module.exports = {
   apps: [
-    {
-      name: "worker-wa-wa_shebi",
-      script: "./workers/worker-wa.js",
-      max_memory_restart: "4G",
-      cron_restart: "0 4 * * *",
-      instances: 1,
-      exec_mode: "fork",
-      autorestart: true,
-      watch: false,
-      kill_timeout: 15000,
-      restart_delay: 30000,
-      max_restarts: 5,
-      min_uptime: "2m",
-      env: {
-        NODE_ENV: "production",
-        ACCOUNT_NAME: "wa_shebi",
-        WA_ORCHESTRATOR_MANAGED_INIT: "true",
-        WA_INIT_COOLDOWN_MS: "30000",
-        WA_INIT_QUARANTINE_AFTER: "10",
-        WA_INIT_QUARANTINE_MS: "60000",
-        WA_INIT_HARD_TIMEOUT_MS: "360000",
-        WA_AUTH_TIMEOUT_MS: "300000",
-        WA_PROTOCOL_TIMEOUT_MS: "600000",
-        WA_QR_IDLE_TIMEOUT_MS: "180000",
-        PUPPETEER_EXECUTABLE_PATH: "/usr/bin/chromium",
-        PUPPETEER_SKIP_DOWNLOAD: "true"
-      }
-    },
+    // Production baseline: Web/API, database consumers, collector receiver, and analyzers only.
+    // WhatsApp Chrome collectors run on local machines and report through /api/collector/*.
     {
       name: "worker-tgu-tgu_supplier",
       script: "./workers/worker-tg-user.js",
@@ -77,7 +51,8 @@ module.exports = {
       watch: false,
       max_memory_restart: "384M",
       env: {
-        NODE_ENV: "production"
+        NODE_ENV: "production",
+        LOCAL_WA_RUNTIME_ENABLED: "false"
       }
     },
     {
@@ -90,22 +65,6 @@ module.exports = {
       max_memory_restart: "256M",
       env: {
         NODE_ENV: "production"
-      }
-    },
-    {
-      name: "wa-supervisor",
-      script: "./workers/wa-supervisor.js",
-      instances: 1,
-      exec_mode: "fork",
-      autorestart: true,
-      watch: false,
-      max_memory_restart: "256M",
-      restart_delay: 30000,
-      max_restarts: 5,
-      min_uptime: "2m",
-      env: {
-        NODE_ENV: "production",
-        WA_RUNTIME_ADAPTER: "pm2"
       }
     },
     {

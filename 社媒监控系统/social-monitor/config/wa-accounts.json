@@ -22,13 +22,6 @@
       "business_sector": "直连供应商"
     },
     {
-      "id": "yatai-wa",
-      "enabled": true,
-      "priority": 90,
-      "region": "亚太区",
-      "business_sector": "直连供应商"
-    },
-    {
       "id": "wa_oumei2",
       "enabled": true,
       "priority": 50
@@ -36,7 +29,15 @@
     {
       "id": "wa_shebi",
       "enabled": true,
-      "priority": 50
+      "priority": 50,
+      "region": "设备区",
+      "business_sector": "直连供应商"
+    }
+  ],
+  "disabledAccounts": [
+    {
+      "id": "yatai-wa",
+      "reason": "Production/local split keeps non-recommended WA collectors stopped by default."
     }
   ]
 }

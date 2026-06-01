@@ -13,6 +13,7 @@ const puppeteer = require('puppeteer');
 
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '..');
 const WA_ACCOUNTS_CONFIG_PATH = path.join(DATA_DIR, 'config', 'wa-accounts.json');
+const LOCAL_WA_RUNTIME_ENABLED = process.env.LOCAL_WA_RUNTIME_ENABLED !== 'false';
 
 function collectWaChromeStats() {
     return new Promise((resolve) => {
@@ -221,6 +222,27 @@ function removeAppFromEcosystem(ecoPath, workerName) {
 }
 
 function buildWaAppConfig(accountName) {
+    const env = {
+        NODE_ENV: 'production',
+        ACCOUNT_NAME: accountName,
+        WA_ORCHESTRATOR_MANAGED_INIT: 'true',
+        WA_INIT_COOLDOWN_MS: '30000',
+        WA_INIT_QUARANTINE_AFTER: '10',
+        WA_INIT_QUARANTINE_MS: '60000',
+        WA_INIT_HARD_TIMEOUT_MS: '360000',
+        WA_AUTH_TIMEOUT_MS: '300000',
+        WA_PROTOCOL_TIMEOUT_MS: '600000',
+        WA_QR_IDLE_TIMEOUT_MS: '180000',
+        PUPPETEER_EXECUTABLE_PATH: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium',
+        PUPPETEER_SKIP_DOWNLOAD: 'true'
+    };
+
+    if (process.env.COLLECTOR_API_URL) {
+        env.COLLECTOR_API_URL = process.env.COLLECTOR_API_URL;
+        env.COLLECTOR_TOKEN = process.env.COLLECTOR_TOKEN || '';
+        env.COLLECTOR_ID = process.env.COLLECTOR_ID || `pm2:${accountName}`;
+    }
+
     return {
         name: `worker-wa-${accountName}`,
         script: './workers/worker-wa.js',
@@ -234,20 +256,7 @@ function buildWaAppConfig(accountName) {
         restart_delay: 30000,
         max_restarts: 5,
         min_uptime: '2m',
-        env: {
-            NODE_ENV: 'production',
-            ACCOUNT_NAME: accountName,
-            WA_ORCHESTRATOR_MANAGED_INIT: 'true',
-            WA_INIT_COOLDOWN_MS: '30000',
-            WA_INIT_QUARANTINE_AFTER: '10',
-            WA_INIT_QUARANTINE_MS: '60000',
-            WA_INIT_HARD_TIMEOUT_MS: '360000',
-            WA_AUTH_TIMEOUT_MS: '300000',
-            WA_PROTOCOL_TIMEOUT_MS: '600000',
-            WA_QR_IDLE_TIMEOUT_MS: '180000',
-            PUPPETEER_EXECUTABLE_PATH: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium',
-            PUPPETEER_SKIP_DOWNLOAD: 'true'
-        }
+        env
     };
 }
 
@@ -535,6 +544,9 @@ function createAccountsRouter({ safeWriteEcosystem }) {
         
         try {
             if (id.startsWith('wa-')) {
+                if (!LOCAL_WA_RUNTIME_ENABLED) {
+                    return res.status(409).json({ success: false, error: '生产端已禁用本地 WA 运行时，请在本地 collector 机器执行重登/重启。' });
+                }
                 const accName = id.replace('wa-', '');
                 db.prepare(`UPDATE accounts SET status = 'disconnected', qr_code = NULL WHERE id = ?`).run(id);
                 const sessionPath = path.join(process.env.DATA_DIR || path.join(__dirname, '..'), `whatsapp-session-${accName}`);
@@ -562,6 +574,9 @@ function createAccountsRouter({ safeWriteEcosystem }) {
             let workerName = '';
             let accName = '';
             if (id.startsWith('wa-')) {
+                if (!LOCAL_WA_RUNTIME_ENABLED) {
+                    return res.status(409).json({ success: false, error: '生产端已禁用本地 WA 运行时，请在本地 collector 机器重启对应 PM2 进程。' });
+                }
                 accName = id.replace('wa-', '');
                 workerName = `worker-wa-${accName}`;
             } else if (id.startsWith('tg-')) {
@@ -617,6 +632,9 @@ function createAccountsRouter({ safeWriteEcosystem }) {
             let workerName = '';
             let accName = '';
             if (id.startsWith('wa-')) {
+                if (!LOCAL_WA_RUNTIME_ENABLED) {
+                    return res.status(409).json({ success: false, error: '生产端已禁用本地 WA 运行时，请在本地 collector 机器清理 session 并重启。' });
+                }
                 accName = id.replace('wa-', '');
                 workerName = `worker-wa-${accName}`;
             } else if (id.startsWith('tg-')) {
@@ -745,6 +763,21 @@ function createAccountsRouter({ safeWriteEcosystem }) {
             if (platform === 'whatsapp') {
                 workerName = `worker-wa-${trimmedId}`;
                 scriptPath = './workers/worker-wa.js';
+                if (!LOCAL_WA_RUNTIME_ENABLED) {
+                    db.prepare(`
+                        INSERT INTO accounts (id, platform, status, health_status, runtime_provider, updated_at)
+                        VALUES (?, 'whatsapp', 'remote_pending', 'remote_collector_required', 'remote-collector', datetime('now'))
+                        ON CONFLICT(id) DO UPDATE SET
+                            status = excluded.status,
+                            health_status = excluded.health_status,
+                            runtime_provider = excluded.runtime_provider,
+                            updated_at = datetime('now')
+                    `).run('wa-' + trimmedId);
+                    return res.json({
+                        success: true,
+                        message: 'WhatsApp 账号已在生产端登记；请在本地 collector PM2 配置中启动同名账号并配置 COLLECTOR_API_URL/COLLECTOR_TOKEN。'
+                    });
+                }
                 db.prepare(`INSERT OR REPLACE INTO accounts (id, platform, status) VALUES (?, 'whatsapp', 'initializing')`).run('wa-' + trimmedId);
                 ensureWaAccountManaged(trimmedId);
             } else {
