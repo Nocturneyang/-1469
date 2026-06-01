@@ -6,6 +6,15 @@ function truthy(value) {
     return ['1', 'true', 'yes', 'on'].includes(String(value || '').trim().toLowerCase());
 }
 
+function getSsoUserInfoUrl() {
+    if (process.env.SSO_USERINFO_URL) return process.env.SSO_USERINFO_URL;
+    const loginUrl = String(process.env.SSO_LOGIN_URL || '');
+    if (loginUrl.includes('skyline-ark-sso.tyhark.com')) {
+        return 'https://skyline-ark-sso.tyhark.com/token/userinfo';
+    }
+    return '';
+}
+
 function isSsoEnabled() {
     return truthy(process.env.SSO_ENABLED || process.env.SKYLINE_SSO_ENABLED);
 }
@@ -177,12 +186,13 @@ function mapRemoteUserInfo(payload) {
 }
 
 async function getSsoUserFromRemote(req, token) {
-    if (!isSsoEnabled() || !token || !process.env.SSO_USERINFO_URL || typeof fetch !== 'function') return null;
+    const userInfoUrl = getSsoUserInfoUrl();
+    if (!isSsoEnabled() || !token || !userInfoUrl || typeof fetch !== 'function') return null;
 
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), Number(process.env.SSO_USERINFO_TIMEOUT_MS || 4000));
     try {
-        const response = await fetch(process.env.SSO_USERINFO_URL, {
+        const response = await fetch(userInfoUrl, {
             method: 'GET',
             headers: {
                 Authorization: `Bearer ${token}`,
