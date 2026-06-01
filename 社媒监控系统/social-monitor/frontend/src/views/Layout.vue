@@ -105,6 +105,7 @@ const titleMap = {
   '/feed': '原始数据流 Raw Feed',
   '/analytics': '数据看板 Analytics',
   '/daily-digest': '日报汇总 Daily Digest',
+  '/reports/daily': '日报详情 Daily Report',
   '/admin/accounts': '帐号管理 Accounts',
   '/admin/config': '系统配置 Config',
   '/admin/users': '权限管理 Access',

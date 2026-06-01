@@ -25,6 +25,19 @@ const dingtalk = require('../lib/dingtalk');
 const aiClient = require('../lib/ai-client');
 
 const ROOT = process.env.DATA_DIR || path.resolve(__dirname, '..');
+const DEFAULT_LINK_ONLY_ACCOUNTS = 'wa-wa_shebi,tgu-tgu_supplier';
+const LINK_ONLY_DIGEST_ACCOUNTS = new Set(
+  (process.env.DIGEST_LINK_ONLY_ACCOUNTS || DEFAULT_LINK_ONLY_ACCOUNTS)
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean)
+);
+const REPORT_PUBLIC_BASE_URL = (
+  process.env.REPORT_PUBLIC_BASE_URL ||
+  process.env.PUBLIC_BASE_URL ||
+  process.env.APP_BASE_URL ||
+  'https://social-monitor.tyhark.com'
+).replace(/\/+$/, '');
 
 // ─── 数据库连接 ──────────────────────────────────────────────────
 const sourceDb = new Database(path.join(ROOT, 'db', 'database.sqlite'), { readonly: true });
@@ -129,6 +142,52 @@ const DEFAULT_SILENCE_HOURS = 24;
 
 function getSilenceThresholdHours(sector) {
   return SILENCE_THRESHOLD_BY_SECTOR[sector] || DEFAULT_SILENCE_HOURS;
+}
+
+function shouldSendDigestAsLink(receiverAccount) {
+  return LINK_ONLY_DIGEST_ACCOUNTS.has(receiverAccount);
+}
+
+function buildDailyReportUrl(dateStr, receiverAccount) {
+  const url = new URL('/reports/daily', REPORT_PUBLIC_BASE_URL);
+  url.searchParams.set('date', dateStr);
+  url.searchParams.set('account', receiverAccount);
+  return url.toString();
+}
+
+function formatLinkDigest(summaries, range, platformLabel) {
+  const byAccount = new Map();
+  for (const summary of summaries) {
+    if (!byAccount.has(summary.receiverAccount)) {
+      byAccount.set(summary.receiverAccount, {
+        receiverAccount: summary.receiverAccount,
+        region: summary.region || '未知区',
+        businessSectors: new Set(),
+        groupCount: 0,
+        msgCount: 0,
+      });
+    }
+    const item = byAccount.get(summary.receiverAccount);
+    item.groupCount += 1;
+    item.msgCount += summary.msgCount || 0;
+    if (summary.businessSector) item.businessSectors.add(summary.businessSector);
+  }
+
+  const lines = [
+    `## ${platformLabel} 供应商群日报已生成`,
+    `${range.dateStr} 日报以站内链接形式查看`,
+    '',
+  ];
+
+  for (const item of byAccount.values()) {
+    const sectors = [...item.businessSectors].join(' / ') || '未分类';
+    const link = buildDailyReportUrl(range.dateStr, item.receiverAccount);
+    lines.push(`- **${item.receiverAccount}** (${item.region} / ${sectors})：${item.groupCount}群 / ${item.msgCount}条 [查看日报](${link})`);
+  }
+
+  lines.push('');
+  lines.push('请登录生产系统后查看完整详情。');
+  return lines.join('\n');
 }
 
 // ─── 并发控制 ────────────────────────────────────────────────────
@@ -311,20 +370,32 @@ async function generateDailyDigest() {
     byWebhook.get(whKey).summaries.push(s);
   }
 
-  for (const [whKey, group] of byWebhook) {
-    const summaries = group.summaries;
-    // 如果没有实质性的活跃群汇总数据则跳过，避免推送只有标题的空日报
-    if (!summaries || summaries.length === 0) continue;
+  const axios = require('axios');
+  const crypto = require('crypto');
+  function signUrl(webhookUrl, secret) {
+    if (!secret) return webhookUrl;
+    const timestamp = Date.now();
+    const stringToSign = `${timestamp}\n${secret}`;
+    const sign = crypto.createHmac('sha256', secret).update(stringToSign, 'utf8').digest('base64');
+    return `${webhookUrl}&timestamp=${timestamp}&sign=${encodeURIComponent(sign)}`;
+  }
 
-    // 无专属 webhook 且无全局兜底时跳过
-    if (!group.webhook && !process.env.DINGTALK_DIGEST) {
-      console.log(`[daily-digest] ⏭ 跳过 ${summaries.length}个群（无匹配 webhook）`);
-      continue;
+  async function postMarkdownToWebhook(whUrl, whSecret, title, text, whKey, logLabel) {
+    const url = signUrl(whUrl, whSecret);
+    try {
+      await axios.post(url, {
+        msgtype: 'markdown',
+        markdown: { title, text }
+      }, { timeout: 10000 });
+      console.log(`[daily-digest] ✅ Webhook ${whKey.slice(0, 40)}... ${logLabel}`);
+    } catch (err) {
+      console.error(`[daily-digest] ❌ Webhook 推送失败:`, err.message);
     }
+  }
 
-    // ── 本区域趋势数据 ──
-    const regionAccts = [...new Set(summaries.map(s => s.receiverAccount))];
-    const yesterdayTotal = summaries.reduce((s, g) => s + g.msgCount, 0);
+  function buildTrend(targetSummaries) {
+    const regionAccts = [...new Set(targetSummaries.map(s => s.receiverAccount))];
+    const yesterdayTotal = targetSummaries.reduce((s, g) => s + g.msgCount, 0);
 
     let prevDayCount = 0;
     if (regionAccts.length > 0) {
@@ -342,55 +413,62 @@ async function generateDailyDigest() {
 
     const trendPrevDay = prevDayCount > 0 ? ((yesterdayTotal - prevDayCount) / prevDayCount * 100).toFixed(0) : null;
     const trendLastWeek = lastWeekCount > 0 ? ((yesterdayTotal - lastWeekCount) / lastWeekCount * 100).toFixed(0) : null;
-    const trend = { yesterdayTotal, prevDayCount, lastWeekCount, trendPrevDay, trendLastWeek };
+    return { yesterdayTotal, prevDayCount, lastWeekCount, trendPrevDay, trendLastWeek };
+  }
 
-    // 确定该 webhook 覆盖的主要区域和平台（用于标题）
-    const platformsInGroup = [...new Set(summaries.map(s => s.platform))];
-    const regionsInGroup = [...new Set(summaries.map(s => s.region))];
-    const primaryPlatform = platformsInGroup.length === 1 ? platformsInGroup[0] : 'multi';
-    const primaryRegion = regionsInGroup.length === 1 ? regionsInGroup[0] : '';
+  for (const [whKey, group] of byWebhook) {
+    const summaries = group.summaries;
+    // 如果没有实质性的活跃群汇总数据则跳过，避免推送只有标题的空日报
+    if (!summaries || summaries.length === 0) continue;
 
-    // 筛选该 webhook 对应的沉默群组和未闭环事项
-    const gSilent = silentGroups.filter(g => {
-      const info = getRegionLabel(g.receiver_account);
-      const wh = findBestWebhook('DIGEST', info.platform, info.region, info.business_sector);
-      return (wh?.url || '__global__') === whKey;
-    });
-
-    const gOpenIssues = openIssues.filter(i =>
-      summaries.some(s => s.groupName === i.group_name)
-    );
-
-    const digestText = formatDigest(summaries, gSilent, range, gOpenIssues, primaryPlatform, trend, primaryRegion);
-    if (!digestText) continue;
-
-    const title = `📋 供应商群 ${range.dateStr} 日报${primaryRegion ? ` (${primaryRegion}专区)` : ''}`;
-
-    // 直接调用 _send 以避免 dingtalk.js 中的二次解析逻辑
-    const axios = require('axios');
-    const crypto = require('crypto');
-    function signUrl(webhookUrl, secret) {
-      if (!secret) return webhookUrl;
-      const timestamp = Date.now();
-      const stringToSign = `${timestamp}\n${secret}`;
-      const sign = crypto.createHmac('sha256', secret).update(stringToSign, 'utf8').digest('base64');
-      return `${webhookUrl}&timestamp=${timestamp}&sign=${encodeURIComponent(sign)}`;
+    // 无专属 webhook 且无全局兜底时跳过
+    if (!group.webhook && !process.env.DINGTALK_DIGEST) {
+      console.log(`[daily-digest] ⏭ 跳过 ${summaries.length}个群（无匹配 webhook）`);
+      continue;
     }
 
     const whUrl = group.webhook?.url || process.env.DINGTALK_DIGEST;
     const whSecret = group.webhook?.secret || process.env.DINGTALK_DIGEST_SECRET || process.env.DINGTALK_SECRET;
+    if (!whUrl) continue;
 
-    if (whUrl) {
-      const url = signUrl(whUrl, whSecret);
-      try {
-        await axios.post(url, {
-          msgtype: 'markdown',
-          markdown: { title, text: digestText }
-        }, { timeout: 10000 });
-        console.log(`[daily-digest] ✅ Webhook ${whKey.slice(0, 40)}... 推送完成 (${summaries.length}个群)`);
-      } catch (err) {
-        console.error(`[daily-digest] ❌ Webhook 推送失败:`, err.message);
+    const linkSummaries = summaries.filter(s => shouldSendDigestAsLink(s.receiverAccount));
+    const bodySummaries = summaries.filter(s => !shouldSendDigestAsLink(s.receiverAccount));
+
+    if (bodySummaries.length > 0) {
+      const trend = buildTrend(bodySummaries);
+
+      // 确定该 webhook 覆盖的主要区域和平台（用于标题）
+      const platformsInGroup = [...new Set(bodySummaries.map(s => s.platform))];
+      const regionsInGroup = [...new Set(bodySummaries.map(s => s.region))];
+      const primaryPlatform = platformsInGroup.length === 1 ? platformsInGroup[0] : 'multi';
+      const primaryRegion = regionsInGroup.length === 1 ? regionsInGroup[0] : '';
+
+      // 筛选该 webhook 对应的沉默群组和未闭环事项
+      const gSilent = silentGroups.filter(g => {
+        if (shouldSendDigestAsLink(g.receiver_account)) return false;
+        const info = getRegionLabel(g.receiver_account);
+        const wh = findBestWebhook('DIGEST', info.platform, info.region, info.business_sector);
+        return (wh?.url || '__global__') === whKey;
+      });
+
+      const gOpenIssues = openIssues.filter(i =>
+        bodySummaries.some(s => s.groupName === i.group_name)
+      );
+
+      const digestText = formatDigest(bodySummaries, gSilent, range, gOpenIssues, primaryPlatform, trend, primaryRegion);
+      if (digestText) {
+        const title = `📋 供应商群 ${range.dateStr} 日报${primaryRegion ? ` (${primaryRegion}专区)` : ''}`;
+        await postMarkdownToWebhook(whUrl, whSecret, title, digestText, whKey, `正文推送完成 (${bodySummaries.length}个群)`);
       }
+    }
+
+    if (linkSummaries.length > 0) {
+      const platformsInGroup = [...new Set(linkSummaries.map(s => s.platform))];
+      const platformNames = platformsInGroup.map(p => ({ wa: 'WhatsApp', tg: 'Telegram', tgu: 'Telegram', teams: 'Teams' }[p] || p));
+      const platformLabel = [...new Set(platformNames)].join(' & ');
+      const linkText = formatLinkDigest(linkSummaries, range, platformLabel);
+      const title = `📋 供应商群 ${range.dateStr} 日报链接`;
+      await postMarkdownToWebhook(whUrl, whSecret, title, linkText, whKey, `链接推送完成 (${linkSummaries.length}个群)`);
     }
   }
   } finally {

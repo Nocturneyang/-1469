@@ -83,6 +83,11 @@ const routes = [
         path: 'daily-digest',
         name: 'DailyDigest',
         component: () => import('@/views/DailyDigest.vue')
+      },
+      {
+        path: 'reports/daily',
+        name: 'DailyReport',
+        component: () => import('@/views/DailyDigest.vue')
       }
     ]
   }

@@ -483,7 +483,7 @@ router.get('/daily-digest', (req, res) => {
         const adb = getAnalyticsDb();
         if (!adb) return res.json({ success: true, data: { digests: [], trend: null, regions: [], sectors: [] } });
 
-        const { date, region, sector } = req.query;
+        const { date, region, sector, account } = req.query;
         
         // Helper function to normalize date format to match database format (YYYY-M-D)
         function normalizeDate(dateStr) {
@@ -518,6 +518,11 @@ router.get('/daily-digest', (req, res) => {
         if (sector) {
             sql += ' AND business_sector = ?';
             params.push(sector);
+        }
+
+        if (account) {
+            sql += ' AND receiver_account = ?';
+            params.push(account);
         }
         
         sql += ' ORDER BY digest_date DESC, business_sector, msg_count DESC';
@@ -555,6 +560,11 @@ router.get('/daily-digest', (req, res) => {
                 trendSql += ' AND business_sector = ?';
                 trendParams.push(sector);
             }
+
+            if (account) {
+                trendSql += ' AND receiver_account = ?';
+                trendParams.push(account);
+            }
             
             const currentTotal = adb.prepare(trendSql).get(...trendParams)?.total || 0;
             
@@ -563,6 +573,7 @@ router.get('/daily-digest', (req, res) => {
             const prevTrendParams = [prevDate];
             if (region) prevTrendParams.push(region);
             if (sector) prevTrendParams.push(sector);
+            if (account) prevTrendParams.push(account);
             const prevTotal = adb.prepare(prevTrendSql).get(...prevTrendParams)?.total || 0;
             
             // Last week trend
@@ -570,6 +581,7 @@ router.get('/daily-digest', (req, res) => {
             const weekTrendParams = [weekDate];
             if (region) weekTrendParams.push(region);
             if (sector) weekTrendParams.push(sector);
+            if (account) weekTrendParams.push(account);
             const weekTotal = adb.prepare(weekTrendSql).get(...weekTrendParams)?.total || 0;
             
             const trendPrevDay = prevTotal > 0 ? ((currentTotal - prevTotal) / prevTotal * 100).toFixed(0) : null;
@@ -587,6 +599,7 @@ router.get('/daily-digest', (req, res) => {
         // Get available regions and sectors
         const regions = adb.prepare('SELECT DISTINCT region FROM daily_digests WHERE region IS NOT NULL ORDER BY region').all().map(r => r.region);
         const sectors = adb.prepare('SELECT DISTINCT business_sector FROM daily_digests WHERE business_sector IS NOT NULL ORDER BY business_sector').all().map(r => r.business_sector);
+        const accounts = adb.prepare('SELECT DISTINCT receiver_account FROM daily_digests WHERE receiver_account IS NOT NULL ORDER BY receiver_account').all().map(r => r.receiver_account);
         
         // Get available dates - sort by date value instead of string
         const allDates = adb.prepare('SELECT DISTINCT digest_date FROM daily_digests').all().map(r => r.digest_date);
@@ -606,6 +619,7 @@ router.get('/daily-digest', (req, res) => {
                 trend,
                 regions,
                 sectors,
+                accounts,
                 dates,
                 selectedDate: targetDate || dates[0] || null
             }

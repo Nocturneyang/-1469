@@ -2,13 +2,17 @@
   <div class="view-enter">
     <div class="panel">
       <div class="panel-title">
-        <span class="title-text"><span class="panel-icon">📋</span> 日报汇总</span>
-        <span class="hint">每日09:00自动生成，展示各区域供应商群组消息摘要</span>
+        <span class="title-text"><span class="panel-icon">📋</span> {{ isReportView ? '日报详情' : '日报汇总' }}</span>
+        <span class="hint">{{ headerHint }}</span>
       </div>
 
       <div class="filters">
         <select class="form-control" style="max-width: 180px" v-model="selectedDate" @change="fetchData">
           <option v-for="d in dates" :key="d" :value="d">{{ d }}</option>
+        </select>
+        <select class="form-control" style="max-width: 220px" v-model="selectedAccount" @change="fetchData">
+          <option value="">全部账号</option>
+          <option v-for="a in accounts" :key="a" :value="a">{{ a }}</option>
         </select>
         <select class="form-control" style="max-width: 180px" v-model="selectedRegion" @change="fetchData">
           <option value="">全部区域</option>
@@ -28,11 +32,15 @@
       <div v-else>
         <!-- Trend Overview -->
         <div v-if="trend" class="trend-card">
-          <div class="trend-title">📊 趋势速览 ({{ selectedDate }})</div>
+          <div class="trend-title">📊 趋势速览 ({{ selectedDate }}{{ selectedAccount ? ` · ${selectedAccount}` : '' }})</div>
           <div class="trend-stats">
             <div class="trend-item">
               <span class="trend-label">昨日消息</span>
               <span class="trend-value">{{ trend.yesterdayTotal }} 条</span>
+            </div>
+            <div class="trend-item">
+              <span class="trend-label">覆盖群组</span>
+              <span class="trend-value">{{ digests.length }} 个</span>
             </div>
             <div v-if="trend.trendPrevDay !== null" class="trend-item">
               <span class="trend-label">环比前日</span>
@@ -93,18 +101,28 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import api from '@/utils/request'
 
+const route = useRoute()
 const selectedDate = ref('')
+const selectedAccount = ref('')
 const selectedRegion = ref('')
 const selectedSector = ref('')
 const dates = ref([])
+const accounts = ref([])
 const regions = ref([])
 const sectors = ref([])
 const digests = ref([])
 const trend = ref(null)
 const loading = ref(true)
+
+const isReportView = computed(() => route.path.startsWith('/reports/daily'))
+const headerHint = computed(() => {
+  if (selectedAccount.value) return `账号 ${selectedAccount.value} 的站内日报详情`
+  return '每日09:00自动生成，展示各区域供应商群组消息摘要'
+})
 
 const groupedDigests = computed(() => {
   const groups = {}
@@ -142,6 +160,7 @@ const fetchData = async () => {
   try {
     const params = {}
     if (selectedDate.value) params.date = selectedDate.value
+    if (selectedAccount.value) params.account = selectedAccount.value
     if (selectedRegion.value) params.region = selectedRegion.value
     if (selectedSector.value) params.sector = selectedSector.value
     
@@ -151,10 +170,11 @@ const fetchData = async () => {
       trend.value = res.data.trend || null
       regions.value = res.data.regions || []
       sectors.value = res.data.sectors || []
+      accounts.value = res.data.accounts || []
       dates.value = res.data.dates || []
       
-      if (!selectedDate.value && dates.value.length > 0) {
-        selectedDate.value = dates.value[0]
+      if (!selectedDate.value && (res.data.selectedDate || dates.value.length > 0)) {
+        selectedDate.value = res.data.selectedDate || dates.value[0]
       }
     }
   } catch (e) {
@@ -164,7 +184,7 @@ const fetchData = async () => {
 }
 
 const exportMarkdown = () => {
-  let md = `# 日报汇总 - ${selectedDate.value}\n\n`
+  let md = `# 日报汇总 - ${selectedDate.value}${selectedAccount.value ? ` - ${selectedAccount.value}` : ''}\n\n`
   
   if (trend.value) {
     md += `## 📊 趋势速览\n`
@@ -217,7 +237,20 @@ const exportMarkdown = () => {
   URL.revokeObjectURL(url)
 }
 
+const applyRouteQuery = () => {
+  selectedDate.value = typeof route.query.date === 'string' ? route.query.date : selectedDate.value
+  selectedAccount.value = typeof route.query.account === 'string' ? route.query.account : selectedAccount.value
+  selectedRegion.value = typeof route.query.region === 'string' ? route.query.region : selectedRegion.value
+  selectedSector.value = typeof route.query.sector === 'string' ? route.query.sector : selectedSector.value
+}
+
 onMounted(() => {
+  applyRouteQuery()
+  fetchData()
+})
+
+watch(() => route.fullPath, () => {
+  applyRouteQuery()
   fetchData()
 })
 </script>
