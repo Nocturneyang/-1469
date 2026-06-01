@@ -63,37 +63,42 @@ const router = useRouter()
 const route = useRoute()
 const authStore = useAuthStore()
 
-const navSections = computed(() => [
-  {
-    title: "实时监控",
-    items: [
-      { path: "/", label: "全盘态势", icon: "📊" },
-      { path: "/feed", label: "原始数据流", icon: "💬" },
-      { path: "/analytics", label: "数据看板", icon: "📈" },
-      { path: "/daily-digest", label: "日报汇总", icon: "📋" },
-    ]
-  },
-  {
-    title: "知识资产",
-    items: [
-      { path: "/knowledge", label: "QA 知识库", icon: "📖" },
-      { path: "/devicekb", label: "设备知识库", icon: "🔧" },
-      { path: "/templates", label: "内容模板库", icon: "📝" },
-      { path: "/profiles", label: "供应商画像", icon: "🏷️" },
-    ]
-  },
-  {
-    title: "系统管理",
-    items: [
-      { path: "/admin/config", label: "系统配置", icon: "⚙️" },
-      ...(authStore.isAdmin ? [
+const navSections = computed(() => {
+  const sections = [
+    {
+      title: "实时监控",
+      items: [
+        { path: "/", label: "全盘态势", icon: "📊" },
+        { path: "/feed", label: "原始数据流", icon: "💬" },
+        { path: "/analytics", label: "数据看板", icon: "📈" },
+        { path: "/daily-digest", label: "日报汇总", icon: "📋" },
+      ]
+    },
+    {
+      title: "知识资产",
+      items: [
+        { path: "/knowledge", label: "QA 知识库", icon: "📖" },
+        { path: "/devicekb", label: "设备知识库", icon: "🔧" },
+        { path: "/templates", label: "内容模板库", icon: "📝" },
+        { path: "/profiles", label: "供应商画像", icon: "🏷️" },
+      ]
+    }
+  ]
+
+  if (authStore.isAdmin) {
+    sections.push({
+      title: "系统管理",
+      items: [
+        { path: "/admin/config", label: "系统配置", icon: "⚙️" },
         { path: "/admin/accounts", label: "帐号管理", icon: "👥" },
         { path: "/admin/users", label: "权限管理", icon: "🔐" },
         { path: "/admin/logs", label: "系统日志", icon: "📋" },
-      ] : [])
-    ]
+      ]
+    })
   }
-])
+
+  return sections
+})
 
 const isActive = (path) => {
   if (path === '/') return route.path === '/'
