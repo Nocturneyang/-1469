@@ -220,6 +220,7 @@ app.use('/api', authenticateToken);
 // ─── 路由挂载（按权限分层）─────────────────────────────────────────
 // 普通用户可访问的只读接口
 app.use('/api', dataRoutes);
+app.use('/api', analyticsRoutes);
 
 // ─── Stage 兼容 API：老验收脚本直接扫描 server.js ─────────────────
 const REGION_CONFIG_PATH = path.join(process.env.DATA_DIR || __dirname, 'config', 'account-regions.json');
@@ -465,7 +466,21 @@ const publicDir = path.join(__dirname, 'frontend/dist');
 if (!fs.existsSync(publicDir)) {
     fs.mkdirSync(publicDir, { recursive: true });
 }
-app.use(express.static(publicDir));
+app.use(express.static(publicDir, {
+    etag: true,
+    lastModified: true,
+    setHeaders(res, filePath) {
+        if (filePath.includes(`${path.sep}assets${path.sep}`) && /\.(?:js|css)$/i.test(filePath)) {
+            res.setHeader('Cache-Control', 'no-cache');
+        } else if (filePath.includes(`${path.sep}assets${path.sep}`)) {
+            res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+        } else if (filePath.endsWith('.html')) {
+            res.setHeader('Cache-Control', 'no-cache');
+        } else {
+            res.setHeader('Cache-Control', 'public, max-age=3600');
+        }
+    }
+}));
 
 // Fallback for SPA routing
 app.get(/^(?!\/api|\/media).*$/, (req, res) => {
@@ -505,9 +520,6 @@ function safeWriteEcosystem(newContent) {
         throw new Error(`ecosystem.config.js 验证失败，已回滚: ${verifyErr.message}`);
     }
 }
-// 普通用户可访问的分析接口
-app.use('/api', analyticsRoutes);
-
 // 以下接口需要 admin 权限
 app.use('/api/accounts', requireAdmin, createAccountsRouter({ safeWriteEcosystem }));
 app.use('/api', configRoutes);

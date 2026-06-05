@@ -19,6 +19,8 @@
 require('dotenv').config();
 const path = require('path');
 const Database = require('better-sqlite3');
+const dingtalk = require('../lib/dingtalk');
+const { getRegionInfo } = require('../lib/region-config');
 
 const ROOT = process.env.DATA_DIR || path.resolve(__dirname, '..');
 
@@ -53,12 +55,14 @@ const SCAN_INTERVAL = 30 * 1000;         // 30秒扫一次
 
 // ─── 语句预编译 ───────────────────────────────────────────────────
 const selectOpenIssues = analyticsDb.prepare(`
-  SELECT id, alert_id, group_name, group_id, region, issue_type,
-         status, opened_at, commitment_text, commitment_due,
-         escalation_count, last_escalated_at
-  FROM issue_records
-  WHERE status IN ('open', 'escalated')
-  ORDER BY opened_at ASC
+  SELECT ir.id, ir.alert_id, ir.group_name, ir.group_id, ir.region, ir.business_sector, ir.issue_type,
+         ir.status, ir.opened_at, ir.commitment_text, ir.commitment_due,
+         ir.escalation_count, ir.last_escalated_at,
+         ar.receiver_account, ar.alert_level
+  FROM issue_records ir
+  LEFT JOIN alert_records ar ON ar.id = ir.alert_id
+  WHERE ir.status IN ('open', 'escalated')
+  ORDER BY ir.opened_at ASC
 `);
 
 const closeIssue = analyticsDb.prepare(`
@@ -83,6 +87,58 @@ const markCommitmentUnmet = analyticsDb.prepare(`
   SET commitment_met = 0
   WHERE id = ?
 `);
+
+function alertTypeForIssue(issue) {
+  const level = String(issue.alert_level || 'p1').toUpperCase();
+  return ['P0', 'P1', 'P2'].includes(level) ? level : 'P1';
+}
+
+function platformForIssue(issue) {
+  if (!issue.receiver_account) return undefined;
+  return getRegionInfo(issue.receiver_account).platform;
+}
+
+async function notifyEscalation(issue, elapsedMs, stageLabel) {
+  const durationMins = elapsedMs / 60000;
+  const sendResult = await dingtalk.sendEscalation({
+    groupName: issue.group_name,
+    region: issue.region,
+    issueType: `${issue.issue_type}（${stageLabel}）`,
+    openedAt: issue.opened_at,
+    durationMins,
+    platform: platformForIssue(issue),
+    businessSector: issue.business_sector,
+    alertType: alertTypeForIssue(issue),
+  });
+  if (!sendResult?.ok) {
+    console.warn(`[lifecycle] ${stageLabel}推送跳过：${issue.group_name} | ${sendResult?.reason || 'unknown'}`);
+  }
+}
+
+async function notifyCommitmentUnmet(issue) {
+  const dueStr = issue.commitment_due
+    ? new Date(issue.commitment_due).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })
+    : '未解析';
+  const content = [
+    `### ⏰ [承诺未兑现] ${issue.region} | ${issue.group_name}`,
+    '',
+    `**问题类型：** ${issue.issue_type}`,
+    `**承诺内容：** ${issue.commitment_text || '未记录'}`,
+    `**承诺截止：** ${dueStr}`,
+    `**状态：** 到期后仍未检测到闭环信号，请跟进确认`,
+  ].join('\n');
+  const sendResult = await dingtalk.sendAlert({
+    title: `[承诺未兑现] ${issue.region}-${issue.group_name}`,
+    content,
+    platform: platformForIssue(issue),
+    region: issue.region,
+    businessSector: issue.business_sector,
+    alertType: alertTypeForIssue(issue),
+  });
+  if (!sendResult?.ok) {
+    console.warn(`[lifecycle] 承诺未兑现推送跳过：${issue.group_name} | ${sendResult?.reason || 'unknown'}`);
+  }
+}
 
 // ─── 主扫描函数 ──────────────────────────────────────────────────
 async function scanIssues() {
@@ -125,25 +181,26 @@ async function scanIssues() {
     }
     if (closed) continue;
 
-    // ── 2. 承诺到期检查（仅标记，不推送）──
+    // ── 2. 承诺到期检查 ──
     if (issue.commitment_due && now > issue.commitment_due) {
       const dueMsCheck = analyticsDb.prepare('SELECT commitment_met FROM issue_records WHERE id = ?').get(issue.id);
       if (dueMsCheck?.commitment_met === null) {
         markCommitmentUnmet.run(issue.id);
-        console.log(`[lifecycle] ⏰ 承诺未兑现（仅记录）：${issue.group_name}`);
+        await notifyCommitmentUnmet(issue);
+        console.log(`[lifecycle] ⏰ 承诺未兑现：${issue.group_name}`);
       }
     }
 
-    // ── 3. 超时标记（仅升级状态，不推送）──
-    if (elapsedMs >= WARN_MS && issue.status === 'open' && (issue.escalation_count || 0) === 0) {
+    // ── 3. 超时升级/提醒 ──
+    const escalationCount = issue.escalation_count || 0;
+    if (elapsedMs >= ESCALATE_MS && escalationCount < 2) {
       escalateIssue.run(now, issue.id);
-      console.log(`[lifecycle] ⚠️ 30分钟超时（仅标记）：${issue.group_name}`);
-    }
-
-    // ── 4. 超时2小时升级（仅标记，不推送）──
-    if (elapsedMs >= ESCALATE_MS && (issue.escalation_count || 0) < 2) {
+      await notifyEscalation(issue, elapsedMs, '2小时升级');
+      console.log(`[lifecycle] 🚨 2小时升级：${issue.group_name}`);
+    } else if (elapsedMs >= WARN_MS && issue.status === 'open' && escalationCount === 0) {
       escalateIssue.run(now, issue.id);
-      console.log(`[lifecycle] 🚨 2小时升级（仅标记）：${issue.group_name}`);
+      await notifyEscalation(issue, elapsedMs, '30分钟未解决');
+      console.log(`[lifecycle] ⚠️ 30分钟超时：${issue.group_name}`);
     }
   }
 }

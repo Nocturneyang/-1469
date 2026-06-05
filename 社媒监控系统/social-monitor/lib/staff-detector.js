@@ -18,7 +18,8 @@ if (!fs.existsSync(CONFIG_DIR)) {
 if (!fs.existsSync(CONFIG_PATH)) {
   fs.writeFileSync(CONFIG_PATH, JSON.stringify({
     whitelist: ['ITNIO~ DJ', 'ITNIO Support', 'Routing'],
-    keywords: ['itnio', 'support', 'routing']
+    keywords: ['itnio', 'support', 'routing'],
+    external_contacts: []
   }, null, 2));
 }
 
@@ -39,7 +40,7 @@ function loadConfig() {
     lastLoadTime = now;
   } catch (e) {
     console.error('[staff-detector] 加载白名单失败:', e.message);
-    cachedConfig = { whitelist: [], keywords: ['itnio', 'support', 'routing'] };
+    cachedConfig = { whitelist: [], keywords: ['itnio', 'support', 'routing'], external_contacts: [] };
   }
   return cachedConfig;
 }
@@ -50,6 +51,10 @@ function isInternalStaff(senderName) {
   const config = loadConfig();
   const name = String(senderName).trim();
   const lowerName = name.toLowerCase();
+
+  if (config.external_contacts && config.external_contacts.includes(name)) {
+    return false;
+  }
 
   // 1. 完全匹配白名单（如特殊姓名 David, Jessica 等）
   if (config.whitelist && config.whitelist.includes(name)) {

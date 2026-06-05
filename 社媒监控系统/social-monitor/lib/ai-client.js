@@ -27,15 +27,31 @@ const OPENAI_API_KEY = process.env.OPENAI_API_KEY || process.env.ANTHROPIC_API_K
 const OPENAI_BASE_URL = (process.env.OPENAI_BASE_URL || process.env.ANTHROPIC_BASE_URL || 'https://api.openai.com/v1').replace(/\/$/, '');
 
 // 分层模型配置（按场景选择最佳性价比模型）
-//   FAST    — 高频轻量（内容审核 / 模板提取 / 单消息打标签），追求低成本
-//   DEFAULT — 中等任务（供应商告警 / QA 提取 / 设备知识 / 上下文校验），中文表现强
-//   PRO     — 高质量长文（每日日报 / 周报 / 供应商画像），对推理质量敏感
+//   FAST    — 高频轻量（供应商告警 / 内容审核 / 模板提取），追求低成本和低延迟
+//   DEFAULT — 中等任务（QA 提取 / 设备知识 / 上下文校验），中文业务判断稳定
+//   PRO     — 低频高质量长文默认档；具体日报/周报/画像可用场景变量覆盖
 const OPENAI_MODEL_DEFAULT =
-  process.env.OPENAI_MODEL || process.env.ANTHROPIC_MODEL || 'deepseek-v3';
+  process.env.OPENAI_MODEL || process.env.ANTHROPIC_MODEL || 'deepseek-v4-pro';
 const OPENAI_MODEL_FAST =
-  process.env.OPENAI_MODEL_FAST || 'anthropic/claude-haiku-4.5';
+  process.env.OPENAI_MODEL_FAST || 'deepseek-v4-flash';
 const OPENAI_MODEL_PRO =
-  process.env.OPENAI_MODEL_PRO || 'anthropic/claude-3.7-sonnet';
+  process.env.OPENAI_MODEL_PRO || 'claude-sonnet-4.5';
+
+// 场景级默认模型。未配置时使用当前 OneAPI 定价页中更适合该任务的模型。
+const ALERT_AI_MODEL =
+  process.env.ALERT_AI_MODEL || 'deepseek-v4-flash';
+const EXTRACTION_AI_MODEL =
+  process.env.EXTRACTION_AI_MODEL || 'deepseek-v4-flash';
+const KNOWLEDGE_AI_MODEL =
+  process.env.KNOWLEDGE_AI_MODEL || OPENAI_MODEL_DEFAULT;
+const DAILY_DIGEST_AI_MODEL =
+  process.env.DAILY_DIGEST_AI_MODEL || OPENAI_MODEL_DEFAULT;
+const WEEKLY_RELIABILITY_AI_MODEL =
+  process.env.WEEKLY_RELIABILITY_AI_MODEL || 'claude-sonnet-4.5';
+const SUPPLIER_PROFILE_AI_MODEL =
+  process.env.SUPPLIER_PROFILE_AI_MODEL || OPENAI_MODEL_DEFAULT;
+const DOMAIN_INTELLIGENCE_AI_MODEL =
+  process.env.DOMAIN_INTELLIGENCE_AI_MODEL || EXTRACTION_AI_MODEL;
 // 兼容旧引用
 const OPENAI_MODEL = OPENAI_MODEL_DEFAULT;
 
@@ -43,6 +59,11 @@ function pickModel(tier) {
   if (tier === 'fast') return OPENAI_MODEL_FAST;
   if (tier === 'pro') return OPENAI_MODEL_PRO;
   return OPENAI_MODEL_DEFAULT;
+}
+
+function envNumber(name, fallback) {
+  const n = Number(process.env[name]);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
 }
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
@@ -55,7 +76,8 @@ const PROMPT_VERSIONS = {
   supplierAlert: 'v1.1',
   dailyDigest: 'v1.2',
   weeklyReliability: 'v1.0',
-  supplierProfile: 'v1.0',
+  supplierProfile: 'v1.1',
+  domainIntelligence: 'v1.0',
 };
 
 // ─── 熔断器 ──────────────────────────────────────────────────────
@@ -95,7 +117,7 @@ async function openCircuit(reason) {
 }
 
 // ─── OpenAI 兼容接口调用（支持 one-api / 自建中转）───────────────
-async function callOpenAICompat(prompt, model, maxTokens = 16384, systemMessage = null) {
+async function callOpenAICompat(prompt, model, maxTokens = 16384, systemMessage = null, timeoutMs = 25000) {
   if (!OPENAI_API_KEY) throw new Error('OPENAI_API_KEY 未配置');
 
   const url = `${OPENAI_BASE_URL}/chat/completions`;
@@ -116,7 +138,7 @@ async function callOpenAICompat(prompt, model, maxTokens = 16384, systemMessage 
         Authorization: `Bearer ${OPENAI_API_KEY}`,
         'Content-Type': 'application/json',
       },
-      timeout: 25000,
+      timeout: timeoutMs,
     }
   );
 
@@ -128,7 +150,7 @@ async function callOpenAICompat(prompt, model, maxTokens = 16384, systemMessage 
 }
 
 // ─── Gemini 通过 one-api 中转（备用）────────────────────────────────
-async function callGemini(prompt) {
+async function callGemini(prompt, timeoutMs = 25000) {
   if (!GEMINI_API_KEY) throw new Error('GEMINI_API_KEY 未配置');
 
   const url = `${OPENAI_BASE_URL}/chat/completions`;
@@ -145,7 +167,7 @@ async function callGemini(prompt) {
         Authorization: `Bearer ${GEMINI_API_KEY}`,
         'Content-Type': 'application/json',
       },
-      timeout: 25000,
+      timeout: timeoutMs,
     }
   );
 
@@ -170,11 +192,12 @@ async function callAI(prompt, options = {}) {
   const model = options.model || pickModel(options.tier);
   const maxTokens = options.maxTokens;
   const systemMessage = options.systemMessage || null;
+  const timeoutMs = options.timeoutMs || 25000;
 
   // ① 尝试 OpenAI 兼容接口
   if (OPENAI_API_KEY) {
     try {
-      const text = await callOpenAICompat(prompt, model, maxTokens, systemMessage);
+      const text = await callOpenAICompat(prompt, model, maxTokens, systemMessage, timeoutMs);
       return text;
     } catch (err) {
       const status = err?.response?.status;
@@ -189,7 +212,7 @@ async function callAI(prompt, options = {}) {
   // ② 尝试 Gemini 直连（不分层，所有 tier 共用同一 Gemini 备份）
   if (GEMINI_API_KEY) {
     try {
-      return await callGemini(prompt);
+      return await callGemini(prompt, timeoutMs);
     } catch (err) {
       const status = err?.response?.status;
       if (status === 429 || status === 402) {
@@ -251,7 +274,7 @@ async function analyzeAlertMessages(displayName, groupType, msgs, senderNames, c
     : '（无上文）';
 
   const prompt =
-    `你是ITNIO短信平台的运营风控引擎。以下是【${displayName}】在过去5分钟的消息：
+    `你是ITNIO短信平台的运营风控引擎。请判断【${displayName}】过去5分钟是否出现新的供应商告警。
 
 【窗口前文（对话背景）】：
 ---
@@ -265,19 +288,20 @@ ${messagesBlock}
 
 群类型：${groupType} | 主要外部联系人：${senderNames.join(', ')}
 
-请判断（参照前文，区分新问题与延续讨论）：
-1. 是否存在新的通道故障/成功率跌零/SID配置问题/内容被屏蔽的信号？（0-10分）
-2. 若评分 >= 7，输出30字内告警标题（英文内容中文输出）。
-3. 问题类型：通道故障/成功率告警/内容过滤/SID变更/无异常（选一）。
-4. 供应商是否有明确承诺？提取承诺原文（无则为null）。
-5. 下一步建议（1句话）。
+判定规则：
+- 只判断“窗口内新出现或明显升级”的问题；前文已存在且无升级则降分。
+- 告警信号包括：通道故障、成功率/投递率跌零、SID配置异常、内容被屏蔽、供应商承诺修复。
+- score 为 0-10；score < 7 时 type 必须为"无异常"，title/action 为空字符串，commitment 为 null。
+- type 只能是：通道故障/成功率告警/内容过滤/SID变更/无异常。
+- title ≤ 30字，action ≤ 35字；commitment 只提取供应商原文承诺，无则 null。
 
-【重要】直接输出JSON，不要输出任何思考过程、解释文字或markdown标记。JSON必须完整且格式正确：
-{"score":8,"title":"菲律宾Smart OTP投递率跌零","type":"成功率告警","commitment":"will fix in 30 mins","action":"检查SID 8100385配置，30分钟后确认是否恢复"}`;
+只输出以下 JSON，不要输出解释、markdown 或额外字段：
+{"score":8,"title":"菲律宾Smart OTP投递率跌零","type":"成功率告警","commitment":"will fix in 30 mins","action":"30分钟后复查投递率并确认SID配置"}`;
 
   try {
     const text = await callAI(prompt, {
-      tier: 'default',
+      tier: 'fast',
+      model: ALERT_AI_MODEL,
       systemMessage: 'You are a JSON-only API. Output ONLY valid JSON, no explanations, no thinking process, no markdown. Start with { and end with }.'
     });
     const result = extractJSON(text);
@@ -330,6 +354,7 @@ ${openIssuesList}
   try {
     const text = await callAI(prompt, {
       tier: 'pro',
+      model: DAILY_DIGEST_AI_MODEL,
       systemMessage: 'You are a JSON-only API. Output ONLY valid JSON, no explanations, no thinking process, no markdown. Start with { and end with }.'
     });
     const result = extractJSON(text);
@@ -355,19 +380,25 @@ async function analyzeWeeklyReliability(stats, rangeStr) {
     return `- ${s.region || '未知'}-${s.group_name}: 综合评分 ${s.score}, 告警次数 ${s.total_issues}, 未决问题 ${s.still_open}, 承诺兑现率 ${cr}`;
   }).join('\n');
 
-  const prompt = `你是ITNIO短信平台的资深通道管理专家。请根据以下通道供应商本周（${rangeStr}）的客观统计数据，生成一份简短的高管级分析洞察摘要（150字左右）。
+  const prompt = `你是ITNIO短信平台的资深通道管理专家。请根据以下通道供应商本周（${rangeStr}）的客观统计数据，生成一份适合管理层阅读的简短周报洞察（150字左右）。
 
 数据列表（包含区域、群组名、综合评分、告警次数、遗留未决问题数、承诺兑现率）：
 ${statsText}
 
 要求：
-1. 请务必使用 **换行、分段或列表（如 1. 2. 3.）** 的形式排版，绝不能输出一整块密集的纯文本！
-2. 核心结论：直奔主题指出整体盘面情况，点名表现最好和表现最差（跌破80分/频繁告警）的通道。
-3. 运营建议：单独换行，给出1-2个针对性的干预建议（如约谈、停流、观察等），以“💡 建议：”开头。
-4. 语气专业客观，不要包裹在 \`\`\`markdown 代码块中，直接输出排版好的文本。`;
+1. 使用 2-3 个短段落或编号列表，避免整块长文。
+2. 第一段给整体盘面判断，必须点名表现最好和风险最高的通道。
+3. 第二段给 1-2 条运营建议，建议要可执行，如约谈、停流、观察、复盘。
+4. 只基于数据判断，不编造未提供的供应商背景。
+5. 不要输出 markdown 代码块，直接输出排版好的中文文本。`;
 
   try {
-    const text = await callAI(prompt, { tier: 'pro' });
+    const text = await callAI(prompt, {
+      tier: 'pro',
+      model: WEEKLY_RELIABILITY_AI_MODEL,
+      maxTokens: envNumber('WEEKLY_RELIABILITY_AI_MAX_TOKENS', 900),
+      timeoutMs: envNumber('WEEKLY_RELIABILITY_AI_TIMEOUT_MS', 60000),
+    });
     return text ? text.trim() : null;
   } catch (err) {
     if (err.message === 'AI_DEGRADED') return null;
@@ -383,7 +414,7 @@ ${statsText}
  */
 async function analyzeContentReview(submitterName, contentSubmitted, reviewerReply) {
   const prompt =
-    `你是ITNIO短信平台的内容审核判定引擎。
+    `你是ITNIO短信平台的内容审核判定引擎。只判断供应商是否批准本次内容发送。
 
 ITNIO运营人员（${submitterName}）向供应商发送了内容审核请求：
 ---
@@ -395,23 +426,19 @@ ${contentSubmitted.slice(0, 800)}
 ${reviewerReply.slice(0, 500)}
 ---
 
-请判定供应商对审核请求的态度：
-1. approved: 是否批准该内容发送？true=批准, false=拒绝, null=无法判定（回复不明确）
-2. confidence: 判定置信度（0.0-1.0）
-3. reason: 一句话说明判定依据（中文，≤30字）
+规则：
+- 明确同意：ok/approved/可以发送/no problem/pass 等 → approved=true。
+- 明确拒绝或要求修改：reject/cannot/blocked/not allowed/需修改 等 → approved=false。
+- 仅确认收到、追问技术信息、语义不清 → approved=null。
+- confidence 为 0-1；reason ≤ 24字，只写判定依据。
 
-注意：
-- 明确批准（如"ok""approved""可以发送""no problem"）→ approved=true
-- 明确拒绝（如"reject""cannot""不可以""blocked""content not allowed"）→ approved=false
-- 要求修改后再发 → approved=false, reason注明需修改
-- 模糊回复、仅确认收到、技术询问 → approved=null
-
-【重要】直接输出JSON，不要输出任何思考过程、解释文字或markdown标记。JSON必须完整且格式正确：
-{"approved":true,"confidence":0.95,"reason":"供应商明确回复ok确认内容可发送"}`;
+只输出以下 JSON，不要输出解释、markdown 或额外字段：
+{"approved":true,"confidence":0.95,"reason":"供应商明确同意发送"}`;
 
   try {
     const text = await callAI(prompt, {
       tier: 'fast',
+      model: EXTRACTION_AI_MODEL,
       systemMessage: 'You are a JSON-only API. Output ONLY valid JSON, no explanations, no thinking process, no markdown. Start with { and end with }.'
     });
     const result = extractJSON(text);
@@ -444,7 +471,7 @@ async function analyzeIssueToQA(displayName, sector, messages, resolutionSummary
   }).join('\n');
 
   const prompt =
-    `你是ITNIO的知识管理引擎。请从以下已闭环的问题对话中提取QA知识。
+    `你是ITNIO的知识管理引擎。请从已闭环对话中提取可复用 QA 知识，只抽取对话中明确出现的信息。
 
 业务板块：${sector}
 群组：${displayName}
@@ -452,22 +479,23 @@ async function analyzeIssueToQA(displayName, sector, messages, resolutionSummary
 
 完整对话：
 ---
-${conversation.slice(0, 3500)}
+${conversation.slice(0, 3000)}
 ---
 
-请提取：
-1. question_type: 问题分类（≤10个字，如"设备无法连接""OTP未送达""503错误""DLR延迟"）
-2. question_summary: 问题现象一句话描述（≤30字）
-3. question_keywords: 检索关键词（3-5个，逗号分隔，中英文）
-4. answer_steps: 标准解决步骤（数组，每步≤30字）
-5. answer_category: 解决类型（配置修改/重启/更换硬件/联系运营商/等待恢复/内容调整/其他）
+字段要求：
+- question_type ≤ 10字。
+- question_summary ≤ 30字，描述问题现象。
+- question_keywords 3-5个，逗号分隔，中英文均可。
+- answer_steps 1-5步，每步≤28字；不要编造未出现的操作。
+- answer_category 只能是：配置修改/重启/更换硬件/联系运营商/等待恢复/内容调整/其他。
 
-【重要】直接输出JSON，不要输出任何思考过程、解释文字或markdown标记。JSON必须完整且格式正确：
+只输出以下 JSON，不要输出解释、markdown 或额外字段：
 {"question_type":"设备无法连接","question_summary":"GOIP设备端口断开无法连接","question_keywords":"disconnect,port,无法连接,goip","answer_steps":["检查网络和端口配置","重启设备","Anydesk远程排查"],"answer_category":"重启"}`;
 
   try {
     const text = await callAI(prompt, {
       tier: 'default',
+      model: KNOWLEDGE_AI_MODEL,
       systemMessage: 'You are a JSON-only API. Output ONLY valid JSON, no explanations, no thinking process, no markdown. Start with { and end with }.'
     });
     const result = extractJSON(text);
@@ -498,28 +526,29 @@ async function analyzeDeviceKnowledge(displayName, messages) {
   }).join('\n');
 
   const prompt =
-    `你是ITNIO的设备知识管理引擎。请从以下设备供应商的故障排查对话中提取设备知识。
+    `你是ITNIO的设备知识管理引擎。请从设备供应商闭环对话中提取设备故障知识，只抽取明确出现的信息。
 
 群组：${displayName}
 
 完整对话：
 ---
-${conversation.slice(0, 3000)}
+${conversation.slice(0, 2600)}
 ---
 
-请提取：
-1. device_model: 设备型号（如"RFH0606938SM""MP 664U-64N""GOIP-32"等，从对话中识别。若无明确型号，填"未知设备"）
-2. device_type: 设备类型（goip / modem / SIM box / gateway / 其他）
-3. fault_symptom: 故障现象一句话描述（≤30字）
-4. fault_category: 故障分类（配置/硬件/网络/SIM/IMEI/端口/其他）
-5. solution_steps: 解决步骤（数组，每步≤30字）
+字段要求：
+- device_model 无明确型号填"未知设备"。
+- device_type 只能是：goip/modem/SIM box/gateway/其他。
+- fault_symptom ≤ 30字。
+- fault_category 只能是：配置/硬件/网络/SIM/IMEI/端口/其他。
+- solution_steps 1-5步，每步≤28字；不要补充对话外方案。
 
-【重要】直接输出JSON，不要输出任何思考过程、解释文字或markdown标记。JSON必须完整且格式正确：
+只输出以下 JSON，不要输出解释、markdown 或额外字段：
 {"device_model":"RFH0606938SM","device_type":"goip","fault_symptom":"模块4-8不工作，端口无法连接","fault_category":"硬件","solution_steps":["检查模块供电和连接线","拆卸模块重新安装","更换故障模块"]}`;
 
   try {
     const text = await callAI(prompt, {
       tier: 'default',
+      model: KNOWLEDGE_AI_MODEL,
       systemMessage: 'You are a JSON-only API. Output ONLY valid JSON, no explanations, no thinking process, no markdown. Start with { and end with }.'
     });
     const result = extractJSON(text);
@@ -550,31 +579,32 @@ async function analyzeContentTemplate(displayName, messages, reviewVerdict) {
   }).join('\n');
 
   const prompt =
-    `你是ITNIO的短信模板管理引擎。请从以下客服审核对话中提取内容模板信息。
+    `你是ITNIO的短信模板管理引擎。请从客服审核对话中提取短信模板信息，只抽取明确出现的信息。
 
 群组：${displayName}
 审核结果：${reviewVerdict}
 
 完整对话：
 ---
-${conversation.slice(0, 3000)}
+${conversation.slice(0, 2600)}
 ---
 
-请提取：
-1. customer_name: 客户名称（如"Onbuka""JILI""LAAFFIC"等，从对话中识别）
-2. template_content: 模板内容摘要（≤50字，概括短信模板的核心内容）
-3. template_type: 模板类型（OTP验证码/Marketing营销/Notification通知/其他）
-4. target_region: 目标国家或地区（如"菲律宾""巴西"）
-5. target_operator: 目标运营商（如"Globe""Claro""Vivo"，无则填null）
-6. review_result: 审核结论（approved/rejected/modified）
-7. compliance_notes: 合规备注（≤30字，如"禁止赌博类内容""短链接需更换域名"等）
+字段要求：
+- customer_name 无明确客户名填空字符串。
+- template_content ≤ 45字，概括短信核心内容，不要粘贴长原文。
+- template_type 只能是：OTP验证码/Marketing营销/Notification通知/其他。
+- target_region 无明确地区填空字符串。
+- target_operator 无明确运营商填 null。
+- review_result 只能是：approved/rejected/modified。
+- compliance_notes ≤ 28字，无明确备注填空字符串。
 
-【重要】直接输出JSON，不要输出任何思考过程、解释文字或markdown标记。JSON必须完整且格式正确：
+只输出以下 JSON，不要输出解释、markdown 或额外字段：
 {"customer_name":"Onbuka","template_content":"OTP验证码6位数字，有效期5分钟","template_type":"OTP验证码","target_region":"菲律宾","target_operator":"Globe","review_result":"approved","compliance_notes":"需使用直连通道，避免公共通道"}`;
 
   try {
     const text = await callAI(prompt, {
       tier: 'fast',
+      model: EXTRACTION_AI_MODEL,
       systemMessage: 'You are a JSON-only API. Output ONLY valid JSON, no explanations, no thinking process, no markdown. Start with { and end with }.'
     });
     const result = extractJSON(text);
@@ -605,20 +635,20 @@ ${conversation.slice(0, 3000)}
  * @returns {Promise<object|null>}
  */
 async function analyzeSupplierProfile(groupName, sector, messages, stats) {
-  // 构造精简的消息样本（最多20条代表性消息，优先长消息和技术讨论）
+  // 构造精简的消息样本（优先近期较长消息，控制批量画像调用成本）
   const sample = messages
     .filter(m => m.content && m.content.length > 20)
-    .slice(0, 30)
+    .slice(0, 20)
     .map(m => {
       const t = new Date(m.timestamp).toLocaleDateString('zh-CN', { timeZone: 'Asia/Shanghai' });
-      return `[${t}] ${m.sender_name}: ${m.content.slice(0, 200)}`;
+      return `[${t}] ${m.sender_name}: ${m.content.slice(0, 160)}`;
     })
     .join('\n');
 
   if (!sample.trim()) return null;
 
   const prompt =
-    `你是ITNIO短信平台的供应商关系分析引擎。请根据以下【${groupName}】的消息样本和已有定量指标，生成供应商定性画像。
+    `你是ITNIO短信平台的供应商关系分析引擎。请根据【${groupName}】的消息样本和定量指标，生成轻量供应商画像。
 
 业务板块：${sector}
 已有定量指标：
@@ -630,41 +660,26 @@ async function analyzeSupplierProfile(groupName, sector, messages, stats) {
 
 近30天消息样本：
 ---
-${sample.slice(0, 4000)}
+${sample.slice(0, 2600)}
 ---
 
-请从消息中分析并输出以下维度的定性指标。所有分析仅基于消息样本推断，不确定的项目填合理默认值：
+输出规则：
+- 只基于样本和定量指标判断；证据不足时填 null 或保守评分，不要编造联系人/比例。
+- attitude_tags 选 2-4 个，候选：配合积极/敷衍拖沓/推诿责任/主动预警/被动响应/传话筒型客服/技术兜底强/英文主导/中文主导/周末响应盲区/长尾响应慢/消极怠工迹象/沟通回合长/专业高效。
+- insight_tags 选 2-4 个，候选：周末响应盲区/问题易复发/沟通回合长/故障高频/传话筒型客服/技术兜底弱/技术兜底强/南亚通道不稳/运行平稳/工作日响应极快/主动预警意识弱/首问解决率高/维护规范。
+- insight_summary ≤ 80字，直接说明优点、风险和建议关注点。
+- sub_scores 四项必须完整，0-100整数；无法从样本判断时结合定量指标保守估计。
+- avg_turns、fcr、tech_contact、tech_reply_rate、planned_maintenance_pct 只有证据明确时填写，否则填 null。
 
-1. **attitude_tags**: 服务态度标签数组（从以下候选标签中选3-6个最匹配的）：
-   候选：配合积极 / 敷衍拖沓 / 推诿责任 / 主动预警 / 被动响应 / 传话筒型客服 / 技术兜底强 / 英文主导 / 中文主导 / 周末响应盲区 / 长尾响应慢 / 消极怠工迹象 / 沟通回合长 / 专业高效
-
-2. **insight_tags**: AI洞察标签数组（从以下候选标签中选4-7个最匹配的）：
-   候选：周末响应盲区 / 问题易复发 / 沟通回合长 / 故障高频 / 传话筒型客服 / 技术兜底弱 / 技术兜底强 / 南亚通道不稳 / 运行平稳 / 工作日响应极快 / 主动预警意识弱 / 首问解决率高 / 维护规范
-
-3. **insight_summary**: 一段100-150字的中文综合评价，语气专业客观，直接指出该供应商的优缺点和风险点，使用转义引号（如 \\"Checking...\\"）引用典型话术
-
-4. **sub_scores**: 分项评分JSON对象，每项0-100：
-   - 主动上报与预警
-   - 首问解决率FCR
-   - 技术配合态度
-   - 计划内变更占比（若无法判断填50）
-
-5. **avg_turns**: 估计每个问题的平均交互回合数（数字，如3.5）
-
-6. **fcr**: 估计首问解决率（0-1之间小数，如0.45）
-
-7. **tech_contact**: 从消息中识别最关键的技术接口人名称（识别模式：频繁发送技术方案、提供配置细节、回复速度快于群内平均的人）。若无法识别填null
-
-8. **tech_reply_rate**: 技术接口人的回复占比（0-1之间小数，估计值）
-
-9. **planned_maintenance_pct**: 计划内维护占比（0-1之间小数，根据"维护通知/计划升级"类消息占比估计，若无法判断填null）
-
-【重要】直接输出JSON，不要输出任何思考过程、解释文字或markdown标记。JSON必须完整且格式正确：
-{"attitude_tags":["被动响应","英文主导"],"insight_tags":["故障高频","技术兜底弱","周末响应盲区"],"insight_summary":"该供应商工作日基本能响应，但一线客服多为传话筒...","sub_scores":{"主动上报与预警":15,"首问解决率FCR":40,"技术配合态度":70,"计划内变更占比":20},"avg_turns":6.5,"fcr":0.4,"tech_contact":"Alex","tech_reply_rate":0.75,"planned_maintenance_pct":0.15}`;
+只输出以下 JSON，不要输出解释、markdown 或额外字段：
+{"attitude_tags":["被动响应","英文主导"],"insight_tags":["故障高频","技术兜底弱"],"insight_summary":"该供应商响应偏被动，故障讨论较多，需关注长尾响应和技术兜底质量。","sub_scores":{"主动上报与预警":30,"首问解决率FCR":45,"技术配合态度":60,"计划内变更占比":50},"avg_turns":null,"fcr":null,"tech_contact":null,"tech_reply_rate":null,"planned_maintenance_pct":null}`;
 
   try {
     const text = await callAI(prompt, {
-      tier: 'pro',
+      tier: process.env.SUPPLIER_PROFILE_AI_TIER || 'default',
+      model: SUPPLIER_PROFILE_AI_MODEL,
+      maxTokens: envNumber('SUPPLIER_PROFILE_AI_MAX_TOKENS', 1200),
+      timeoutMs: envNumber('SUPPLIER_PROFILE_AI_TIMEOUT_MS', 60000),
       systemMessage: 'You are a JSON-only API. Output ONLY valid JSON, no explanations, no thinking process, no markdown. Start with { and end with }.'
     });
     const result = extractJSON(text);
@@ -713,6 +728,13 @@ module.exports = {
     model: OPENAI_MODEL_DEFAULT,
     modelFast: OPENAI_MODEL_FAST,
     modelPro: OPENAI_MODEL_PRO,
+    alertModel: ALERT_AI_MODEL,
+    extractionModel: EXTRACTION_AI_MODEL,
+    knowledgeModel: KNOWLEDGE_AI_MODEL,
+    dailyDigestModel: DAILY_DIGEST_AI_MODEL,
+    weeklyReliabilityModel: WEEKLY_RELIABILITY_AI_MODEL,
+    supplierProfileModel: SUPPLIER_PROFILE_AI_MODEL,
+    domainIntelligenceModel: DOMAIN_INTELLIGENCE_AI_MODEL,
     hasKey: !!OPENAI_API_KEY,
     hasGemini: !!GEMINI_API_KEY,
   }),

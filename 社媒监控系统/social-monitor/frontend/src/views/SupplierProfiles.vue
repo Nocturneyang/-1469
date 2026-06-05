@@ -15,12 +15,15 @@
           <div style="display:flex;flex-wrap:wrap;gap:6px">
             <span class="tag">{{ detail.business_sector || '未分类' }}</span>
             <span class="tag slate">{{ detail.region || '未知区' }}</span>
+            <span class="tag" :style="profileStatusStyle(detail)">{{ detail.profile_status_label || '已画像' }}</span>
           </div>
         </div>
         <div class="panel" style="text-align:center;min-width:160px;padding:24px">
           <div style="font-size:11px;color:var(--t3);letter-spacing:0.1em;text-transform:uppercase;margin-bottom:8px">综合 SLA 评分</div>
-          <div style="font-size:48px;font-weight:700;letter-spacing:-2px" :style="{ color: scoreColor(detail.reliability_score) }">{{ detail.reliability_score || 0 }}</div>
-          <div style="font-size:12px;color:var(--t2);margin-top:4px">基于 {{ detail.total_messages || 0 }} 条消息</div>
+          <div style="font-size:48px;font-weight:700;letter-spacing:-2px" :style="{ color: detail.is_profiled ? scoreColor(detail.reliability_score) : '#64748B' }">{{ displayScore(detail) }}</div>
+          <div style="font-size:12px;color:var(--t2);margin-top:4px">
+            {{ detail.is_profiled ? `基于 ${detail.total_messages || 0} 条消息` : `已发现 ${detail.message_count || detail.total_messages || 0} 条消息，待生成画像` }}
+          </div>
         </div>
       </section>
 
@@ -61,8 +64,8 @@
               </div>
               <div style="background:var(--bg-tint);border-radius:12px;padding:16px">
                 <div style="font-size:12px;color:var(--t2);margin-bottom:8px">推诿指数</div>
-                <div style="font-size:30px;font-weight:700" :style="{ color: deflectIdx <= 20 ? '#059669' : deflectIdx <= 40 ? '#D97706' : '#DC2626' }">{{ deflectIdx }}%</div>
-                <div style="height:6px;background:#F5F5F4;border-radius:999px;overflow:hidden;margin-top:8px"><div :style="{ width: deflectIdx + '%', background: deflectIdx <= 20 ? '#059669' : '#DC2626' }" style="height:100%;border-radius:999px"></div></div>
+                <div style="font-size:30px;font-weight:700" :style="{ color: deflectIdx == null ? '#A8A29E' : (deflectIdx <= 20 ? '#059669' : deflectIdx <= 40 ? '#D97706' : '#DC2626') }">{{ deflectIdx != null ? deflectIdx + '%' : '—' }}</div>
+                <div style="height:6px;background:#F5F5F4;border-radius:999px;overflow:hidden;margin-top:8px"><div :style="{ width: (deflectIdx || 0) + '%', background: deflectIdx != null && deflectIdx <= 20 ? '#059669' : '#DC2626' }" style="height:100%;border-radius:999px"></div></div>
               </div>
             </div>
             <div style="display:flex;flex-wrap:wrap;gap:6px">
@@ -77,7 +80,7 @@
             <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px">
               <div style="background:var(--bg-tint);border-radius:12px;padding:16px">
                 <div style="font-size:12px;color:var(--t2);margin-bottom:8px">首问解决率 FCR</div>
-                <div style="font-size:30px;font-weight:700;color:var(--t)">{{ fcr }}%</div>
+                <div style="font-size:30px;font-weight:700;color:var(--t)">{{ fcr != null ? fcr + '%' : '—' }}</div>
               </div>
               <div style="background:var(--bg-tint);border-radius:12px;padding:16px">
                 <div style="font-size:12px;color:var(--t2);margin-bottom:8px">平均交互回合</div>
@@ -124,6 +127,19 @@
             </div>
           </section>
 
+          <!-- 已沉淀知识资产 -->
+          <section v-if="detail.related_knowledge_assets && detail.related_knowledge_assets.length" class="panel" style="padding:24px">
+            <h2 style="font-weight:600;font-size:18px;color:var(--t);margin:0 0 20px 0;display:flex;align-items:center;gap:8px"><span style="width:6px;height:20px;border-radius:4px;background:#0E7490;display:inline-block"></span>已沉淀知识资产</h2>
+            <div v-for="asset in detail.related_knowledge_assets" :key="asset.asset_uid" style="padding:10px 0;border-bottom:1px solid #F5F5F4">
+              <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">
+                <span style="font-size:11px;padding:2px 8px;border-radius:999px;background:#ECFEFF;color:#0E7490;font-weight:700">{{ assetTypeLabel(asset.asset_type) }}</span>
+                <span style="font-size:11px;color:var(--t3)">价值 {{ asset.asset_value_score || 0 }} · 质量 {{ asset.quality_score || 0 }}</span>
+              </div>
+              <div style="font-size:13px;font-weight:700;color:var(--t);line-height:1.4">{{ asset.title }}</div>
+              <div style="font-size:12px;color:var(--t2);line-height:1.6;margin-top:4px">{{ asset.summary || '暂无摘要' }}</div>
+            </div>
+          </section>
+
           <!-- 近期告警 -->
           <section v-if="detail.recent_alerts && detail.recent_alerts.length" class="panel" style="padding:24px">
             <h2 style="font-weight:600;font-size:18px;color:var(--t);margin:0 0 20px 0;display:flex;align-items:center;gap:8px"><span style="width:6px;height:20px;border-radius:4px;background:#DC2626;display:inline-block"></span>近期告警</h2>
@@ -143,18 +159,20 @@
         <div class="panel-title">
           <div>
             <span class="title-text"><span class="panel-icon">🏷️</span> 供应商可靠性画像</span>
-            <span class="hint">每日 03:00 自动更新 · 评分=100 - 告警扣分 - 承诺违约扣分 - 响应慢扣分</span>
+            <span class="hint">覆盖正式画像 + 资产发现 + 供应商消息群；未画像项用于补齐供应商池</span>
           </div>
           <div style="display:flex;gap:8px">
-            <select class="form-control" style="max-width:140px" v-model="sector" @change="fetchData">
+            <select class="form-control" style="max-width:140px" v-model="sector" @change="refreshList">
               <option value="">全部板块</option>
               <option v-for="s in sectors" :key="s" :value="s">{{ s }}</option>
             </select>
-            <select class="form-control" style="max-width:140px" v-model="sort" @change="fetchData">
+            <select class="form-control" style="max-width:140px" v-model="sort" @change="refreshList">
               <option value="score">评分最高</option>
+              <option value="coverage">覆盖最全</option>
               <option value="issues">告警最多</option>
               <option value="response">响应最快</option>
               <option value="commitment">兑现率最高</option>
+              <option value="updated">最近出现</option>
             </select>
           </div>
         </div>
@@ -170,26 +188,39 @@
                 <div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap">
                   <span class="tag">{{ item.business_sector || '未分类' }}</span>
                   <span class="tag slate">{{ item.region || '未知' }}</span>
+                  <span class="tag" :style="profileStatusStyle(item)">{{ item.profile_status_label || '已画像' }}</span>
                 </div>
               </div>
-              <div class="pf-score-ring" :style="{ background: scoreBg(item.reliability_score) }">
-                <span :style="{ color: scoreColor(item.reliability_score) }">{{ item.reliability_score || 0 }}</span>
+              <div class="pf-score-ring" :class="{ pending: !item.is_profiled }" :style="{ background: scoreBg(item.reliability_score, item.is_profiled) }">
+                <span :style="{ color: item.is_profiled ? scoreColor(item.reliability_score) : '#64748B' }">{{ displayScore(item) }}</span>
               </div>
+            </div>
+            <div class="pf-coverage">
+              <span>消息 {{ formatNum(item.message_count || item.total_messages) }}</span>
+              <span>资产 {{ formatNum(item.asset_count) }}</span>
+              <span>{{ (item.source_coverage || []).join(' / ') || '正式画像' }}</span>
             </div>
             <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;padding-top:12px;border-top:1px solid #F5F5F4">
               <div style="text-align:center">
-                <div class="pf-metric-val">{{ fmtMin(item.p50_response_mins) }}</div>
-                <div class="pf-metric-lbl">P50响应</div>
+                <div class="pf-metric-val">{{ item.is_profiled ? fmtMin(item.p50_response_mins) : formatNum(item.message_count || item.total_messages) }}</div>
+                <div class="pf-metric-lbl">{{ item.is_profiled ? 'P50响应' : '消息量' }}</div>
               </div>
               <div style="text-align:center">
-                <div class="pf-metric-val" :style="{ color: (item.open_issues || 0) > 0 ? '#DC2626' : 'var(--t)' }">{{ item.open_issues || 0 }}</div>
-                <div class="pf-metric-lbl">未闭环</div>
+                <div class="pf-metric-val" :style="{ color: (item.open_issues || 0) > 0 ? '#DC2626' : 'var(--t)' }">{{ item.is_profiled ? (item.open_issues || 0) : formatNum(item.asset_count) }}</div>
+                <div class="pf-metric-lbl">{{ item.is_profiled ? '未闭环' : '资产数' }}</div>
               </div>
               <div style="text-align:center">
-                <div class="pf-metric-val">{{ fmtPct(item.commitment_rate) }}</div>
-                <div class="pf-metric-lbl">兑现率</div>
+                <div class="pf-metric-val">{{ item.is_profiled ? fmtPct(item.commitment_rate) : formatNum(item.source_count) }}</div>
+                <div class="pf-metric-lbl">{{ item.is_profiled ? '兑现率' : '来源数' }}</div>
               </div>
             </div>
+          </div>
+        </div>
+        <div v-if="total > limit" class="pager-row">
+          <span>共 {{ formatNum(total) }} 个供应商，当前第 {{ page }} / {{ totalPages }} 页</span>
+          <div style="display:flex;gap:8px">
+            <button class="el-btn" :disabled="page <= 1" @click="goPage(page - 1)">上一页</button>
+            <button class="el-btn" :disabled="page >= totalPages" @click="goPage(page + 1)">下一页</button>
           </div>
         </div>
       </div>
@@ -213,10 +244,26 @@ const limit = 30
 const detailMode = ref(false)
 const detail = ref(null)
 
+const totalPages = computed(() => Math.ceil(total.value / limit) || 1)
 const scoreColor = (s) => (s || 0) >= 80 ? '#059669' : ((s || 0) >= 60 ? '#D97706' : '#DC2626')
-const scoreBg = (s) => (s || 0) >= 80 ? '#ECFDF5' : ((s || 0) >= 60 ? '#FFFBEB' : '#FEF2F2')
+const scoreBg = (s, profiled = true) => !profiled ? '#F8FAFC' : ((s || 0) >= 80 ? '#ECFDF5' : ((s || 0) >= 60 ? '#FFFBEB' : '#FEF2F2'))
 const fmtMin = (v) => v != null ? v.toFixed(0) + 'min' : '-'
 const fmtPct = (v) => v != null ? (v * 100).toFixed(0) + '%' : '-'
+const formatNum = (v) => Number(v || 0).toLocaleString('zh-CN')
+const displayScore = (item) => item?.is_profiled ? Math.round(item.reliability_score || 0) : '待'
+const profileStatusStyle = (item) => item?.is_profiled
+  ? { background: '#ECFDF5', color: '#047857', borderColor: '#BBF7D0' }
+  : { background: '#FFFBEB', color: '#B45309', borderColor: '#FDE68A' }
+const assetTypeLabel = (type) => ({
+  entity_relationship: '实体关系',
+  operation_action: '有效动作',
+  regional_intelligence: '区域情报',
+  risk_pattern: '风险模式',
+  sla_commitment: 'SLA履约',
+  contact_role: '联系人角色',
+  change_event: '变更事件',
+  media_evidence: '媒体证据',
+}[type] || type || '-')
 
 const viewDetail = async (name) => {
   try {
@@ -229,11 +276,13 @@ const viewDetail = async (name) => {
 }
 
 const commitRate = computed(() => {
+  if (!detail.value?.is_profiled) return null
   if (!detail.value?.commitment_rate) return null
   return Math.round(detail.value.commitment_rate * 100)
 })
-const deflectIdx = computed(() => Math.round((detail.value?.recurrence_rate || 0) * 100))
+const deflectIdx = computed(() => detail.value?.is_profiled ? Math.round((detail.value?.recurrence_rate || 0) * 100) : null)
 const fcr = computed(() => {
+  if (!detail.value?.is_profiled) return null
   if (detail.value?.ai_fcr != null) return Math.round(detail.value.ai_fcr * 100)
   return Math.round((1 - (detail.value?.recurrence_rate || 0)) * 100)
 })
@@ -246,6 +295,7 @@ const tagStyle = (cls) => {
 }
 
 const attitudeTags = computed(() => {
+  if (!detail.value?.is_profiled) return [{ text: '待生成画像', cls: 'amber' }]
   if (detail.value?.ai_attitude_tags?.length) {
     return detail.value.ai_attitude_tags.map(t => ({ text: t, cls: 'green' }))
   }
@@ -277,6 +327,7 @@ const insightSummary = computed(() => {
 })
 
 const subScores = computed(() => {
+  if (!detail.value?.is_profiled) return []
   const sub = detail.value?.ai_sub_scores || {}
   const cr = commitRate.value
   const barColor = (v) => v >= 70 ? '#059669' : v >= 40 ? '#D97706' : '#DC2626'
@@ -299,6 +350,9 @@ const subScores = computed(() => {
 const diagItems = computed(() => {
   if (!detail.value) return []
   const d = detail.value
+  if (!d.is_profiled) {
+    return [{ color: '#D97706', text: '已发现该供应商群，但还没有正式 SLA 画像，需纳入画像任务后再评分', level: '待画像' }]
+  }
   const sc = d.reliability_score || 0
   const items = []
   if (sc < 60) items.push({ color: '#DC2626', text: '综合评分偏低，需重点关注', level: '严重' })
@@ -320,6 +374,16 @@ const fetchData = async () => {
   loading.value = false
 }
 
+const refreshList = () => {
+  page.value = 1
+  fetchData()
+}
+
+const goPage = (nextPage) => {
+  page.value = Math.min(totalPages.value, Math.max(1, nextPage))
+  fetchData()
+}
+
 const fetchSectors = async () => {
   try {
     const res = await api.get('/api/supplier-profiles/sectors')
@@ -337,6 +401,10 @@ onMounted(() => { fetchSectors(); fetchData() })
 .pf-card:hover { box-shadow: 0 4px 12px rgba(0,0,0,0.06); border-color: #D6BCFA; transform: translateY(-2px); }
 .pf-score-ring { width: 52px; height: 52px; border-radius: 50%; display: flex; align-items: center; justify-content: center; flex-shrink: 0; margin-left: 12px; }
 .pf-score-ring span { font-size: 18px; font-weight: 700; }
+.pf-score-ring.pending { border: 1px dashed #CBD5E1; }
+.pf-coverage { display: flex; flex-wrap: wrap; gap: 6px; margin: -4px 0 12px; font-size: 11px; color: var(--t2); }
+.pf-coverage span { background: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 999px; padding: 2px 8px; }
 .pf-metric-val { font-size: 16px; font-weight: 700; color: var(--t); }
 .pf-metric-lbl { font-size: 10px; color: var(--t3); margin-top: 1px; }
+.pager-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 18px; padding-top: 16px; border-top: 1px solid #F1F5F9; color: var(--t2); font-size: 13px; }
 </style>

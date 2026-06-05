@@ -77,6 +77,11 @@ const navSections = computed(() => {
     {
       title: "知识资产",
       items: [
+        { path: "/assets", label: "资产发现", icon: "🧭" },
+        { path: "/region-intelligence", label: "区域运营情报", icon: "🗺️" },
+        { path: "/customer-service-intelligence", label: "客服运营情报", icon: "☏" },
+        { path: "/device-tech-intelligence", label: "设备技术情报", icon: "⌘" },
+        { path: "/entity-graph", label: "实体关系图谱", icon: "◎" },
         { path: "/knowledge", label: "QA 知识库", icon: "📖" },
         { path: "/devicekb", label: "设备知识库", icon: "🔧" },
         { path: "/templates", label: "内容模板库", icon: "📝" },
@@ -111,6 +116,11 @@ const titleMap = {
   '/analytics': '数据看板 Analytics',
   '/daily-digest': '日报汇总 Daily Digest',
   '/reports/daily': '日报详情 Daily Report',
+  '/assets': '知识资产发现',
+  '/region-intelligence': '区域运营情报',
+  '/customer-service-intelligence': '客服运营情报',
+  '/device-tech-intelligence': '设备技术情报',
+  '/entity-graph': '实体关系图谱',
   '/admin/accounts': '帐号管理 Accounts',
   '/admin/config': '系统配置 Config',
   '/admin/users': '权限管理 Access',

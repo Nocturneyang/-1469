@@ -42,6 +42,8 @@ const cursors = [
   'daily-digest',
   'sid-change-detector',
   'content-review-extractor',
+  'knowledge-asset-analyzer',
+  'knowledge-asset-commitments',
 ];
 
 const insertCursor = db.prepare(`
@@ -59,4 +61,5 @@ db.close();
 console.log(`✅ analytics.sqlite 初始化完成 → ${ANALYTICS_DB_PATH}`);
 console.log('   包含表：analysis_cursor, alert_records, issue_records,');
 console.log('          daily_digests, reliability_snapshots,');
-console.log('          content_reviews, sid_change_records');
+console.log('          content_reviews, sid_change_records,');
+console.log('          knowledge_asset_candidates, knowledge_assets, knowledge_asset_links');

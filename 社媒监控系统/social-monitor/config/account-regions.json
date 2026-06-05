@@ -39,15 +39,6 @@
       "description": "南亚区主力账号，覆盖印度/巴基斯坦/非洲方向，18个群"
     },
     {
-      "account": "tg-account1",
-      "region": "Telegram区",
-      "value_label": "L1",
-      "platform": "tg",
-      "owner": "ITNIO~ DJ",
-      "owner_dingtalk_id": "",
-      "description": "Telegram 内部群，4个群，含中文群组"
-    },
-    {
       "account": "wa-yatai-wa",
       "region": "亚太区",
       "business_sector": "直连供应商",
@@ -60,12 +51,12 @@
     {
       "account": "wa-yuyin_wa",
       "region": "语音",
-      "business_sector": "语音直连供应商",
-      "value_label": "L1",
+      "business_sector": "语音供应商",
       "platform": "wa",
       "owner": "",
       "owner_dingtalk_id": "",
-      "description": "语音供应商"
+      "description": "",
+      "value_label": "L1"
     },
     {
       "account": "wa-wa_oumei2",
@@ -76,15 +67,6 @@
       "owner_dingtalk_id": "",
       "description": "欧美区第二个帐户",
       "value_label": "L1"
-    },
-    {
-      "account": "tgu-mason_text",
-      "region": "tg群聊",
-      "value_label": "L1",
-      "platform": "tgu",
-      "owner": "",
-      "owner_dingtalk_id": "",
-      "description": ""
     },
     {
       "account": "wa-wa_shebi",
@@ -125,6 +107,16 @@
       "owner": "",
       "owner_dingtalk_id": "",
       "description": "卡线和双向的业务"
+    },
+    {
+      "account": "tgu-mason_text",
+      "region": "测试帐号",
+      "business_sector": "  测试",
+      "platform": "tgu",
+      "owner": "",
+      "owner_dingtalk_id": "",
+      "description": "",
+      "value_label": "L3"
     }
   ],
   "_add_new_account_example": {

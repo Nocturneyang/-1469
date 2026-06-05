@@ -1121,10 +1121,11 @@
       <div class="form-group" id="ai-model-presets" style="display:none; margin-top:-10px; margin-bottom:16px;">
         <span style="font-size:11px;color:var(--t3);font-weight:700;">快捷选择 →</span>
         <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:6px">
-          <button class="btn-sm" style="font-size:11px;padding:5px 10px" onclick="pickModelModal('openai/gpt-5.2')">gpt-5.2</button>
-          <button class="btn-sm" style="font-size:11px;padding:5px 10px" onclick="pickModelModal('anthropic/claude-sonnet-4.6')">claude-sonnet-4.6</button>
-          <button class="btn-sm" style="font-size:11px;padding:5px 10px" onclick="pickModelModal('google/gemini-3-flash-preview')">gemini-3-flash</button>
-          <button class="btn-sm" style="font-size:11px;padding:5px 10px" onclick="pickModelModal('google/gemini-3.1-flash-lite-preview')">gemini-3.1-lite</button>
+          <button class="btn-sm" style="font-size:11px;padding:5px 10px" onclick="pickModelModal('deepseek-v4-flash')">deepseek-v4-flash</button>
+          <button class="btn-sm" style="font-size:11px;padding:5px 10px" onclick="pickModelModal('deepseek-v4-pro')">deepseek-v4-pro</button>
+          <button class="btn-sm" style="font-size:11px;padding:5px 10px" onclick="pickModelModal('claude-sonnet-4.5')">claude-sonnet-4.5</button>
+          <button class="btn-sm" style="font-size:11px;padding:5px 10px" onclick="pickModelModal('anthropic/claude-haiku-4.5')">claude-haiku-4.5</button>
+          <button class="btn-sm" style="font-size:11px;padding:5px 10px" onclick="pickModelModal('gemini-2.5-pro')">gemini-2.5-pro</button>
         </div>
       </div>
       <button class="btn-primary" onclick="submitAiConfig()">保存配置</button>
@@ -1895,7 +1896,8 @@ support"></textarea>
             <div class="panel-title" style="margin-bottom:16px;">🤖 AI 分析引擎配置</div>
             <p style="font-size:13px;color:var(--t3);margin-bottom:24px;line-height:1.8">
               支持 <strong>OpenAI 兼容接口</strong>（one-api 中转／官方 OpenAI 均可），也可配置 <strong>Gemini</strong> 作为备用。<br>
-              调用优先级：OpenAI 兼容接口 → Gemini → 纯关键词降级。
+              分层模型：FAST（高频轻量）→ DEFAULT（中等任务）→ PRO（高质量长文）。<br>
+              场景模型优先覆盖分层模型，调用优先级：OpenAI 兼容接口 → Gemini → 纯关键词降级。
             </p>
 
             <div class="config-list">
@@ -1912,16 +1914,42 @@ support"></textarea>
                 </div>
               </div>
               
-              <!-- MODEL -->
+              <!-- DEFAULT MODEL -->
               <div class="config-list-item">
                 <div class="cli-left">
-                  <div class="cli-title">调用模型 (Model)</div>
+                  <div class="cli-title">默认模型 (DEFAULT)</div>
                   <span class="badge" id="badge-OPENAI_MODEL">未配置</span>
                   <div class="cli-preview" id="preview-OPENAI_MODEL" style="display:none"></div>
                 </div>
                 <div class="cli-actions">
-                  <button class="btn-text edit" onclick="openAiModal('OPENAI_MODEL', '调用模型 (Model)', '如 openai/gpt-4')">编辑</button>
+                  <button class="btn-text edit" onclick="openAiModal('OPENAI_MODEL', '默认模型 (DEFAULT)', 'deepseek-v4-pro')">编辑</button>
                   <button class="btn-text danger" onclick="deleteEnvKey('OPENAI_MODEL')">清空</button>
+                </div>
+              </div>
+
+              <!-- FAST MODEL -->
+              <div class="config-list-item">
+                <div class="cli-left">
+                  <div class="cli-title">快速模型 (FAST)</div>
+                  <span class="badge" id="badge-OPENAI_MODEL_FAST">未配置</span>
+                  <div class="cli-preview" id="preview-OPENAI_MODEL_FAST" style="display:none"></div>
+                </div>
+                <div class="cli-actions">
+                  <button class="btn-text edit" onclick="openAiModal('OPENAI_MODEL_FAST', '快速模型 (FAST)', 'deepseek-v4-flash')">编辑</button>
+                  <button class="btn-text danger" onclick="deleteEnvKey('OPENAI_MODEL_FAST')">清空</button>
+                </div>
+              </div>
+
+              <!-- PRO MODEL -->
+              <div class="config-list-item">
+                <div class="cli-left">
+                  <div class="cli-title">专业模型 (PRO)</div>
+                  <span class="badge" id="badge-OPENAI_MODEL_PRO">未配置</span>
+                  <div class="cli-preview" id="preview-OPENAI_MODEL_PRO" style="display:none"></div>
+                </div>
+                <div class="cli-actions">
+                  <button class="btn-text edit" onclick="openAiModal('OPENAI_MODEL_PRO', '专业模型 (PRO)', 'claude-sonnet-4.5')">编辑</button>
+                  <button class="btn-text danger" onclick="deleteEnvKey('OPENAI_MODEL_PRO')">清空</button>
                 </div>
               </div>
 
@@ -1948,6 +1976,113 @@ support"></textarea>
                 <div class="cli-actions">
                   <button class="btn-text edit" onclick="openAiModal('GEMINI_API_KEY', '备用密钥 (Gemini API Key)', 'AIza...', true)">编辑</button>
                   <button class="btn-text danger" onclick="deleteEnvKey('GEMINI_API_KEY')">清空</button>
+                </div>
+              </div>
+            </div>
+
+            <div style="font-size:13px;font-weight:800;color:var(--t);margin:24px 0 12px;">场景模型</div>
+            <div class="config-list">
+              <div class="config-list-item">
+                <div class="cli-left">
+                  <div class="cli-title">告警分析</div>
+                  <span class="badge" id="badge-ALERT_AI_MODEL">未配置</span>
+                  <div class="cli-preview" id="preview-ALERT_AI_MODEL" style="display:none"></div>
+                </div>
+                <div class="cli-actions">
+                  <button class="btn-text edit" onclick="openAiModal('ALERT_AI_MODEL', '告警分析模型', 'deepseek-v4-flash')">编辑</button>
+                  <button class="btn-text danger" onclick="deleteEnvKey('ALERT_AI_MODEL')">清空</button>
+                </div>
+              </div>
+              <div class="config-list-item">
+                <div class="cli-left">
+                  <div class="cli-title">抽取审核</div>
+                  <span class="badge" id="badge-EXTRACTION_AI_MODEL">未配置</span>
+                  <div class="cli-preview" id="preview-EXTRACTION_AI_MODEL" style="display:none"></div>
+                </div>
+                <div class="cli-actions">
+                  <button class="btn-text edit" onclick="openAiModal('EXTRACTION_AI_MODEL', '抽取审核模型', 'deepseek-v4-flash')">编辑</button>
+                  <button class="btn-text danger" onclick="deleteEnvKey('EXTRACTION_AI_MODEL')">清空</button>
+                </div>
+              </div>
+              <div class="config-list-item">
+                <div class="cli-left">
+                  <div class="cli-title">知识库提取</div>
+                  <span class="badge" id="badge-KNOWLEDGE_AI_MODEL">未配置</span>
+                  <div class="cli-preview" id="preview-KNOWLEDGE_AI_MODEL" style="display:none"></div>
+                </div>
+                <div class="cli-actions">
+                  <button class="btn-text edit" onclick="openAiModal('KNOWLEDGE_AI_MODEL', '知识库提取模型', 'deepseek-v4-pro')">编辑</button>
+                  <button class="btn-text danger" onclick="deleteEnvKey('KNOWLEDGE_AI_MODEL')">清空</button>
+                </div>
+              </div>
+              <div class="config-list-item">
+                <div class="cli-left">
+                  <div class="cli-title">每日日报</div>
+                  <span class="badge" id="badge-DAILY_DIGEST_AI_MODEL">未配置</span>
+                  <div class="cli-preview" id="preview-DAILY_DIGEST_AI_MODEL" style="display:none"></div>
+                </div>
+                <div class="cli-actions">
+                  <button class="btn-text edit" onclick="openAiModal('DAILY_DIGEST_AI_MODEL', '每日日报模型', 'deepseek-v4-pro')">编辑</button>
+                  <button class="btn-text danger" onclick="deleteEnvKey('DAILY_DIGEST_AI_MODEL')">清空</button>
+                </div>
+              </div>
+              <div class="config-list-item">
+                <div class="cli-left">
+                  <div class="cli-title">每周可靠性</div>
+                  <span class="badge" id="badge-WEEKLY_RELIABILITY_AI_MODEL">未配置</span>
+                  <div class="cli-preview" id="preview-WEEKLY_RELIABILITY_AI_MODEL" style="display:none"></div>
+                </div>
+                <div class="cli-actions">
+                  <button class="btn-text edit" onclick="openAiModal('WEEKLY_RELIABILITY_AI_MODEL', '每周可靠性模型', 'claude-sonnet-4.5')">编辑</button>
+                  <button class="btn-text danger" onclick="deleteEnvKey('WEEKLY_RELIABILITY_AI_MODEL')">清空</button>
+                </div>
+              </div>
+              <div class="config-list-item">
+                <div class="cli-left">
+                  <div class="cli-title">供应商画像</div>
+                  <span class="badge" id="badge-SUPPLIER_PROFILE_AI_MODEL">未配置</span>
+                  <div class="cli-preview" id="preview-SUPPLIER_PROFILE_AI_MODEL" style="display:none"></div>
+                </div>
+                <div class="cli-actions">
+                  <button class="btn-text edit" onclick="openAiModal('SUPPLIER_PROFILE_AI_MODEL', '供应商画像模型', 'deepseek-v4-pro')">编辑</button>
+                  <button class="btn-text danger" onclick="deleteEnvKey('SUPPLIER_PROFILE_AI_MODEL')">清空</button>
+                </div>
+              </div>
+            </div>
+
+            <div style="font-size:13px;font-weight:800;color:var(--t);margin:24px 0 12px;">供应商画像参数</div>
+            <div class="config-list">
+              <div class="config-list-item">
+                <div class="cli-left">
+                  <div class="cli-title">画像并发数</div>
+                  <span class="badge" id="badge-SUPPLIER_PROFILE_AI_CONCURRENCY">未配置</span>
+                  <div class="cli-preview" id="preview-SUPPLIER_PROFILE_AI_CONCURRENCY" style="display:none"></div>
+                </div>
+                <div class="cli-actions">
+                  <button class="btn-text edit" onclick="openAiModal('SUPPLIER_PROFILE_AI_CONCURRENCY', '供应商画像并发数', '1')">编辑</button>
+                  <button class="btn-text danger" onclick="deleteEnvKey('SUPPLIER_PROFILE_AI_CONCURRENCY')">清空</button>
+                </div>
+              </div>
+              <div class="config-list-item">
+                <div class="cli-left">
+                  <div class="cli-title">画像输出 Token</div>
+                  <span class="badge" id="badge-SUPPLIER_PROFILE_AI_MAX_TOKENS">未配置</span>
+                  <div class="cli-preview" id="preview-SUPPLIER_PROFILE_AI_MAX_TOKENS" style="display:none"></div>
+                </div>
+                <div class="cli-actions">
+                  <button class="btn-text edit" onclick="openAiModal('SUPPLIER_PROFILE_AI_MAX_TOKENS', '供应商画像输出 Token', '1200')">编辑</button>
+                  <button class="btn-text danger" onclick="deleteEnvKey('SUPPLIER_PROFILE_AI_MAX_TOKENS')">清空</button>
+                </div>
+              </div>
+              <div class="config-list-item">
+                <div class="cli-left">
+                  <div class="cli-title">画像超时毫秒</div>
+                  <span class="badge" id="badge-SUPPLIER_PROFILE_AI_TIMEOUT_MS">未配置</span>
+                  <div class="cli-preview" id="preview-SUPPLIER_PROFILE_AI_TIMEOUT_MS" style="display:none"></div>
+                </div>
+                <div class="cli-actions">
+                  <button class="btn-text edit" onclick="openAiModal('SUPPLIER_PROFILE_AI_TIMEOUT_MS', '供应商画像超时毫秒', '60000')">编辑</button>
+                  <button class="btn-text danger" onclick="deleteEnvKey('SUPPLIER_PROFILE_AI_TIMEOUT_MS')">清空</button>
                 </div>
               </div>
             </div>
@@ -3240,10 +3375,13 @@ support"></textarea>
       const keys = keysStr.split(',');
       try {
         for (const key of keys) {
-          await fetch(API_BASE + '/config/webhooks/' + encodeURIComponent(key), { method: 'DELETE' });
+          const res = await fetch(API_BASE + '/config/webhooks/' + encodeURIComponent(key), { method: 'DELETE' });
+          const data = await res.json();
+          if (!data.success) throw new Error(data.error || '删除失败');
         }
         fetchRegionWebhooks();
-      } catch(e) {}
+        showToast('已删除区域 Webhook');
+      } catch(e) { showToast(e.message || '删除失败', 'error'); }
     }
 
     function openRegionWebhookModal(type, editPlatform = 'wa', editRegionsStr = '', isPlatformLevel = false) {
@@ -3415,7 +3553,12 @@ support"></textarea>
           'DINGTALK_DIGEST','DINGTALK_DIGEST_WA','DINGTALK_DIGEST_TG',
           'DINGTALK_WEEKLY','DINGTALK_WEEKLY_WA','DINGTALK_WEEKLY_TG',
           'DINGTALK_SYSTEM_OPS',
-          'GEMINI_API_KEY','OPENAI_API_KEY','OPENAI_BASE_URL','OPENAI_MODEL'
+          'GEMINI_API_KEY','OPENAI_API_KEY','OPENAI_BASE_URL',
+          'OPENAI_MODEL','OPENAI_MODEL_FAST','OPENAI_MODEL_PRO',
+          'ALERT_AI_MODEL','EXTRACTION_AI_MODEL','KNOWLEDGE_AI_MODEL',
+          'DAILY_DIGEST_AI_MODEL','WEEKLY_RELIABILITY_AI_MODEL',
+          'SUPPLIER_PROFILE_AI_MODEL','SUPPLIER_PROFILE_AI_CONCURRENCY',
+          'SUPPLIER_PROFILE_AI_MAX_TOKENS','SUPPLIER_PROFILE_AI_TIMEOUT_MS'
         ];
         
         for (const k of KEYS) {
@@ -3528,7 +3671,8 @@ support"></textarea>
       // But envData[key] for API keys might be fully redacted. Let's show empty string if it's redacted, or show the masked value.
       input.value = envData[key] || '';
       
-      document.getElementById('ai-model-presets').style.display = (key === 'OPENAI_MODEL') ? 'block' : 'none';
+      const isModelKey = key === 'OPENAI_MODEL' || key.endsWith('_AI_MODEL') || key === 'OPENAI_MODEL_FAST' || key === 'OPENAI_MODEL_PRO';
+      document.getElementById('ai-model-presets').style.display = isModelKey ? 'block' : 'none';
       
       document.getElementById('ai-modal').style.display = 'flex';
       input.focus();

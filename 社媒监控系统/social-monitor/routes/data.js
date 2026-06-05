@@ -13,9 +13,17 @@ const analyticsDb = new Database(analyticsDbPath);
 
 // Account regions mapping file path
 const ACCOUNT_REGIONS_PATH = path.join(process.env.DATA_DIR || path.join(__dirname, '..'), 'config', 'account-regions.json');
+const STATS_CACHE_TTL_MS = Number(process.env.STATS_CACHE_TTL_MS || 5000);
+const REGION_CACHE_TTL_MS = Number(process.env.REGION_CACHE_TTL_MS || 60000);
+let statsCache = { expiresAt: 0, data: null };
+let regionCache = { expiresAt: 0, data: {} };
 
 // Helper function to read account regions mapping
 function getAccountRegions() {
+    const now = Date.now();
+    if (regionCache.data && now < regionCache.expiresAt) {
+        return regionCache.data;
+    }
     try {
         if (!fs.existsSync(ACCOUNT_REGIONS_PATH)) {
             return {};
@@ -29,21 +37,27 @@ function getAccountRegions() {
                 business_sector: acc.business_sector || ''
             };
         });
+        regionCache = { expiresAt: now + REGION_CACHE_TTL_MS, data: regionMap };
         return regionMap;
     } catch (err) {
         console.error('Error reading account regions:', err);
-        return {};
+        return regionCache.data || {};
     }
 }
 
 router.get('/stats', (req, res) => {
     try {
+        const now = Date.now();
+        if (statsCache.data && now < statsCache.expiresAt) {
+            return res.json(statsCache.data);
+        }
+
         const totalRows = db.prepare(`SELECT COUNT(*) as count FROM messages`).get().count;
         const waRows = db.prepare(`SELECT COUNT(*) as count FROM messages WHERE platform = 'whatsapp'`).get().count;
         const tgRows = db.prepare(`SELECT COUNT(*) as count FROM messages WHERE platform = 'telegram'`).get().count;
         const mediaRows = db.prepare(`SELECT COUNT(*) as count FROM messages WHERE has_media = 1`).get().count;
         
-        res.json({
+        const payload = {
             success: true,
             total: totalRows,
             platforms: {
@@ -51,7 +65,9 @@ router.get('/stats', (req, res) => {
                 telegram: tgRows
             },
             withMedia: mediaRows
-        });
+        };
+        statsCache = { expiresAt: now + STATS_CACHE_TTL_MS, data: payload };
+        res.json(payload);
     } catch (err) {
         console.error('Stats DB Error:', err);
         res.status(500).json({ success: false, error: err.message });

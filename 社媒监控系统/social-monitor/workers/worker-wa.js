@@ -371,7 +371,7 @@ const client = new Client({
     webVersionCache: webVersionOptions.webVersionCache,
     puppeteer: {
         puppeteer: puppeteer, // Pass stealth-enabled puppeteer-extra instance
-        executablePath: chromeRuntime.executablePath || process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium',
+        ...(chromeRuntime.executablePath ? { executablePath: chromeRuntime.executablePath } : {}),
         headless: true,
         protocolTimeout: Number(process.env.WA_PROTOCOL_TIMEOUT_MS || 600000), // 多账号冷启动时 WA Web 注入可能很慢
 

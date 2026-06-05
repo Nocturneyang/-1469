@@ -236,6 +236,7 @@ function removeAppFromEcosystem(ecoPath, workerName) {
 }
 
 function buildWaAppConfig(accountName) {
+    const explicitChromePath = getConfiguredEnvValue('PUPPETEER_EXECUTABLE_PATH');
     const env = applyCollectorEnv({
         NODE_ENV: 'production',
         DATA_DIR,
@@ -248,15 +249,17 @@ function buildWaAppConfig(accountName) {
         WA_AUTH_TIMEOUT_MS: '300000',
         WA_PROTOCOL_TIMEOUT_MS: '600000',
         WA_QR_IDLE_TIMEOUT_MS: '180000',
-        PUPPETEER_EXECUTABLE_PATH: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium',
         PUPPETEER_SKIP_DOWNLOAD: 'true'
     }, `pm2:${accountName}`);
+
+    if (explicitChromePath) {
+        env.PUPPETEER_EXECUTABLE_PATH = explicitChromePath;
+    }
 
     return {
         name: `worker-wa-${accountName}`,
         script: './workers/worker-wa.js',
         max_memory_restart: '4G',
-        cron_restart: '0 4 * * *',
         instances: 1,
         exec_mode: 'fork',
         autorestart: true,

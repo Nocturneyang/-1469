@@ -3,7 +3,9 @@ import { defineStore } from 'pinia'
 export const useAuthStore = defineStore('auth', {
   state: () => ({
     token: localStorage.getItem('auth_token') || null,
-    user: JSON.parse(localStorage.getItem('auth_user') || 'null')
+    user: JSON.parse(localStorage.getItem('auth_user') || 'null'),
+    ssoHydratedAt: Number(localStorage.getItem('sso_hydrated_at') || 0),
+    ssoHydratePromise: null
   }),
 
   getters: {
@@ -26,6 +28,7 @@ export const useAuthStore = defineStore('auth', {
       localStorage.removeItem('auth_token')
       localStorage.removeItem('auth_user')
       localStorage.removeItem('sso_token')
+      localStorage.removeItem('sso_hydrated_at')
     },
 
     getSsoTokenFromUrl() {
@@ -43,33 +46,52 @@ export const useAuthStore = defineStore('auth', {
     },
 
     async hydrateSsoUser() {
+      const hasTokenInUrl = new URLSearchParams(window.location.search).has('token') ||
+        new URLSearchParams(window.location.search).has('satoken') ||
+        new URLSearchParams(window.location.search).has('access_token')
+      const freshEnough = Date.now() - this.ssoHydratedAt < 60000
+      if (!hasTokenInUrl && this.user && freshEnough) {
+        return this.user
+      }
+      if (this.ssoHydratePromise) {
+        return this.ssoHydratePromise
+      }
+
       const token = this.getSsoTokenFromUrl()
       const headers = {}
       if (token) headers.Authorization = `Bearer ${token}`
 
-      const response = await fetch('/token/userinfo', {
-        method: 'GET',
-        credentials: 'include',
-        headers
-      })
+      this.ssoHydratePromise = fetch('/token/userinfo', {
+          method: 'GET',
+          credentials: 'include',
+          headers
+        })
+        .then(async (response) => {
+          if (!response.ok) {
+            this.logout()
+            return null
+          }
 
-      if (!response.ok) {
-        this.logout()
-        return null
-      }
+          const payload = await response.json()
+          const user = payload.user || payload.data
+          if (!user) {
+            this.logout()
+            return null
+          }
 
-      const payload = await response.json()
-      const user = payload.user || payload.data
-      if (!user) {
-        this.logout()
-        return null
-      }
+          this.token = token || '__sso__'
+          this.user = user
+          this.ssoHydratedAt = Date.now()
+          localStorage.setItem('auth_token', this.token)
+          localStorage.setItem('auth_user', JSON.stringify(user))
+          localStorage.setItem('sso_hydrated_at', String(this.ssoHydratedAt))
+          return user
+        })
+        .finally(() => {
+          this.ssoHydratePromise = null
+        })
 
-      this.token = token || '__sso__'
-      this.user = user
-      localStorage.setItem('auth_token', this.token)
-      localStorage.setItem('auth_user', JSON.stringify(user))
-      return user
+      return this.ssoHydratePromise
     }
   }
 })

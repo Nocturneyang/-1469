@@ -14,11 +14,23 @@ function getChromeVersionFromExecutablePath(puppeteerInstance) {
     }
 }
 
+function getExistingExecutablePath(candidate) {
+    return candidate && fs.existsSync(candidate) ? candidate : null;
+}
+
 function getPuppeteerChromeInfo(puppeteerInstance) {
-    let executablePath = process.env.PUPPETEER_EXECUTABLE_PATH || null;
+    const configuredPath = process.env.PUPPETEER_EXECUTABLE_PATH || null;
+    let executablePath = getExistingExecutablePath(configuredPath);
+
+    if (configuredPath && !executablePath) {
+        console.warn(`[WA Runtime] Ignoring missing PUPPETEER_EXECUTABLE_PATH: ${configuredPath}`);
+    }
+
     try {
-        executablePath = executablePath || puppeteerInstance.executablePath();
+        executablePath = executablePath || getExistingExecutablePath(puppeteerInstance.executablePath());
     } catch (_) {}
+
+    executablePath = executablePath || getExistingExecutablePath('/usr/bin/chromium');
 
     const chromeVersion = executablePath ? getChromeVersionFromExecutablePath(puppeteerInstance) : null;
 

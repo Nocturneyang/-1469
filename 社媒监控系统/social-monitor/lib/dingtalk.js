@@ -48,12 +48,12 @@ function signUrl(webhookUrl, secret) {
  * @param {string} webhookUrl
  * @param {string} secret
  * @param {object} payload
- * @returns {Promise<void>}
+ * @returns {Promise<{ok:boolean, skipped?:boolean, reason?:string, errcode?:number}>}
  */
 async function _send(webhookUrl, secret, payload) {
   if (!webhookUrl || webhookUrl.includes('YOUR_')) {
     console.warn('[DingTalk] Webhook 未配置，跳过推送。payload:', JSON.stringify(payload).slice(0, 100));
-    return;
+    return { ok: false, skipped: true, reason: 'webhook_not_configured' };
   }
   const url = signUrl(webhookUrl, secret);
   try {
@@ -63,9 +63,12 @@ async function _send(webhookUrl, secret, payload) {
     });
     if (res.data && res.data.errcode !== 0) {
       console.error('[DingTalk] 推送失败:', res.data.errmsg, '| payload:', JSON.stringify(payload).slice(0, 120));
+      return { ok: false, reason: res.data.errmsg || 'dingtalk_error', errcode: res.data.errcode };
     }
+    return { ok: true, errcode: res.data?.errcode ?? 0 };
   } catch (err) {
     console.error('[DingTalk] 请求出错:', err.message);
+    return { ok: false, reason: err.message || 'request_error' };
   }
 }
 
@@ -114,7 +117,34 @@ function getRegionWebhooks() {
   return {};
 }
 
-function resolveConfig(type, platform, region) {
+function normalizeKeyPart(value) {
+  return String(value || '').trim().replace(/\s+/g, '');
+}
+
+function findHookByKeys(keys) {
+  const hooks = getRegionWebhooks();
+  for (const key of keys.filter(Boolean)) {
+    if (hooks[key] && hooks[key].url) {
+      return { url: hooks[key].url, secret: hooks[key].secret, matchedKey: key };
+    }
+  }
+  return null;
+}
+
+function buildWebhookKeys(typeUpper, platform, region, businessSector) {
+  const p = normalizeKeyPart(platform).toLowerCase();
+  const r = normalizeKeyPart(region);
+  const s = normalizeKeyPart(businessSector);
+  const keys = [];
+  if (p && r && s) keys.push(`${typeUpper}_${p}_${r}_${s}`);
+  if (p && r) keys.push(`${typeUpper}_${p}_${r}`);
+  if (p && s) keys.push(`${typeUpper}_${p}_${s}`);
+  if (r && s) keys.push(`${typeUpper}_${r}_${s}`);
+  if (r) keys.push(`${typeUpper}_${r}`);
+  return keys;
+}
+
+function resolveConfig(type, platform, region, businessSector) {
   let url = null;
   let secret = null;
   const typeUpper = type.toUpperCase();
@@ -131,45 +161,37 @@ function resolveConfig(type, platform, region) {
   // ALERT_P0 / ALERT_P1 / ALERT_P2 / ALERT_SID：分级告警，优先查分级专属配置，未命中回退至通用 ALERT
   const ALERT_SUB_TYPES = ['ALERT_P0', 'ALERT_P1', 'ALERT_P2', 'ALERT_SID'];
   if (ALERT_SUB_TYPES.includes(typeUpper)) {
-    // 1. 查分级专属区域配置（ALERT_P0_wa_欧美区）
-    if (platform && region) {
-      const hooks = getRegionWebhooks();
-      const key = `${typeUpper}_${platform}_${region}`;
-      if (hooks[key] && hooks[key].url) {
-        return { url: hooks[key].url, secret: hooks[key].secret };
-      }
-    }
+    // 1. 查分级专属配置（ALERT_P1_wa_南亚区_直连供应商 → ALERT_P1_wa_南亚区）
+    const matched = findHookByKeys(buildWebhookKeys(typeUpper, platform, region, businessSector));
+    if (matched) return matched;
     // 2. 查分级平台兜底 ENV（DINGTALK_ALERT_P0_WA）
     if (platform) {
       const envKey = `DINGTALK_${typeUpper}_${platform.toUpperCase()}`;
       if (process.env[envKey]) {
-        return { url: process.env[envKey], secret: process.env[envKey + '_SECRET'] || process.env.DINGTALK_SECRET };
+        return { url: process.env[envKey], secret: process.env[envKey + '_SECRET'] || process.env.DINGTALK_SECRET, matchedKey: envKey };
       }
     }
     // 3. 回退至通用 ALERT 配置（向后兼容）
-    return resolveConfig('ALERT', platform, region);
+    return resolveConfig('ALERT', platform, region, businessSector);
   }
 
-  // 1. Region + Platform specific (from JSON)
-  if (platform && region) {
-    const hooks = getRegionWebhooks();
-    const key = `${typeUpper}_${platform}_${region}`;
-    if (hooks[key] && hooks[key].url) {
-      return { url: hooks[key].url, secret: hooks[key].secret };
-    }
-  }
+  // 1. Region/Sector + Platform specific (from JSON)
+  const matched = findHookByKeys(buildWebhookKeys(typeUpper, platform, region, businessSector));
+  if (matched) return matched;
 
   // 2. Platform specific fallback (from ENV)
   if (platform) {
     const platUpper = platform.toUpperCase();
     url = process.env[`DINGTALK_${typeUpper}_${platUpper}`];
     secret = process.env[`DINGTALK_${typeUpper}_${platUpper}_SECRET`];
+    if (url) return { url, secret: secret || process.env[`DINGTALK_${typeUpper}_SECRET`] || process.env.DINGTALK_SECRET, matchedKey: `DINGTALK_${typeUpper}_${platUpper}` };
   }
   
   // 3. Global fallback (from ENV)
   if (!url) {
     url = process.env[`DINGTALK_${typeUpper}`];
     secret = secret || process.env[`DINGTALK_${typeUpper}_SECRET`] || process.env.DINGTALK_SECRET;
+    if (url) return { url, secret, matchedKey: `DINGTALK_${typeUpper}` };
   } else {
     secret = secret || process.env[`DINGTALK_${typeUpper}_SECRET`] || process.env.DINGTALK_SECRET;
   }
@@ -177,11 +199,9 @@ function resolveConfig(type, platform, region) {
   return { url, secret };
 }
 
-function hasRegionalWebhook(type, platform, region) {
-  if (!platform || !region) return false;
-  const hooks = getRegionWebhooks();
-  const key = `${type.toUpperCase()}_${platform}_${region}`;
-  return !!(hooks[key] && hooks[key].url);
+function hasRegionalWebhook(type, platform, region, businessSector) {
+  if (!platform || (!region && !businessSector)) return false;
+  return !!findHookByKeys(buildWebhookKeys(type.toUpperCase(), platform, region, businessSector));
 }
 
 // ─── 三路机器人公开接口 ──────────────────────────────────────────
@@ -197,32 +217,32 @@ function hasRegionalWebhook(type, platform, region) {
  * @param {string} [opts.region]
  * @param {string} [opts.alertType]  - 'P0' | 'P1' | 'P2' | 'SID' | undefined（undefined=通用ALERT）
  */
-async function sendAlert({ title, content, atMobiles = [], atAll = false, platform, region, alertType }) {
+async function sendAlert({ title, content, atMobiles = [], atAll = false, platform, region, businessSector, alertType }) {
   const type = alertType ? `ALERT_${alertType.toUpperCase()}` : 'ALERT';
-  const { url, secret } = resolveConfig(type, platform, region);
-  await _send(url, secret, buildMarkdown(title, content, atMobiles, atAll));
+  const { url, secret } = resolveConfig(type, platform, region, businessSector);
+  return await _send(url, secret, buildMarkdown(title, content, atMobiles, atAll));
 }
 
 /**
  * 📋 日报群推送（维度3）
  */
-async function sendDigest({ title, content, atMobiles = [], platform, region }) {
-  const { url, secret } = resolveConfig('DIGEST', platform, region);
-  await _send(url, secret, buildMarkdown(title, content, atMobiles));
+async function sendDigest({ title, content, atMobiles = [], platform, region, businessSector }) {
+  const { url, secret } = resolveConfig('DIGEST', platform, region, businessSector);
+  return await _send(url, secret, buildMarkdown(title, content, atMobiles));
 }
 
 /**
  * 📊 周报群推送（维度4）
  */
-async function sendWeekly({ title, content, atMobiles = [], platform, region }) {
-  const { url, secret } = resolveConfig('WEEKLY', platform, region);
-  await _send(url, secret, buildMarkdown(title, content, atMobiles));
+async function sendWeekly({ title, content, atMobiles = [], platform, region, businessSector }) {
+  const { url, secret } = resolveConfig('WEEKLY', platform, region, businessSector);
+  return await _send(url, secret, buildMarkdown(title, content, atMobiles));
 }
 
 /**
  * 快捷：发送 SID 变更通知（使用告警机器人）
  */
-async function sendSidChangeAlert({ groupName, region, senderName, sidList, platform, alertType }) {
+async function sendSidChangeAlert({ groupName, region, senderName, sidList, platform, businessSector, alertType }) {
   const title = `[SID配置更新] ${region}-${groupName}`;
   const content = [
     `### 🔧 [SID配置更新] ${region} | ${groupName}`,
@@ -231,13 +251,13 @@ async function sendSidChangeAlert({ groupName, region, senderName, sidList, plat
     `**更新节点：** ${sidList.join(' / ')}（共${sidList.length}个）`,
     `**时间：** ${new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}`,
   ].join('\n');
-  await sendAlert({ title, content, platform, region, alertType: alertType || 'SID' });
+  return await sendAlert({ title, content, platform, region, businessSector, alertType: alertType || 'SID' });
 }
 
 /**
  * 快捷：发送问题升级告警
  */
-async function sendEscalation({ groupName, region, issueType, openedAt, durationMins, atMobiles = [], platform }) {
+async function sendEscalation({ groupName, region, issueType, openedAt, durationMins, atMobiles = [], platform, businessSector, alertType }) {
   const title = `[问题升级] ${region}-${groupName} 未解决`;
   const openedStr = new Date(openedAt).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' });
   const content = [
@@ -248,7 +268,7 @@ async function sendEscalation({ groupName, region, issueType, openedAt, duration
     `**持续时长：** ${Math.round(durationMins)} 分钟`,
     `**状态：** 仍未收到闭环确认，请介入处理`,
   ].join('\n');
-  await sendAlert({ title, content, atMobiles, platform, region });
+  return await sendAlert({ title, content, atMobiles, platform, region, businessSector, alertType: alertType || 'P1' });
 }
 
 /**
@@ -283,7 +303,7 @@ async function sendAccountAlert({ platform, accountId, region, status, detail })
   ].join('\n');
 
   const { url, secret } = resolveConfig('SYSTEM_OPS');
-  await _send(url, secret, buildMarkdown(title, content));
+  return await _send(url, secret, buildMarkdown(title, content));
 }
 
 module.exports = {
@@ -296,4 +316,6 @@ module.exports = {
   buildMarkdown,
   buildText,
   hasRegionalWebhook,
+  resolveConfig,
+  buildWebhookKeys,
 };

@@ -27,6 +27,11 @@ sourceDb.pragma('journal_mode = WAL');
 const analyticsDb = new Database(path.join(ROOT, 'db', 'analytics.sqlite'));
 analyticsDb.pragma('journal_mode = WAL');
 
+function envNumber(name, fallback) {
+  const n = Number(process.env[name]);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
 // ─── 区域配置 ────────────────────────────────────────────────────
 const accountConfig = JSON.parse(
   fs.readFileSync(path.join(ROOT, 'config', 'account-regions.json'), 'utf8')
@@ -169,16 +174,6 @@ async function generateProfiles() {
       top_issue_types=excluded.top_issue_types,
       last_alert_at=excluded.last_alert_at,
       total_messages=excluded.total_messages,
-      ai_attitude_tags=excluded.ai_attitude_tags,
-      ai_insight_tags=excluded.ai_insight_tags,
-      ai_insight_summary=excluded.ai_insight_summary,
-      ai_sub_scores=excluded.ai_sub_scores,
-      ai_avg_turns=excluded.ai_avg_turns,
-      ai_fcr=excluded.ai_fcr,
-      ai_tech_contact=excluded.ai_tech_contact,
-      ai_tech_reply_rate=excluded.ai_tech_reply_rate,
-      ai_planned_maintenance_pct=excluded.ai_planned_maintenance_pct,
-      ai_profile_version=excluded.ai_profile_version,
       profile_updated_at=datetime('now','+8 hours')
   `);
 
@@ -301,7 +296,7 @@ async function generateProfiles() {
   }
 
   // ── AI 画像分析（NLP，并发控制）──
-  const AI_CONCURRENCY = 3;
+  const AI_CONCURRENCY = envNumber('SUPPLIER_PROFILE_AI_CONCURRENCY', 1);
   const needAI = groups.filter(g => {
     // 只对有足够问题记录或消息量的群组做AI分析
     const stats = analyticsDb.prepare(

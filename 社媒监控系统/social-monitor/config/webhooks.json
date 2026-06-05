@@ -30,50 +30,5 @@
     "1. 在钉钉群内添加「自定义」机器人，复制 Webhook URL",
     "2. 在下方添加对应键名，或配置 ENV 变量 DINGTALK_DIGEST_wa_欧美区 等",
     "3. 键名格式：{TYPE}_{platform}_{region} 或 {TYPE}_{platform}_{region}_{sector}"
-  ],
-  "DIGEST_wa_欧美区": {
-    "_comment": "直连供应商 · 欧美区（Jasmine-001 主责）",
-    "url": "https://oapi.dingtalk.com/robot/send?access_token=afa608f1591a6cc2edc4989fe0bc2b6121affef37b9d8c1a9517a3b26a75dd63",
-    "secret": "SECcc9dcc889de80edd983ea85266bc891b4399886ffefc9b8c15871bf4fb3d73b1"
-  },
-  "DIGEST_wa_南亚区": {
-    "_comment": "直连供应商 · 南亚区（Jessica 主责）",
-    "url": "https://oapi.dingtalk.com/robot/send?access_token=cea78a68a99a9be30d6f5859c37402403c97ce825b1d5953da18bacabf828c27",
-    "secret": "SEC8eaf52ea370fba9d80a252f9d52c44fd73a326babbdc0d8d3ae560869a08110a"
-  },
-  "DIGEST_wa_亚太区": {
-    "_comment": "直连供应商 · 亚太区",
-    "url": "https://oapi.dingtalk.com/robot/send?access_token=985c7d8837a7a355d90b70662338e5bbb1d90620612c097c4e7d5217c3876833",
-    "secret": "SEC05b3ba6fee22c287c9fa12c8344d822a2bdda391a8551b277f5587366f2c984c"
-  },
-  "DIGEST_wa_语音": {
-    "url": "https://oapi.dingtalk.com/robot/send?access_token=7fa885ffe91ff3aff40a1e0f254010fd90f217786c17a05b9b41f6bac91ecc47",
-    "secret": "SEC0c5a4d05a30076d13530c8c18cc4cf1a4e48b515382db0ccdcedb57c895ce608"
-  },
-  "DIGEST_tgu_TG-设备支持": {
-    "url": "https://oapi.dingtalk.com/robot/send?access_token=0aa5e1fa141ea61c9cae116b24a9bb017cd08ed6cac9ad6cef21a4b29a011e33",
-    "secret": "SECf7948e554cd2b6692b6965a491b550f3c26f6e71cba113576cbde9a6bbbb20f5"
-  },
-  "DIGEST_wa_WA设备技术": {
-    "url": "https://oapi.dingtalk.com/robot/send?access_token=0aa5e1fa141ea61c9cae116b24a9bb017cd08ed6cac9ad6cef21a4b29a011e33",
-    "secret": "SECf7948e554cd2b6692b6965a491b550f3c26f6e71cba113576cbde9a6bbbb20f5"
-  },
-  "DIGEST_tgu_TGlaffic客服": {
-    "_comment": "客服 · Telegram laffic 客服群",
-    "url": "https://oapi.dingtalk.com/robot/send?access_token=c4c42bd6bf97edb93cee7006f86cc0b3a4e97167bb7e4f36d52fb69c02e18088",
-    "secret": "SECea71b759b4cd3ab7e1ba1eaf790f1152d0eeeb2a8e5e1657b331165a3b8c7bb1"
-  },
-  "DIGEST_tgu_TG卡线": {
-    "_comment": "卡线 · Telegram 卡线和双向业务",
-    "url": "https://oapi.dingtalk.com/robot/send?access_token=8fd4cb19fc17f7fb1335a5cab44365f395522de037c8575ece56623a404b59d2",
-    "secret": "SECd6b897d760322e0e550a444b964c1df0c064f7d825cbfff3a2e7693dce0c97d7"
-  },
-  "ALERT_P2_wa_语音": {
-    "url": "https://oapi.dingtalk.com/robot/send?access_token=7fa885ffe91ff3aff40a1e0f254010fd90f217786c17a05b9b41f6bac91ecc47",
-    "secret": "SEC0c5a4d05a30076d13530c8c18cc4cf1a4e48b515382db0ccdcedb57c895ce608"
-  },
-  "ALERT_P1_wa_语音": {
-    "url": "https://oapi.dingtalk.com/robot/send?access_token=7fa885ffe91ff3aff40a1e0f254010fd90f217786c17a05b9b41f6bac91ecc47",
-    "secret": "SEC0c5a4d05a30076d13530c8c18cc4cf1a4e48b515382db0ccdcedb57c895ce608"
-  }
+  ]
 }

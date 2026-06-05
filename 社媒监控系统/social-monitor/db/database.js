@@ -204,7 +204,13 @@ function initSchema() {
             console.log('Migrated database: added business_sector column');
         }
 
-        db.exec("CREATE INDEX IF NOT EXISTS idx_messages_is_synced ON messages(is_synced)");
+        db.exec(`
+            CREATE INDEX IF NOT EXISTS idx_messages_is_synced ON messages(is_synced);
+            CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages(timestamp DESC);
+            CREATE INDEX IF NOT EXISTS idx_messages_platform_timestamp ON messages(platform, timestamp DESC);
+            CREATE INDEX IF NOT EXISTS idx_messages_has_media ON messages(has_media);
+            CREATE INDEX IF NOT EXISTS idx_messages_group_name ON messages(group_name);
+        `);
     } catch (err) {
         console.error('Migration error:', err.message);
     }

@@ -66,6 +66,33 @@ const routes = [
         component: () => import('@/views/KnowledgeBase.vue')
       },
       {
+        path: 'assets',
+        name: 'KnowledgeAssets',
+        component: () => import('@/views/KnowledgeAssets.vue')
+      },
+      {
+        path: 'region-intelligence',
+        name: 'RegionIntelligence',
+        component: () => import('@/views/RegionIntelligence.vue')
+      },
+      {
+        path: 'customer-service-intelligence',
+        name: 'CustomerServiceIntelligence',
+        component: () => import('@/views/DomainIntelligence.vue'),
+        meta: { domainKind: 'customer_service' }
+      },
+      {
+        path: 'device-tech-intelligence',
+        name: 'DeviceTechIntelligence',
+        component: () => import('@/views/DomainIntelligence.vue'),
+        meta: { domainKind: 'device_tech' }
+      },
+      {
+        path: 'entity-graph',
+        name: 'EntityGraph',
+        component: () => import('@/views/EntityGraph.vue')
+      },
+      {
         path: 'profiles',
         name: 'SupplierProfiles',
         component: () => import('@/views/SupplierProfiles.vue')

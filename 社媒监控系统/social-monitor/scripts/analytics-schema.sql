@@ -272,3 +272,131 @@ CREATE TABLE IF NOT EXISTS content_template_lib (
 CREATE INDEX IF NOT EXISTS idx_ctl_customer ON content_template_lib(customer_name);
 CREATE INDEX IF NOT EXISTS idx_ctl_type ON content_template_lib(template_type);
 CREATE INDEX IF NOT EXISTS idx_ctl_issue ON content_template_lib(source_issue_id);
+
+-- ⑭ 统一知识资产候选池（离线回溯 + 实时增量共同写入）
+CREATE TABLE IF NOT EXISTS knowledge_asset_candidates (
+  id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+  dedupe_key            TEXT NOT NULL UNIQUE,       -- 稳定去重键
+  asset_type            TEXT NOT NULL,              -- entity_relationship / operation_action / ...
+  asset_key             TEXT,                       -- 类型内业务键
+  title                 TEXT NOT NULL,
+  description           TEXT,
+
+  collection_region     TEXT,                       -- 采集账号归属区域
+  business_region       TEXT,                       -- 内容指向区域（v1 默认等于 collection_region）
+  business_sector       TEXT,
+  receiver_account      TEXT,
+  value_label           TEXT DEFAULT 'L1',          -- L0/L1/L2/L3
+  group_name            TEXT,
+
+  source_msg_ids        TEXT,                       -- JSON数组，对应 messages.id
+  time_range            TEXT,                       -- JSON: {start,end}
+  evidence              TEXT,                       -- JSON数组，脱敏摘要
+  metrics               TEXT,                       -- JSON对象，类型专属指标
+  related_entities      TEXT,                       -- JSON数组，客户/国家/运营商/SID/设备等
+
+  confidence            REAL DEFAULT 0.5,           -- 抽取置信度 0~1
+  asset_value_score     INTEGER DEFAULT 50,         -- 业务价值分 0~100
+  value_level           TEXT DEFAULT 'medium',      -- high / medium / low
+  value_reasons         TEXT,                       -- JSON数组
+  frequency             INTEGER DEFAULT 1,
+  first_seen_at         INTEGER,
+  last_seen_at          INTEGER,
+
+  extractor             TEXT DEFAULT 'offline-discovery',
+  extractor_version     TEXT DEFAULT 'v1',
+  prompt_version        TEXT,
+  model_name            TEXT,
+  validation_status     TEXT DEFAULT 'rule_validated',
+  review_status         TEXT DEFAULT 'pending_review', -- pending_review / confirmed / rejected / merged
+  review_note           TEXT,
+  reviewed_by           TEXT,
+  reviewed_at           DATETIME,
+
+  created_at            DATETIME DEFAULT (datetime('now', '+8 hours')),
+  updated_at            DATETIME DEFAULT (datetime('now', '+8 hours'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_kac_type ON knowledge_asset_candidates(asset_type);
+CREATE INDEX IF NOT EXISTS idx_kac_status ON knowledge_asset_candidates(review_status);
+CREATE INDEX IF NOT EXISTS idx_kac_sector_region ON knowledge_asset_candidates(business_sector, collection_region);
+CREATE INDEX IF NOT EXISTS idx_kac_value ON knowledge_asset_candidates(asset_value_score DESC, confidence DESC);
+CREATE INDEX IF NOT EXISTS idx_kac_seen ON knowledge_asset_candidates(last_seen_at DESC);
+
+-- ⑮ 正式知识资产库（由已确认候选沉淀而来，供业务页面调用）
+CREATE TABLE IF NOT EXISTS knowledge_assets (
+  id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+  asset_uid             TEXT NOT NULL UNIQUE,       -- 正式资产唯一 ID
+  asset_type            TEXT NOT NULL,
+  asset_key             TEXT,
+  title                 TEXT NOT NULL,
+  summary               TEXT,
+  status                TEXT DEFAULT 'active',      -- active / inactive / merged / deprecated
+
+  collection_region     TEXT,
+  business_region       TEXT,
+  business_sector       TEXT,
+  receiver_account      TEXT,
+  value_label           TEXT DEFAULT 'L1',
+  group_name            TEXT,
+
+  source_candidate_keys TEXT,                       -- JSON数组，对应 knowledge_asset_candidates.dedupe_key
+  source_msg_ids        TEXT,                       -- JSON数组，对应 messages.id
+  time_range            TEXT,                       -- JSON: {start,end}
+  evidence              TEXT,                       -- JSON数组，脱敏摘要
+  metrics               TEXT,                       -- JSON对象，类型专属指标
+  related_entities      TEXT,                       -- JSON数组
+  tags                  TEXT,                       -- JSON数组，人工/AI标签
+
+  confidence            REAL DEFAULT 0.5,
+  asset_value_score     INTEGER DEFAULT 50,
+  quality_score         INTEGER DEFAULT 50,         -- 审核后质量分
+  frequency             INTEGER DEFAULT 1,
+  first_seen_at         INTEGER,
+  last_seen_at          INTEGER,
+  usage_count           INTEGER DEFAULT 0,
+  last_used_at          DATETIME,
+
+  created_from          TEXT DEFAULT 'candidate_review',
+  created_by            TEXT,
+  reviewed_by           TEXT,
+  reviewed_at           DATETIME,
+  created_at            DATETIME DEFAULT (datetime('now', '+8 hours')),
+  updated_at            DATETIME DEFAULT (datetime('now', '+8 hours'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_ka_type ON knowledge_assets(asset_type);
+CREATE INDEX IF NOT EXISTS idx_ka_status ON knowledge_assets(status);
+CREATE INDEX IF NOT EXISTS idx_ka_sector_region ON knowledge_assets(business_sector, collection_region);
+CREATE INDEX IF NOT EXISTS idx_ka_group ON knowledge_assets(group_name);
+CREATE INDEX IF NOT EXISTS idx_ka_value ON knowledge_assets(asset_value_score DESC, quality_score DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_ka_dedupe ON knowledge_assets(asset_type, asset_key, collection_region, business_sector, group_name);
+
+-- ⑯ 候选资产与正式资产关系
+CREATE TABLE IF NOT EXISTS knowledge_asset_links (
+  id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+  asset_uid             TEXT NOT NULL,
+  candidate_key         TEXT NOT NULL,
+  link_type             TEXT DEFAULT 'promoted',    -- promoted / merged / supporting
+  created_by            TEXT,
+  created_at            DATETIME DEFAULT (datetime('now', '+8 hours')),
+  UNIQUE(asset_uid, candidate_key)
+);
+
+CREATE INDEX IF NOT EXISTS idx_kal_asset ON knowledge_asset_links(asset_uid);
+CREATE INDEX IF NOT EXISTS idx_kal_candidate ON knowledge_asset_links(candidate_key);
+
+-- ⑰ 知识资产使用日志（后续用于质量反馈和推荐排序）
+CREATE TABLE IF NOT EXISTS knowledge_asset_usage_log (
+  id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+  asset_uid             TEXT NOT NULL,
+  used_in               TEXT,                       -- supplier_profile / alert_detail / issue_resolution / manual
+  ref_id                TEXT,
+  feedback              TEXT,                       -- helpful / not_helpful / stale
+  note                  TEXT,
+  used_by               TEXT,
+  created_at            DATETIME DEFAULT (datetime('now', '+8 hours'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_kaul_asset ON knowledge_asset_usage_log(asset_uid);
+CREATE INDEX IF NOT EXISTS idx_kaul_used_in ON knowledge_asset_usage_log(used_in);

@@ -60,7 +60,10 @@
         <div v-for="item in items" :key="item.id" class="msg-card" style="flex-direction: column; gap: 8px">
           <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px">
             <span style="font-size: 15px; font-weight: 700; color: var(--t)">{{ item.device_model }}</span>
-            <span style="font-size: 12px; color: var(--t3)">分类: {{ item.fault_category || '--' }} · 频次: {{ item.frequency || 0 }}</span>
+            <span style="font-size: 12px; color: var(--t3)">
+              <b v-if="item.source_type === 'asset_discovery'" class="tag">资产发现</b>
+              分类: {{ item.fault_category || '--' }} · 频次: {{ item.frequency || 0 }}
+            </span>
           </div>
           <div style="font-size: 14px; color: var(--color-danger); font-weight: 600">故障: {{ item.fault_symptom }}</div>
           <div style="font-size: 14px; color: var(--t2); line-height: 1.6">方案: {{ item.solution_steps }}</div>
@@ -80,6 +83,7 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import api from '@/utils/request'
+import { downloadAuthenticatedFile } from '@/utils/download'
 
 const keyword = ref('')
 const category = ref('')
@@ -133,20 +137,11 @@ const toggleExportMenu = () => { showExportMenu.value = !showExportMenu.value }
 
 const downloadKB = (format) => {
   showExportMenu.value = false
-  const token = localStorage.getItem('token') || sessionStorage.getItem('token') || ''
-  fetch(`/api/device-kb/export?format=${format}`, {
-    headers: token ? { Authorization: `Bearer ${token}` } : {}
-  })
-    .then(r => r.blob())
-    .then(blob => {
-      const ext = format === 'csv' ? 'csv' : format === 'jsonl' ? 'jsonl' : 'json'
-      const a = document.createElement('a')
-      a.href = URL.createObjectURL(blob)
-      a.download = `device-kb-${new Date().toISOString().slice(0,10)}.${ext}`
-      a.click()
-      URL.revokeObjectURL(a.href)
-    })
-    .catch(e => console.error('下载失败', e))
+  const ext = format === 'csv' ? 'csv' : format === 'jsonl' ? 'jsonl' : 'json'
+  downloadAuthenticatedFile(
+    `/api/device-kb/export?format=${format}`,
+    `device-kb-${new Date().toISOString().slice(0,10)}.${ext}`
+  )
 }
 
 const handleOutsideClick = (e) => {
@@ -161,36 +156,44 @@ onUnmounted(() => document.removeEventListener('click', handleOutsideClick))
 .export-group {
   position: relative;
   margin-left: auto;
+  flex-shrink: 0;
 }
 .btn-export {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 7px 14px;
-  border-radius: 8px;
-  border: 1px solid var(--p, #6b46c1);
-  background: transparent;
+  padding: 9px 15px;
+  border-radius: 12px;
+  border: 1px solid rgba(107, 70, 193, 0.18);
+  background: #fff;
   color: var(--p, #6b46c1);
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 800;
   cursor: pointer;
-  transition: all .18s;
+  box-shadow: 0 4px 14px rgba(107, 70, 193, 0.08);
+  transition: background .18s, border-color .18s, box-shadow .18s, transform .18s;
   white-space: nowrap;
 }
 .btn-export:hover, .btn-export.active {
-  background: var(--p, #6b46c1);
-  color: #fff;
+  background: rgba(107, 70, 193, 0.08);
+  border-color: rgba(107, 70, 193, 0.34);
+  box-shadow: 0 8px 20px rgba(107, 70, 193, 0.14);
+  transform: translateY(-1px);
 }
-.export-arrow { font-size: 10px; }
+.export-arrow {
+  font-size: 10px;
+  color: rgba(107, 70, 193, 0.72);
+}
 .export-menu {
   position: absolute;
-  top: calc(100% + 6px);
+  top: calc(100% + 10px);
   right: 0;
-  width: 240px;
-  background: var(--card, #1e1e2e);
-  border: 1px solid var(--border, rgba(255,255,255,0.08));
-  border-radius: 12px;
-  box-shadow: 0 8px 32px rgba(0,0,0,0.35);
+  width: min(292px, calc(100vw - 48px));
+  padding: 8px;
+  background: #fff;
+  border: 1px solid var(--border, #e8edf5);
+  border-radius: 14px;
+  box-shadow: 0 18px 42px rgba(45, 55, 72, 0.16), 0 4px 12px rgba(107, 70, 193, 0.08);
   z-index: 999;
   overflow: hidden;
   animation: fadeDown .15s ease;
@@ -200,32 +203,68 @@ onUnmounted(() => document.removeEventListener('click', handleOutsideClick))
   to   { opacity:1; transform: translateY(0); }
 }
 .export-menu-header {
-  padding: 10px 14px 6px;
+  padding: 5px 8px 8px;
   font-size: 11px;
-  color: var(--t3, #888);
+  color: var(--t3, #718096);
+  font-weight: 800;
   text-transform: uppercase;
   letter-spacing: .06em;
 }
 .export-menu button {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 12px;
   width: 100%;
-  padding: 10px 14px;
+  padding: 11px 10px;
   border: none;
-  background: transparent;
-  color: var(--t, #fff);
+  border-radius: 10px;
+  background: #fff;
+  color: var(--t, #2d3748);
   cursor: pointer;
   text-align: left;
-  transition: background .15s;
+  transition: background .15s, color .15s;
 }
-.export-menu button:hover { background: rgba(107,70,193,0.15); }
+.export-menu button:hover {
+  background: rgba(107,70,193,0.08);
+}
 .fmt-icon {
-  width: 28px;
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+  background: rgba(107,70,193,0.08);
+  color: var(--p, #6b46c1);
   text-align: center;
-  font-size: 16px;
+  font-size: 15px;
+  line-height: 30px;
   flex-shrink: 0;
 }
-.export-menu button strong { display: block; font-size: 13px; }
-.export-menu button small  { display: block; font-size: 11px; color: var(--t3, #888); margin-top: 1px; }
+.export-menu button strong {
+  display: block;
+  font-size: 13px;
+  line-height: 1.25;
+  color: var(--t, #2d3748);
+}
+.export-menu button small  {
+  display: block;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--t3, #718096);
+  margin-top: 3px;
+}
+
+@media (max-width: 720px) {
+  .export-group {
+    width: 100%;
+    margin-left: 0;
+  }
+  .btn-export {
+    justify-content: center;
+    width: 100%;
+  }
+  .export-menu {
+    left: 0;
+    right: auto;
+    width: 100%;
+  }
+}
 </style>

@@ -38,6 +38,7 @@
           <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px">
             <span style="font-size: 14px; font-weight: 700; color: var(--t)">{{ item.customer_name || '未知客户' }}</span>
             <div style="display: flex; gap: 8px; font-size: 12px; color: var(--t3)">
+              <span v-if="item.source_type === 'asset_discovery'" class="tag">资产发现</span>
               <span class="tag">{{ item.template_type || '未分类' }}</span>
               <span>频次: {{ item.frequency || 0 }}</span>
             </div>

@@ -228,10 +228,13 @@ const checkMsgAlerted = analyticsDb.prepare(`
 const DEDUP_WINDOW_MS = 30 * 60 * 1000;
 const checkRecentAlert = analyticsDb.prepare(`
   SELECT id, source_msg_ids FROM alert_records
-  WHERE group_name = ? AND alert_level = ? AND is_pushed = 1
+  WHERE group_name = ? AND alert_level = ?
     AND created_at > datetime('now', '+8 hours', '-30 minutes')
   ORDER BY created_at DESC LIMIT 1
 `);
+
+const markAlertPushed = analyticsDb.prepare('UPDATE alert_records SET is_pushed = 1 WHERE id = ?');
+const markSidPushed = analyticsDb.prepare('UPDATE sid_change_records SET is_pushed = 1 WHERE source_msg_id = ?');
 
 const insertIssue = analyticsDb.prepare(`
   INSERT INTO issue_records
@@ -247,6 +250,24 @@ function getRecurrenceCount(groupName, issueType) {
     .prepare('SELECT COUNT(*) AS cnt FROM issue_records WHERE group_name = ? AND issue_type = ?')
     .get(groupName, issueType);
   return (row?.cnt || 0) + 1;
+}
+
+function mergeMsgIds(existingJson, incomingIds) {
+  let existing = [];
+  try {
+    const parsed = JSON.parse(existingJson || '[]');
+    if (Array.isArray(parsed)) existing = parsed;
+  } catch (_) {}
+  return JSON.stringify([...new Set([...existing, ...incomingIds])]);
+}
+
+function markAlertPushResult(alertId, sendResult, logLabel) {
+  if (sendResult?.ok) {
+    markAlertPushed.run(alertId);
+    return true;
+  }
+  console.warn(`${logLabel}-PUSH-SKIPPED | ${sendResult?.reason || 'unknown'}`);
+  return false;
 }
 
 // ─── 告警消息格式化 ───────────────────────────────────────────────
@@ -282,17 +303,85 @@ function buildP1AlertContent(groupName, regionInfo, aiResult, msgCount) {
   return lines.join('\n');
 }
 
-function buildNoResponseContent(msg, regionInfo, minutesElapsed) {
-  const dt = new Date(msg.timestamp).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' });
+function compactContent(content, max = 120) {
+  const text = String(content || '')
+    .replace(/https?:\/\/\S+/gi, '[url]')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!text) return '无文本内容';
+  return text.length > max ? `${text.slice(0, max)}...` : text;
+}
+
+function formatCnTime(timestamp) {
+  return new Date(timestamp || Date.now()).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' });
+}
+
+function getNoResponseMessages(state) {
+  if (Array.isArray(state?.externalMsgs) && state.externalMsgs.length > 0) {
+    return state.externalMsgs;
+  }
+  return state?.firstMsg ? [state.firstMsg] : [];
+}
+
+function buildNoResponseInsight(messages, regionInfo, minutesElapsed) {
+  const joined = messages.map((m) => m.content || '').join('\n').toLowerCase();
+  const sector = regionInfo.business_sector || '未分类';
+  const hasIncident = /down|fail|failed|failure|error|issue|blocked|timeout|undelivered|not receiving|not receive|收不到|失败|异常|故障|拦截|延迟|不通|不可用/.test(joined);
+  const hasPrice = /price|cost|quote|rate|fee|报价|价格|成本|费用|费率/.test(joined);
+  const hasResource = /route|sender|sid|sim|device|goip|port|carrier|operator|线路|通道|设备|端口|运营商|资源|号码|卡/.test(joined);
+  const hasUrgency = /urgent|asap|immediately|please|pls|kindly|now|催|急|紧急|马上|尽快|帮忙|麻烦/.test(joined);
+
+  let summary = '外部已有连续消息等待我方确认，需要判断是否为资源、故障或业务需求。';
+  let risk = `${sector} 对话已等待 ${minutesElapsed} 分钟，若继续沉默，可能造成客户/供应商对接中断。`;
+  let action = '请区域负责人先在群内回复“已跟进/正在确认”，再补充处理结论。';
+
+  if (hasIncident) {
+    summary = '外部反馈疑似故障、失败、延迟或不可用问题，尚未看到我方接手。';
+    risk = '可能影响发送、送达、设备可用性或客户体验，不能只按普通聊天沉默处理。';
+    action = '请先确认问题范围和当前处理人；如属真实故障，升级为 P1/P0 或补建问题单。';
+  } else if (hasPrice) {
+    summary = '外部在询价、报价或成本变化，尚未看到我方回复。';
+    risk = '可能影响资源采购、成本判断或客户报价时效。';
+    action = '请确认是否需要商务/资源侧回复，并记录价格、国家、运营商和有效期。';
+  } else if (hasResource) {
+    summary = '外部提到线路、设备、运营商、Sender ID、SIM 或资源配置，尚未看到我方回复。';
+    risk = '可能影响资源可用性、配置变更或后续排障路径。';
+    action = '请确认资源对象和负责人，必要时补充到资源/设备知识库或区域情报。';
+  } else if (hasUrgency) {
+    summary = '外部存在催促或请求确认信号，尚未看到我方响应。';
+    risk = '响应延迟本身已经成为服务风险，容易被对方感知为无人跟进。';
+    action = '请先做状态回复，再判断是否需要分派到运营、技术或商务。';
+  }
+
+  return { summary, risk, action };
+}
+
+function buildNoResponseContent(state, regionInfo, minutesElapsed, insight) {
+  const messages = getNoResponseMessages(state);
+  const firstMsg = messages[0] || state.firstMsg;
+  const lastMsg = messages[messages.length - 1] || firstMsg;
+  const senders = [...new Set(messages.map((m) => m.sender_name).filter(Boolean))];
+  const valueLabel = getValueLabel(firstMsg.receiver_account, firstMsg.group_name);
+  const recentLines = messages.slice(-4).map((m) => {
+    const t = new Date(m.timestamp).toLocaleTimeString('zh-CN', { timeZone: 'Asia/Shanghai' });
+    return `  - ${t} ${m.sender_name || '外部'}：${compactContent(m.content, 90)}`;
+  });
+
   return [
-    `### 🟡 [P2无响应告警] ${regionInfo.region} | ${msg.group_name}`,
+    `### 🟡 [P2响应缺口] ${regionInfo.region} | ${firstMsg.group_name}`,
     '',
-    `- **外部发言人：** ${msg.sender_name}`,
-    `- **发问时间：** ${dt}`,
-    `- **已等待：** ${minutesElapsed} 分钟`,
-    `- **内容片段：** ${msg.content.slice(0, 150)}`,
+    `- **业务上下文：** ${regionInfo.region} / ${regionInfo.business_sector || '未分类'} / ${firstMsg.receiver_account} / ${valueLabel}`,
+    `- **判断口径：** 响应缺口 + 诉求/风险归因（${NO_RESPONSE_ALERT_FORMAT}）`,
+    `- **等待时长：** ${minutesElapsed} 分钟（${formatCnTime(firstMsg.timestamp)} 发起，最近 ${formatCnTime(lastMsg.timestamp)}）`,
+    `- **外部发言人：** ${senders.join('、') || firstMsg.sender_name || '未知'}`,
+    `- **外部诉求：** ${insight.summary}`,
+    `- **风险/价值：** ${insight.risk}`,
+    `- **建议动作：** ${insight.action}`,
     '',
-    `> ITNIO 运营尚未回复，请关注。`,
+    `**最近外部消息：**`,
+    ...recentLines,
+    '',
+    `> 这是响应缺口告警：请先在群内给出接手状态，再补处理结论。`,
   ].join('\n');
 }
 
@@ -324,9 +413,22 @@ function flushExpiredWindows() {
 }
 
 // ─── 无响应检测状态 ──────────────────────────────────────────────
-// { groupId: { firstExternalTs, alerted } }
+// { groupId: { firstExternalTs, firstMsg, externalMsgs, alerted } }
 const noResponseState = new Map();
 const NO_RESPONSE_MS = 15 * 60 * 1000;
+const MAX_NO_RESPONSE_CONTEXT_MSGS = 10;
+const NO_RESPONSE_ALERT_FORMAT = 'p2_response_gap_v2';
+
+function appendNoResponseMessage(state, msg) {
+  const msgs = getNoResponseMessages(state);
+  if (!msgs.some((m) => m.id === msg.id)) {
+    msgs.push(msg);
+  }
+  state.externalMsgs = msgs.length > MAX_NO_RESPONSE_CONTEXT_MSGS
+    ? [msgs[0], ...msgs.slice(-(MAX_NO_RESPONSE_CONTEXT_MSGS - 1))]
+    : msgs;
+  state.lastExternalTs = Date.now();
+}
 
 // ─── P0 上下文窗口（查询触发消息前 15 条）───────────────────────────
 const getContextWindow = sourceDb.prepare(`
@@ -445,6 +547,15 @@ async function processNewMessages() {
 
     const commitment = extractCommitment(msg.content);
 
+    // 同群同级别30分钟去重：已有告警记录则跳过，仅追加消息ID到已有记录
+    const recentSame = checkRecentAlert.get(msg.group_name, severity);
+    if (recentSame) {
+      const mergedIds = mergeMsgIds(recentSame.source_msg_ids, [msg.id]);
+      analyticsDb.prepare('UPDATE alert_records SET source_msg_ids = ? WHERE id = ?').run(mergedIds, recentSame.id);
+      console.log(`[${severity.toUpperCase()}-DEDUP] ${msg.group_name} | 30分钟内已有同级告警，跳过 | 合并msg ${msg.id}`);
+      continue;
+    }
+
     // 写告警记录
     const alertInfo = insertAlert.run({
       source_msg_ids: JSON.stringify([msg.id]),
@@ -457,7 +568,7 @@ async function processNewMessages() {
       trigger_type: 'keyword',
       trigger_keywords: keyword,
       ai_score: null,
-      ai_title: `P0告警：${keyword}`,
+      ai_title: `${severity.toUpperCase()}告警：${keyword}`,
       ai_type: '通道故障',
       ai_action: null,
       ai_commitment: commitment,
@@ -479,25 +590,20 @@ async function processNewMessages() {
       recurrence_count: recurrence,
     });
 
-    // 同群同级别30分钟去重：已有推送则跳过，仅追加消息ID到已有记录
-    const recentP0 = checkRecentAlert.get(msg.group_name, 'p0');
-    if (recentP0) {
-      const mergedIds = recentP0.source_msg_ids.replace(/]$/, `,${msg.id}]`);
-      analyticsDb.prepare('UPDATE alert_records SET source_msg_ids = ? WHERE id = ?').run(mergedIds, recentP0.id);
-      console.log(`[P0-DEDUP] ${msg.group_name} | 30分钟内已有P0推送，跳过 | 合并msg ${msg.id}`);
-      continue;
-    }
-
     // 推送
     const content = buildP0AlertContent(msg, keyword, regionInfo);
-    await dingtalk.sendAlert({ title: `🔴 P0告警 ${regionInfo.region}-${msg.group_name}`, content, platform: regionInfo.platform, region: regionInfo.region, alertType: 'P0' });
+    const alertIcon = severity === 'p0' ? '🔴' : '🟠';
+    const sendResult = await dingtalk.sendAlert({
+      title: `${alertIcon} ${severity.toUpperCase()}告警 ${regionInfo.region}-${msg.group_name}`,
+      content,
+      platform: regionInfo.platform,
+      region: regionInfo.region,
+      businessSector: regionInfo.business_sector,
+      alertType: severity.toUpperCase(),
+    });
+    markAlertPushResult(alertInfo.lastInsertRowid, sendResult, `[${severity.toUpperCase()}] ${regionInfo.region}-${msg.group_name}`);
 
-    // 标记已推送
-    analyticsDb
-      .prepare('UPDATE alert_records SET is_pushed = 1 WHERE id = ?')
-      .run(alertInfo.lastInsertRowid);
-
-    console.log(`[P0] ${regionInfo.region}-${msg.group_name} | ${keyword}`);
+    console.log(`[${severity.toUpperCase()}] ${regionInfo.region}-${msg.group_name} | ${keyword}`);
   }
 
   // ── Step 2: P1 窗口聚合 ──
@@ -548,6 +654,15 @@ async function processNewMessages() {
     const commitment = aiResult?.commitment || msgs.map((m) => extractCommitment(m.content)).find(Boolean) || null;
     const issueType = aiResult?.type || 'P1告警';
 
+    // 同群同级别30分钟去重：已有告警记录则跳过，仅追加窗口消息ID
+    const recentP1 = checkRecentAlert.get(firstMsg.group_name, 'p1');
+    if (recentP1) {
+      const mergedIds = mergeMsgIds(recentP1.source_msg_ids, msgs.map(m => m.id));
+      analyticsDb.prepare('UPDATE alert_records SET source_msg_ids = ? WHERE id = ?').run(mergedIds, recentP1.id);
+      console.log(`[P1-DEDUP] ${displayName} | 30分钟内已有P1告警，跳过 | 合并${msgs.length}条消息`);
+      continue;
+    }
+
     const alertInfo = insertAlert.run({
       source_msg_ids: JSON.stringify(msgs.map((m) => m.id)),
       group_name: firstMsg.group_name,
@@ -581,19 +696,16 @@ async function processNewMessages() {
       recurrence_count: recurrence,
     });
 
-    // 同群同级别30分钟去重
-    const recentP1 = checkRecentAlert.get(firstMsg.group_name, 'p1');
-    if (recentP1) {
-      const newIds = msgs.map(m => m.id);
-      const mergedIds = recentP1.source_msg_ids.replace(/]$/, ',' + newIds.join(',') + ']');
-      analyticsDb.prepare('UPDATE alert_records SET source_msg_ids = ? WHERE id = ?').run(mergedIds, recentP1.id);
-      console.log(`[P1-DEDUP] ${displayName} | 30分钟内已有P1推送，跳过 | 合并${msgs.length}条消息`);
-      continue;
-    }
-
     const content = buildP1AlertContent(firstMsg.group_name, regionInfo, aiResult || { score: finalScore, title: 'P1聚合告警', type: issueType, commitment, action: null }, msgs.length);
-    await dingtalk.sendAlert({ title: `🟠 P1告警 ${displayName}`, content, platform: regionInfo.platform, region: regionInfo.region, alertType: 'P1' });
-    analyticsDb.prepare('UPDATE alert_records SET is_pushed = 1 WHERE id = ?').run(alertInfo.lastInsertRowid);
+    const sendResult = await dingtalk.sendAlert({
+      title: `🟠 P1告警 ${displayName}`,
+      content,
+      platform: regionInfo.platform,
+      region: regionInfo.region,
+      businessSector: regionInfo.business_sector,
+      alertType: 'P1',
+    });
+    markAlertPushResult(alertInfo.lastInsertRowid, sendResult, `[P1] ${displayName}`);
     console.log(`[P1] ${displayName} | score=${finalScore} | ${msgs.length}条消息`);
   }
 
@@ -604,7 +716,10 @@ async function processNewMessages() {
 
     const key = msg.group_id || msg.group_name;
     if (!noResponseState.has(key)) {
-      noResponseState.set(key, { firstExternalTs: now, firstMsg: msg, alerted: false });
+      noResponseState.set(key, { firstExternalTs: now, firstMsg: msg, externalMsgs: [msg], alerted: false, lastExternalTs: now });
+    } else {
+      const state = noResponseState.get(key);
+      if (!state.alerted) appendNoResponseMessage(state, msg);
     }
   }
 
@@ -622,10 +737,50 @@ async function processNewMessages() {
       const msg = state.firstMsg;
       const regionInfo = getRegionInfo(msg.receiver_account);
       const minutesElapsed = Math.round(elapsed / 60000);
-      const content = buildNoResponseContent(msg, regionInfo, minutesElapsed);
-      await dingtalk.sendAlert({ title: `🟡 无响应告警 ${regionInfo.region}-${msg.group_name}`, content, platform: regionInfo.platform, region: regionInfo.region, alertType: 'P2' });
+      const noResponseMessages = getNoResponseMessages(state);
+      const noResponseMsgIds = noResponseMessages.map((m) => m.id).filter(Number.isFinite);
+      const noResponseInsight = buildNoResponseInsight(noResponseMessages, regionInfo, minutesElapsed);
+
+      const recentP2 = checkRecentAlert.get(msg.group_name, 'p2');
+      if (recentP2) {
+        const mergedIds = mergeMsgIds(recentP2.source_msg_ids, noResponseMsgIds);
+        analyticsDb.prepare('UPDATE alert_records SET source_msg_ids = ? WHERE id = ?').run(mergedIds, recentP2.id);
+        state.alerted = true;
+        console.log(`[P2-DEDUP:${NO_RESPONSE_ALERT_FORMAT}] ${regionInfo.region}-${msg.group_name} | 30分钟内已有响应缺口告警，合并${noResponseMsgIds.length}条消息`);
+        continue;
+      }
+
+      const alertInfo = insertAlert.run({
+        source_msg_ids: JSON.stringify(noResponseMsgIds),
+        group_name: msg.group_name,
+        group_id: msg.group_id,
+        region: regionInfo.region,
+        business_sector: regionInfo.business_sector || null,
+        receiver_account: msg.receiver_account,
+        alert_level: 'p2',
+        trigger_type: 'no_response',
+        trigger_keywords: null,
+        ai_score: null,
+        ai_title: `${minutesElapsed}分钟响应缺口：${noResponseInsight.summary}`,
+        ai_type: '响应缺口',
+        ai_action: noResponseInsight.action,
+        ai_commitment: null,
+        is_pushed: 0,
+        push_channel: 'dingtalk_alert',
+      });
+
+      const content = buildNoResponseContent(state, regionInfo, minutesElapsed, noResponseInsight);
+      const sendResult = await dingtalk.sendAlert({
+        title: `🟡 P2响应缺口 ${regionInfo.region}-${msg.group_name}`,
+        content,
+        platform: regionInfo.platform,
+        region: regionInfo.region,
+        businessSector: regionInfo.business_sector,
+        alertType: 'P2',
+      });
+      markAlertPushResult(alertInfo.lastInsertRowid, sendResult, `[P2:${NO_RESPONSE_ALERT_FORMAT}] ${regionInfo.region}-${msg.group_name}`);
       state.alerted = true;
-      console.log(`[P2-NoResponse] ${regionInfo.region}-${msg.group_name} | ${minutesElapsed}分钟未回复`);
+      console.log(`[P2-ResponseGap:${NO_RESPONSE_ALERT_FORMAT}] ${regionInfo.region}-${msg.group_name} | ${minutesElapsed}分钟响应缺口`);
     }
   }
 
@@ -640,16 +795,21 @@ async function processNewMessages() {
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)
     `).run(msg.group_name, msg.group_id, regionInfo.region, regionInfo.business_sector || null, msg.sender_name, JSON.stringify(sids), msg.content.slice(0, 500), msg.id);
 
-    await dingtalk.sendSidChangeAlert({
+    const sendResult = await dingtalk.sendSidChangeAlert({
       groupName: msg.group_name,
       region: regionInfo.region,
       senderName: msg.sender_name,
       sidList: sids,
       platform: regionInfo.platform,
+      businessSector: regionInfo.business_sector,
       alertType: 'SID'
     });
 
-    analyticsDb.prepare('UPDATE sid_change_records SET is_pushed = 1 WHERE source_msg_id = ?').run(msg.id);
+    if (sendResult?.ok) {
+      markSidPushed.run(msg.id);
+    } else {
+      console.warn(`[SID-PUSH-SKIPPED] ${regionInfo.region}-${msg.group_name} | ${sendResult?.reason || 'unknown'}`);
+    }
     console.log(`[SID] ${regionInfo.region}-${msg.group_name} | ${sids.length}个SID变更`);
   }
 

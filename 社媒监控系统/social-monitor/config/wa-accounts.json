@@ -32,6 +32,11 @@
       "priority": 50,
       "region": "设备区",
       "business_sector": "直连供应商"
+    },
+    {
+      "id": "yuyin_wa",
+      "enabled": true,
+      "priority": 50
     }
   ],
   "disabledAccounts": [
@@ -39,5 +44,6 @@
       "id": "yatai-wa",
       "reason": "Production/local split keeps non-recommended WA collectors stopped by default."
     }
-  ]
+  ],
+  "deletedAccounts": []
 }

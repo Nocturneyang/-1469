@@ -20,31 +20,40 @@
                 <span class="cli-label">{{ item.label }}</span>
               </div>
               <div v-if="item.hint" class="cli-hint">{{ item.hint }}</div>
-              <span class="cli-badge" :class="{ set: isSet(item.key) }">{{ isSet(item.key) ? '✓ 已配置' : '未配置' }}</span>
+              <span class="cli-badge" :class="{ set: isSet(item.envKey) }">{{ isSet(item.envKey) ? '✓ 已配置' : '未配置' }}</span>
             </div>
             <div class="cli-actions">
-              <button class="el-btn" @click="openEdit(item.key, item.label)">编辑</button>
-              <button class="el-btn danger" @click="$emit('clear-env', item.key)">清空</button>
+              <button class="el-btn" @click="openEdit(item.envKey, item.label)">编辑全局</button>
+              <button class="el-btn" :disabled="readonly" @click="openRegionModal(item.type)">+ 区域/板块</button>
+              <button class="el-btn danger" @click="$emit('clear-env', item.envKey)">清空</button>
             </div>
           </div>
-          <template v-for="(regions, platform) in getGroupedRegions('ALERT')" :key="platform">
-            <div class="platform-header">
-              <span class="cli-tag tag-p0">{{ platform }}</span>
-              <span style="font-size:13px;font-weight:600;color:var(--t2)">{{ platform }} 平台 · {{ Object.keys(regions).length }} 个区域</span>
-            </div>
-            <div class="cli" v-for="(val, region) in regions" :key="region">
-              <div style="flex:1">
-                <div class="cli-label">{{ region }}</div>
-                <div class="cli-url">{{ getUrlPreview(val) }}</div>
+          <template v-for="item in alertItems" :key="item.type + '-routes'">
+            <template v-if="Object.keys(getGroupedRegions(item.type)).length">
+              <div class="route-type-title">
+                <span v-if="item.tag" class="cli-tag" :class="item.tagClass">{{ item.tag }}</span>
+                <span>{{ item.label }} · 区域/板块专属</span>
               </div>
-              <div class="cli-actions">
-                <button class="el-btn" @click="openViewRegion(val)">查看</button>
-                <button class="el-btn" :disabled="readonly" @click="openEditRegionWebhook('ALERT', platform, region, val)">编辑</button>
-                <button class="el-btn danger" @click="$emit('delete-region-wh', 'ALERT_' + platform + '_' + region)">删除</button>
-              </div>
-            </div>
+              <template v-for="(regions, platform) in getGroupedRegions(item.type)" :key="platform">
+                <div class="platform-header">
+                  <span class="cli-tag tag-p0">{{ platform }}</span>
+                  <span style="font-size:13px;font-weight:600;color:var(--t2)">{{ platform }} 平台 · {{ Object.keys(regions).length }} 条路由</span>
+                </div>
+                <div class="cli" v-for="(val, routeKey) in regions" :key="routeKey">
+                  <div style="flex:1">
+                    <div class="cli-label">{{ routeLabel(val) }}</div>
+                    <div class="cli-url">{{ getUrlPreview(val) }}</div>
+                  </div>
+                  <div class="cli-actions">
+                    <button class="el-btn" @click="openViewRegion(val)">查看</button>
+                    <button class="el-btn" :disabled="readonly" @click="openEditRegionWebhook(item.type, platform, routeKey, val)">编辑</button>
+                    <button class="el-btn danger" @click="$emit('delete-region-wh', val.key)">删除</button>
+                  </div>
+                </div>
+              </template>
+            </template>
           </template>
-          <button class="btn-add" @click="$emit('add-region-wh', 'ALERT')">+ 新增区域</button>
+          <button class="btn-add" @click="openRegionModal('ALERT')">+ 新增通用告警区域/板块</button>
         </div>
       </div>
 
@@ -71,24 +80,24 @@
               <span class="cli-tag tag-digest">{{ platform }}</span>
               <span style="font-size:13px;font-weight:600;color:var(--t2)">{{ platform }} 平台 · {{ Object.keys(regions).length }} 个区域</span>
             </div>
-            <div class="cli" v-for="(val, region) in regions" :key="region">
+            <div class="cli" v-for="(val, routeKey) in regions" :key="routeKey">
               <div style="flex:1">
                 <div class="cli-row">
-                  <div class="cli-label">{{ region }}</div>
-                  <span class="digest-mode-pill" :class="{ link: getRegionDigestMode(platform, region) === 'link' }">
-                    {{ getRegionDigestMode(platform, region) === 'link' ? '链接日报' : '长文日报' }}
+                  <div class="cli-label">{{ routeLabel(val) }}</div>
+                  <span class="digest-mode-pill" :class="{ link: getRegionDigestMode(platform, val.region) === 'link' }">
+                    {{ getRegionDigestMode(platform, val.region) === 'link' ? '链接日报' : '长文日报' }}
                   </span>
                 </div>
                 <div class="cli-url">{{ getUrlPreview(val) }}</div>
               </div>
               <div class="cli-actions">
                 <button class="el-btn" @click="openViewRegion(val)">查看</button>
-                <button class="el-btn" :disabled="readonly" @click="openEditRegionWebhook('DIGEST', platform, region, val)">编辑</button>
-                <button class="el-btn danger" @click="$emit('delete-region-wh', 'DIGEST_' + platform + '_' + region)">删除</button>
+                <button class="el-btn" :disabled="readonly" @click="openEditRegionWebhook('DIGEST', platform, routeKey, val)">编辑</button>
+                <button class="el-btn danger" @click="$emit('delete-region-wh', val.key)">删除</button>
               </div>
             </div>
           </template>
-          <button class="btn-add" @click="$emit('add-region-wh', 'DIGEST')">+ 新增区域</button>
+          <button class="btn-add" @click="openRegionModal('DIGEST')">+ 新增区域/板块</button>
         </div>
       </div>
 
@@ -114,19 +123,19 @@
               <span class="cli-tag tag-weekly">{{ platform }}</span>
               <span style="font-size:13px;font-weight:600;color:var(--t2)">{{ platform }} 平台 · {{ Object.keys(regions).length }} 个区域</span>
             </div>
-            <div class="cli" v-for="(val, region) in regions" :key="region">
+            <div class="cli" v-for="(val, routeKey) in regions" :key="routeKey">
               <div style="flex:1">
-                <div class="cli-label">{{ region }}</div>
+                <div class="cli-label">{{ routeLabel(val) }}</div>
                 <div class="cli-url">{{ getUrlPreview(val) }}</div>
               </div>
               <div class="cli-actions">
                 <button class="el-btn" @click="openViewRegion(val)">查看</button>
-                <button class="el-btn" :disabled="readonly" @click="openEditRegionWebhook('WEEKLY', platform, region, val)">编辑</button>
-                <button class="el-btn danger" @click="$emit('delete-region-wh', 'WEEKLY_' + platform + '_' + region)">删除</button>
+                <button class="el-btn" :disabled="readonly" @click="openEditRegionWebhook('WEEKLY', platform, routeKey, val)">编辑</button>
+                <button class="el-btn danger" @click="$emit('delete-region-wh', val.key)">删除</button>
               </div>
             </div>
           </template>
-          <button class="btn-add" @click="$emit('add-region-wh', 'WEEKLY')">+ 新增区域</button>
+          <button class="btn-add" @click="openRegionModal('WEEKLY')">+ 新增区域/板块</button>
         </div>
       </div>
 
@@ -224,6 +233,23 @@
           <div class="field-hint">保存后，对所选平台和区域下的账号生效；链接日报只在钉钉推送入口链接，完整内容仍在生产前端查看。</div>
         </div>
         <div class="field-group">
+          <label class="field-label">业务板块（可选）</label>
+          <div style="max-height:160px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;padding:8px">
+            <label v-for="sector in modalSectorOptions" :key="sector" style="display:block;margin-bottom:6px;cursor:pointer">
+              <input
+                type="checkbox"
+                :value="sector"
+                v-model="regionForm.sectors"
+                :disabled="regionForm.mode === 'edit'"
+                style="margin-right:8px"
+              >
+              {{ sector }}
+            </label>
+            <div v-if="modalSectorOptions.length === 0" class="cli-hint">当前平台/区域暂无板块信息；不选择则作为区域兜底通道。</div>
+          </div>
+          <div class="field-hint">不选择板块表示区域兜底；选择板块后会优先匹配「区域 + 业务板块」精确路由。</div>
+        </div>
+        <div class="field-group">
           <label class="field-label">Webhook URL</label>
           <input class="field-input" v-model="regionForm.url" placeholder="https://oapi.dingtalk.com/robot/send?access_token=..." />
         </div>
@@ -274,6 +300,7 @@ const regionForm = reactive({
   type: '',
   platform: 'wa',
   regions: [],
+  sectors: [],
   url: '',
   secret: '',
   pushMode: 'body'
@@ -351,9 +378,25 @@ const modalRegionOptions = computed(() => {
     .sort((a, b) => a.region.localeCompare(b.region))
 })
 
+const modalSectorOptions = computed(() => {
+  const regionSet = new Set(regionForm.regions || [])
+  const sectors = new Set()
+  for (const item of props.availableRegions || []) {
+    if (item?.platform !== regionForm.platform) continue
+    if (regionSet.size > 0 && !regionSet.has(item.region)) continue
+    if (item.business_sector) sectors.add(item.business_sector)
+  }
+  return Array.from(sectors).sort((a, b) => a.localeCompare(b))
+})
+
 const openViewRegion = (val) => {
   viewData.value = typeof val === 'object' ? val : { url: String(val) }
   viewVisible.value = true
+}
+
+const routeLabel = (val) => {
+  const region = val?.region || '未知区域'
+  return val?.sector ? `${region} / ${val.sector}` : `${region} / 全板块`
 }
 
 const getUrlPreview = (val) => {
@@ -362,27 +405,57 @@ const getUrlPreview = (val) => {
   return url.length > 50 ? url.slice(0, 45) + '...' : url
 }
 
+const knownPlatforms = new Set(['wa', 'tg', 'tgu', 'teams'])
+
+const webhookPrefixMatches = (key, prefix) => {
+  if (!key.startsWith(prefix + '_')) return false
+  const rest = key.slice(prefix.length + 1)
+  const idx = rest.indexOf('_')
+  if (idx < 0) return false
+  return knownPlatforms.has(rest.slice(0, idx))
+}
+
+const parseWebhookKey = (prefix, key) => {
+  if (!webhookPrefixMatches(key, prefix)) return null
+  const rest = key.slice(prefix.length + 1)
+  const idx = rest.indexOf('_')
+  const platform = rest.slice(0, idx)
+  const route = rest.slice(idx + 1)
+  const sectors = Array.from(new Set((props.availableRegions || []).map(item => item.business_sector).filter(Boolean)))
+    .sort((a, b) => b.length - a.length)
+  for (const sector of sectors) {
+    const suffix = '_' + sector
+    if (route.endsWith(suffix)) {
+      return { platform, region: route.slice(0, -suffix.length), sector }
+    }
+  }
+  return { platform, region: route, sector: '' }
+}
+
 const getGroupedRegions = (prefix) => {
   const grouped = {}
   for (const key of Object.keys(props.regionWebhooks)) {
-    if (!key.startsWith(prefix + '_')) continue
-    const rest = key.slice(prefix.length + 1)
-    const idx = rest.indexOf('_')
-    if (idx < 0) continue
-    const platform = rest.slice(0, idx)
-    const region = rest.slice(idx + 1)
+    const parsed = parseWebhookKey(prefix, key)
+    if (!parsed) continue
+    const { platform, region, sector } = parsed
     if (!grouped[platform]) grouped[platform] = {}
-    grouped[platform][region] = props.regionWebhooks[key]
+    const routeKey = sector ? `${region}_${sector}` : region
+    grouped[platform][routeKey] = {
+      ...props.regionWebhooks[key],
+      key,
+      region,
+      sector
+    }
   }
   return grouped
 }
 
 const alertItems = [
-  { key: 'DINGTALK_ALERT', label: '通用告警 全局配置（最终兜底）', tag: null, tagClass: '', hint: '' },
-  { key: 'DINGTALK_ALERT', label: '严重业务中断', tag: 'P0', tagClass: 'tag-p0', hint: '通道故障/0%送达率，直接触发' },
-  { key: 'DINGTALK_ALERT', label: '业务异常告警', tag: 'P1', tagClass: 'tag-p1', hint: '5分钟窗口聚合 + AI评分 ≥7' },
-  { key: 'DINGTALK_ALERT', label: '无响应告警', tag: 'P2', tagClass: 'tag-p2', hint: '外部问题15分钟内未回复' },
-  { key: 'DINGTALK_ALERT', label: 'SID 变更告警', tag: 'SID', tagClass: 'tag-sid', hint: '3个以上节点批量更新' },
+  { envKey: 'DINGTALK_ALERT', type: 'ALERT', label: '通用告警 全局配置（最终兜底）', tag: null, tagClass: '', hint: '' },
+  { envKey: 'DINGTALK_ALERT', type: 'ALERT_P0', label: '严重业务中断', tag: 'P0', tagClass: 'tag-p0', hint: '通道故障/0%送达率，直接触发' },
+  { envKey: 'DINGTALK_ALERT', type: 'ALERT_P1', label: '业务异常告警', tag: 'P1', tagClass: 'tag-p1', hint: '5分钟窗口聚合 + AI评分 ≥7' },
+  { envKey: 'DINGTALK_ALERT', type: 'ALERT_P2', label: '无响应告警', tag: 'P2', tagClass: 'tag-p2', hint: '外部问题15分钟内未回复' },
+  { envKey: 'DINGTALK_ALERT', type: 'ALERT_SID', label: 'SID 变更告警', tag: 'SID', tagClass: 'tag-sid', hint: '3个以上节点批量更新' },
 ]
 
 const isSet = (key) => {
@@ -394,7 +467,13 @@ const isSet = (key) => {
 
 watch(() => [props.envConfig?.DIGEST_LINK_ONLY_ACCOUNTS, props.availableRegions], refreshDigestModes, { immediate: true, deep: true })
 watch(() => regionForm.platform, () => {
-  if (regionForm.mode === 'add') regionForm.regions = []
+  if (regionForm.mode === 'add') {
+    regionForm.regions = []
+    regionForm.sectors = []
+  }
+})
+watch(() => regionForm.regions.slice(), () => {
+  if (regionForm.mode === 'add') regionForm.sectors = []
 })
 
 const openRegionModal = (type) => {
@@ -402,34 +481,44 @@ const openRegionModal = (type) => {
   regionForm.type = type
   regionForm.platform = 'wa'
   regionForm.regions = []
+  regionForm.sectors = []
   regionForm.url = ''
   regionForm.secret = ''
   regionForm.pushMode = 'body'
 
   const typeLabels = {
     ALERT: '业务告警',
+    ALERT_P0: 'P0 严重告警',
+    ALERT_P1: 'P1 业务告警',
+    ALERT_P2: 'P2 无响应告警',
+    ALERT_SID: 'SID 变更告警',
     DIGEST: '日报',
     WEEKLY: '周报'
   }
-  regionModalTitle.value = '新增 ' + (typeLabels[type] || type) + ' 区域 Webhook'
+  regionModalTitle.value = '新增 ' + (typeLabels[type] || type) + ' 区域/板块 Webhook'
   regionModalVisible.value = true
 }
 
-const openEditRegionWebhook = (type, platform, region, val) => {
+const openEditRegionWebhook = (type, platform, routeKey, val) => {
   const data = typeof val === 'object' ? val : { url: String(val) }
   const typeLabels = {
     ALERT: '业务告警',
+    ALERT_P0: 'P0 严重告警',
+    ALERT_P1: 'P1 业务告警',
+    ALERT_P2: 'P2 无响应告警',
+    ALERT_SID: 'SID 变更告警',
     DIGEST: '日报',
     WEEKLY: '周报'
   }
   regionForm.mode = 'edit'
   regionForm.type = type
   regionForm.platform = platform
-  regionForm.regions = [region]
+  regionForm.regions = [data.region || routeKey]
+  regionForm.sectors = data.sector ? [data.sector] : []
   regionForm.url = data.url || ''
   regionForm.secret = data.secret || ''
-  regionForm.pushMode = type === 'DIGEST' ? getRegionDigestMode(platform, region) : 'body'
-  regionModalTitle.value = '编辑 ' + (typeLabels[type] || type) + ' 区域 Webhook'
+  regionForm.pushMode = type === 'DIGEST' ? getRegionDigestMode(platform, data.region || routeKey) : 'body'
+  regionModalTitle.value = '编辑 ' + (typeLabels[type] || type) + ' 区域/板块 Webhook'
   regionModalVisible.value = true
 }
 
@@ -471,6 +560,7 @@ const submitRegionWebhook = async () => {
       type: regionForm.type,
       platform: regionForm.platform,
       regions: regionForm.regions,
+      sectors: regionForm.sectors,
       url: regionForm.url,
       secret: regionForm.secret
     })
@@ -522,6 +612,7 @@ defineExpose({ openRegionModal })
 .tag-weekly { background: rgba(72,187,120,0.1); color: #276749; }
 
 .platform-header { display: flex; align-items: center; gap: 8px; padding: 10px 16px; background: var(--bg-tint); border: 1px solid var(--border); border-radius: 8px; margin: 12px 0 6px 0; }
+.route-type-title { display: flex; align-items: center; gap: 8px; padding: 12px 4px 4px; font-size: 13px; font-weight: 700; color: var(--t2); }
 .cli-url { font-size: 12px; color: var(--t3); font-family: monospace; margin-top: 2px; word-break: break-all; }
 .cli-actions { display: flex; gap: 8px; flex-shrink: 0; }
 .btn-add { display: block; margin-top: 10px; background: none; border: 1px dashed var(--border); border-radius: 8px; padding: 8px; width: 100%; cursor: pointer; font-size: 13px; font-weight: 600; color: var(--p); transition: all 0.15s; }

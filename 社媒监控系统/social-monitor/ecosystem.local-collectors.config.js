@@ -19,7 +19,6 @@ function waCollector(accountName, priority = 50) {
     name: `worker-wa-${accountName}`,
     script: "./workers/worker-wa.js",
     max_memory_restart: "4G",
-    cron_restart: "0 4 * * *",
     instances: 1,
     exec_mode: "fork",
     autorestart: true,

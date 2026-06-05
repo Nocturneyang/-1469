@@ -35,7 +35,12 @@ const ENV_KEYS = ['DINGTALK_ALERT', 'DINGTALK_DIGEST', 'DINGTALK_WEEKLY',
                   'DINGTALK_ALERT_TEAMS_SECRET', 'DINGTALK_DIGEST_TEAMS_SECRET', 'DINGTALK_WEEKLY_TEAMS_SECRET',
                   'DINGTALK_SYSTEM_OPS_SECRET',
                   'DIGEST_LINK_ONLY_ACCOUNTS', 'REPORT_PUBLIC_BASE_URL',
-                  'OPENAI_API_KEY', 'OPENAI_BASE_URL', 'OPENAI_MODEL', 'OPENAI_MODEL_FAST', 'OPENAI_MODEL_PRO', 'GEMINI_API_KEY'];
+                  'OPENAI_API_KEY', 'OPENAI_BASE_URL', 'OPENAI_MODEL', 'OPENAI_MODEL_FAST', 'OPENAI_MODEL_PRO',
+                  'ALERT_AI_MODEL', 'EXTRACTION_AI_MODEL', 'KNOWLEDGE_AI_MODEL',
+                  'DAILY_DIGEST_AI_MODEL', 'WEEKLY_RELIABILITY_AI_MODEL',
+                  'SUPPLIER_PROFILE_AI_MODEL', 'SUPPLIER_PROFILE_AI_CONCURRENCY',
+                  'SUPPLIER_PROFILE_AI_MAX_TOKENS', 'SUPPLIER_PROFILE_AI_TIMEOUT_MS',
+                  'GEMINI_API_KEY'];
 
 router.get('/config/webhooks', (req, res) => {
     try {
@@ -47,18 +52,34 @@ router.get('/config/webhooks', (req, res) => {
 });
 
 router.post('/config/webhooks', requireAdmin, (req, res) => {
-    const { type, platform, regions, url, secret } = req.body;
+    const { type, platform, regions, sectors, url, secret } = req.body;
     if (!type || !platform || !regions || !Array.isArray(regions) || regions.length === 0 || !url) {
         return res.status(400).json({ success: false, error: '缺少必填参数或区域列表为空' });
     }
+    const cleanType = String(type).toUpperCase().trim();
+    const cleanPlatform = String(platform).toLowerCase().trim();
+    const cleanRegions = regions.map(r => String(r || '').trim()).filter(Boolean);
+    const cleanSectors = Array.isArray(sectors)
+        ? sectors.map(s => String(s || '').trim()).filter(Boolean)
+        : [];
+    if (cleanRegions.length === 0) {
+        return res.status(400).json({ success: false, error: '区域列表为空' });
+    }
     try {
         const hooks = readWebhooksFile();
-        regions.forEach(region => {
-            const key = `${type.toUpperCase()}_${platform.toLowerCase()}_${region}`;
+        cleanRegions.forEach(region => {
+            if (cleanSectors.length > 0) {
+                cleanSectors.forEach(sector => {
+                    const key = `${cleanType}_${cleanPlatform}_${region}_${sector}`;
+                    hooks[key] = { url, secret: secret || '' };
+                });
+                return;
+            }
+            const key = `${cleanType}_${cleanPlatform}_${region}`;
             hooks[key] = { url, secret: secret || '' };
         });
         writeWebhooksFile(hooks);
-        res.json({ success: true, message: '区域 Webhook 保存成功' });
+        res.json({ success: true, message: cleanSectors.length > 0 ? '区域+板块 Webhook 保存成功' : '区域 Webhook 保存成功' });
     } catch(err) {
         res.status(500).json({ success: false, error: err.message });
     }
@@ -66,7 +87,7 @@ router.post('/config/webhooks', requireAdmin, (req, res) => {
 
 router.delete('/config/webhooks/:key', requireAdmin, (req, res) => {
     const { key } = req.params;
-    if (!/^[\w\u4e00-\u9fa5]+$/.test(key)) return res.status(400).json({ success: false, error: 'Invalid webhook key format' });
+    if (!/^[\w\u4e00-\u9fa5-]+$/.test(key)) return res.status(400).json({ success: false, error: 'Invalid webhook key format' });
     try {
         const hooks = readWebhooksFile();
         if (hooks[req.params.key]) {
@@ -195,9 +216,10 @@ router.delete('/config/regions/:account', requireAdmin, (req, res) => {
 router.get('/config/staff', (req, res) => {
     try {
         if (!fs.existsSync(STAFF_CONFIG_PATH)) {
-             return res.json({ success: true, data: { whitelist: ['ITNIO~ DJ', 'ITNIO Support', 'Routing'], keywords: ['itnio', 'support', 'routing'] } });
+             return res.json({ success: true, data: { whitelist: ['ITNIO~ DJ', 'ITNIO Support', 'Routing'], keywords: ['itnio', 'support', 'routing'], external_contacts: [] } });
         }
         const config = JSON.parse(fs.readFileSync(STAFF_CONFIG_PATH, 'utf8'));
+        config.external_contacts = Array.isArray(config.external_contacts) ? config.external_contacts : [];
         res.json({ success: true, data: config });
     } catch (err) {
         res.status(500).json({ success: false, error: err.message });
@@ -206,10 +228,11 @@ router.get('/config/staff', (req, res) => {
 
 router.post('/config/staff', requireAdmin, (req, res) => {
     try {
-        const { whitelist, keywords } = req.body;
+        const { whitelist, keywords, external_contacts } = req.body;
         const config = {
             whitelist: Array.isArray(whitelist) ? whitelist : [],
-            keywords: Array.isArray(keywords) ? keywords : []
+            keywords: Array.isArray(keywords) ? keywords : [],
+            external_contacts: Array.isArray(external_contacts) ? external_contacts : []
         };
         fs.writeFileSync(STAFF_CONFIG_PATH, JSON.stringify(config, null, 2), 'utf8');
         res.json({ success: true, message: '内部员工配置已更新' });
