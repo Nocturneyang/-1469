@@ -14,6 +14,8 @@
 社媒监控系统/*
 !社媒监控系统/social-monitor/
 !/.gitignore
+!/AGENTS.md
+!/README.md
 !/Dockerfile
 !/docker-entrypoint.sh
 !/.dockerignore
