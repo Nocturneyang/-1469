@@ -124,8 +124,11 @@ module.exports = {
         NODE_ENV: "production",
         DATA_DIR: process.env.DATA_DIR || "/data",
         KNOWLEDGE_ASSET_START_FROM_NOW: "false",
-        KNOWLEDGE_ASSET_BATCH_SIZE: "1000",
-        KNOWLEDGE_ASSET_SCAN_INTERVAL_MS: "30000"
+        KNOWLEDGE_ASSET_BATCH_SIZE: "250",
+        KNOWLEDGE_ASSET_SCAN_INTERVAL_MS: "120000",
+        KNOWLEDGE_ASSET_AUTO_PROMOTE_BATCH: "25",
+        KNOWLEDGE_ASSET_ACTION_EFFECT_BATCH: "10",
+        KNOWLEDGE_ASSET_ENRICH_BATCH: "100"
       }
     },
     {
