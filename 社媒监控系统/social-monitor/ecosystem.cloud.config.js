@@ -113,6 +113,22 @@ module.exports = {
       }
     },
     {
+      name: "knowledge-asset-analyzer",
+      script: "./analyzers/knowledge-asset-analyzer.js",
+      instances: 1,
+      exec_mode: "fork",
+      autorestart: true,
+      watch: false,
+      max_memory_restart: "512M",
+      env: {
+        NODE_ENV: "production",
+        DATA_DIR: process.env.DATA_DIR || "/data",
+        KNOWLEDGE_ASSET_START_FROM_NOW: "false",
+        KNOWLEDGE_ASSET_BATCH_SIZE: "1000",
+        KNOWLEDGE_ASSET_SCAN_INTERVAL_MS: "30000"
+      }
+    },
+    {
       name: "supplier-profiler",
       script: "./analyzers/supplier-profiler.js",
       instances: 1,
