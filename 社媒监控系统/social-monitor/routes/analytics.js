@@ -19,6 +19,40 @@ const STAFF_CONFIG_PATH = path.join(process.env.DATA_DIR || path.join(__dirname,
 const ACCOUNT_REGION_CONFIG_PATH = path.join(process.env.DATA_DIR || path.join(__dirname, '..'), 'config', 'account-regions.json');
 let _analyticsDb = null;
 let _sourceDb = null;
+const PERF_CACHE_TTL_MS = positiveNumber('ANALYTICS_PERF_CACHE_TTL_MS', 20 * 1000);
+const analyticsPerfCache = new Map();
+
+function positiveNumber(name, fallback) {
+    const value = Number(process.env[name]);
+    return Number.isFinite(value) && value > 0 ? value : fallback;
+}
+
+function stableKey(value) {
+    if (!value || typeof value !== 'object') return String(value || '');
+    return JSON.stringify(Object.keys(value).sort().reduce((out, key) => {
+        out[key] = value[key];
+        return out;
+    }, {}));
+}
+
+function cachedPerfValue(namespace, key, producer, ttlMs = PERF_CACHE_TTL_MS) {
+    if (!ttlMs) return producer();
+    const cacheKey = `${namespace}:${stableKey(key)}`;
+    const cached = analyticsPerfCache.get(cacheKey);
+    const now = Date.now();
+    if (cached && now < cached.expiresAt) return cached.value;
+    const value = producer();
+    analyticsPerfCache.set(cacheKey, { expiresAt: now + ttlMs, value });
+    if (analyticsPerfCache.size > 200) {
+        const firstKey = analyticsPerfCache.keys().next().value;
+        if (firstKey) analyticsPerfCache.delete(firstKey);
+    }
+    return value;
+}
+
+function clearAnalyticsPerfCache() {
+    analyticsPerfCache.clear();
+}
 
 function getAnalyticsDb() {
     if (_analyticsDb) return _analyticsDb;
@@ -505,16 +539,18 @@ const FORMAL_LIBRARY_SCAN_LIMIT = 50000;
 
 function formalAssetsForLibrary(db, library, limit = 2000) {
     if (!db || !tableExists(db, 'knowledge_assets')) return [];
-    return db.prepare(`
-        SELECT *
-        FROM knowledge_assets
-        WHERE status = 'active'
-        ORDER BY asset_value_score DESC, quality_score DESC, last_seen_at DESC
-        LIMIT ?
-    `).all(FORMAL_LIBRARY_SCAN_LIMIT)
-        .map(mapFormalKnowledgeAsset)
-        .filter(asset => asset.target_library === library)
-        .slice(0, limit);
+    return cachedPerfValue('formal-library', { library, limit }, () => (
+        db.prepare(`
+            SELECT *
+            FROM knowledge_assets
+            WHERE status = 'active'
+            ORDER BY asset_value_score DESC, quality_score DESC, last_seen_at DESC
+            LIMIT ?
+        `).all(FORMAL_LIBRARY_SCAN_LIMIT)
+            .map(mapFormalKnowledgeAsset)
+            .filter(asset => asset.target_library === library)
+            .slice(0, limit)
+    ));
 }
 
 function formalAssetToQa(asset) {
@@ -756,49 +792,58 @@ function uniqueItems(items, keyFn) {
 function loadKnowledgeAssetPool(db, options = {}) {
     if (!db) return [];
     const days = Math.min(365, Math.max(1, parseInt(options.days) || 30));
-    const since = Date.now() - days * 24 * 3600 * 1000;
     const scope = options.scope == null ? 'all' : normalizeIntelligenceScope(options.scope);
-    const rows = [];
+    const cacheOptions = {
+        days,
+        scope,
+        region: options.region || '',
+        sector: options.sector || '',
+        type: options.type || '',
+    };
+    return cachedPerfValue('asset-pool', cacheOptions, () => {
+        const since = Date.now() - days * 24 * 3600 * 1000;
+        const rows = [];
 
-    if (tableExists(db, 'knowledge_asset_candidates')) {
-        const candidateRows = db.prepare(`
-            SELECT *
-            FROM knowledge_asset_candidates
-            WHERE COALESCE(last_seen_at, first_seen_at, 0) >= ?
-            ORDER BY asset_value_score DESC, confidence DESC, last_seen_at DESC
-            LIMIT 6000
-        `).all(since).map(row => ({
-            ...mapKnowledgeAsset(row),
-            pool_source: 'candidate',
-            pool_id: row.dedupe_key,
-        }));
-        rows.push(...candidateRows);
-    }
+        if (tableExists(db, 'knowledge_asset_candidates')) {
+            const candidateRows = db.prepare(`
+                SELECT *
+                FROM knowledge_asset_candidates
+                WHERE COALESCE(last_seen_at, first_seen_at, 0) >= ?
+                ORDER BY asset_value_score DESC, confidence DESC, last_seen_at DESC
+                LIMIT 6000
+            `).all(since).map(row => ({
+                ...mapKnowledgeAsset(row),
+                pool_source: 'candidate',
+                pool_id: row.dedupe_key,
+            }));
+            rows.push(...candidateRows);
+        }
 
-    if (tableExists(db, 'knowledge_assets')) {
-        const formalRows = db.prepare(`
-            SELECT *
-            FROM knowledge_assets
-            WHERE status = 'active'
-              AND COALESCE(last_seen_at, first_seen_at, 0) >= ?
-            ORDER BY asset_value_score DESC, quality_score DESC, last_seen_at DESC
-            LIMIT 4000
-        `).all(since).map(row => ({
-            ...mapFormalKnowledgeAsset(row),
-            pool_source: 'formal',
-            pool_id: row.asset_uid,
-            review_status: 'confirmed',
-        }));
-        rows.push(...formalRows);
-    }
+        if (tableExists(db, 'knowledge_assets')) {
+            const formalRows = db.prepare(`
+                SELECT *
+                FROM knowledge_assets
+                WHERE status = 'active'
+                  AND COALESCE(last_seen_at, first_seen_at, 0) >= ?
+                ORDER BY asset_value_score DESC, quality_score DESC, last_seen_at DESC
+                LIMIT 4000
+            `).all(since).map(row => ({
+                ...mapFormalKnowledgeAsset(row),
+                pool_source: 'formal',
+                pool_id: row.asset_uid,
+                review_status: 'confirmed',
+            }));
+            rows.push(...formalRows);
+        }
 
-    return rows.filter(asset => {
-        if (!asset) return false;
-        if (!scopeMatchesRegion(asset.collection_region, scope)) return false;
-        if (options.region && asset.collection_region !== options.region) return false;
-        if (options.sector && asset.business_sector !== options.sector) return false;
-        if (options.type && asset.asset_type !== options.type) return false;
-        return true;
+        return rows.filter(asset => {
+            if (!asset) return false;
+            if (!scopeMatchesRegion(asset.collection_region, scope)) return false;
+            if (options.region && asset.collection_region !== options.region) return false;
+            if (options.sector && asset.business_sector !== options.sector) return false;
+            if (options.type && asset.asset_type !== options.type) return false;
+            return true;
+        });
     });
 }
 
@@ -1114,53 +1159,62 @@ function loadRegionalBusinessSignals(options = {}) {
     }
 
     const dayNum = Math.min(365, Math.max(1, parseInt(options.days) || 30));
-    const since = Date.now() - dayNum * 24 * 3600 * 1000;
     const scope = normalizeIntelligenceScope(options.scope);
-    const accountMap = getAccountRegionMap();
-    const rows = sdb.prepare(`
-        SELECT id, receiver_account, business_sector, group_name, sender_name, content, has_media, timestamp
-        FROM messages
-        WHERE timestamp >= ?
-          AND content IS NOT NULL
-          AND TRIM(content) != ''
-        ORDER BY timestamp DESC
-        LIMIT 22000
-    `).all(since);
-
-    const byKey = new Map();
-    const categoryTotals = {};
-    let messageTotal = 0;
-
-    for (const msg of rows) {
-        const info = accountMap.get(msg.receiver_account) || {};
-        if (info.value_label === 'L3') continue;
-        const region = info.region || '未知区';
-        const sector = normalizeSector(msg.business_sector || info.business_sector);
-        if (!scopeMatchesRegion(region, scope)) continue;
-        if (options.region && region !== options.region) continue;
-        if (options.sector && sector !== options.sector) continue;
-
-        const key = `${region}::${sector}`;
-        const row = byKey.get(key) || initBusinessSignalRow(region, sector);
-        row.message_count += 1;
-        messageTotal += 1;
-        row.active_groups.add(msg.group_name || '未知群');
-        row.latest_at = Math.max(row.latest_at || 0, Number(msg.timestamp || 0));
-
-        const matches = classifyBusinessIntelText(msg.content);
-        for (const match of matches) {
-            recordBusinessSignal(row, match, msg);
-            categoryTotals[match.key] = (categoryTotals[match.key] || 0) + 1;
-        }
-        byKey.set(key, row);
-    }
-
-    return {
-        byKey,
-        total_messages: messageTotal,
-        category_totals: categoryTotals,
-        top_samples: [],
+    const cacheOptions = {
+        days: dayNum,
+        scope,
+        region: options.region || '',
+        sector: options.sector || '',
     };
+
+    return cachedPerfValue('regional-business-signals', cacheOptions, () => {
+        const since = Date.now() - dayNum * 24 * 3600 * 1000;
+        const accountMap = getAccountRegionMap();
+        const rows = sdb.prepare(`
+            SELECT id, receiver_account, business_sector, group_name, sender_name, content, has_media, timestamp
+            FROM messages
+            WHERE timestamp >= ?
+              AND content IS NOT NULL
+              AND TRIM(content) != ''
+            ORDER BY timestamp DESC
+            LIMIT 22000
+        `).all(since);
+
+        const byKey = new Map();
+        const categoryTotals = {};
+        let messageTotal = 0;
+
+        for (const msg of rows) {
+            const info = accountMap.get(msg.receiver_account) || {};
+            if (info.value_label === 'L3') continue;
+            const region = info.region || '未知区';
+            const sector = normalizeSector(msg.business_sector || info.business_sector);
+            if (!scopeMatchesRegion(region, scope)) continue;
+            if (options.region && region !== options.region) continue;
+            if (options.sector && sector !== options.sector) continue;
+
+            const key = `${region}::${sector}`;
+            const row = byKey.get(key) || initBusinessSignalRow(region, sector);
+            row.message_count += 1;
+            messageTotal += 1;
+            row.active_groups.add(msg.group_name || '未知群');
+            row.latest_at = Math.max(row.latest_at || 0, Number(msg.timestamp || 0));
+
+            const matches = classifyBusinessIntelText(msg.content);
+            for (const match of matches) {
+                recordBusinessSignal(row, match, msg);
+                categoryTotals[match.key] = (categoryTotals[match.key] || 0) + 1;
+            }
+            byKey.set(key, row);
+        }
+
+        return {
+            byKey,
+            total_messages: messageTotal,
+            category_totals: categoryTotals,
+            top_samples: [],
+        };
+    });
 }
 
 function serializeBusinessCategory(bucket) {
@@ -3973,6 +4027,7 @@ router.post('/knowledge-assets/formal/:assetUid/usage', (req, res) => {
             WHERE asset_uid = ?
         `).run(req.params.assetUid);
         const updated = db.prepare('SELECT * FROM knowledge_assets WHERE asset_uid = ?').get(req.params.assetUid);
+        clearAnalyticsPerfCache();
         res.json({ success: true, data: mapFormalKnowledgeAsset(updated) });
     } catch (err) {
         res.status(500).json({ success: false, error: err.message });
@@ -3994,6 +4049,7 @@ router.post('/knowledge-assets/:dedupeKey/promote', (req, res) => {
         if (!row) return res.status(404).json({ success: false, error: '候选资产不存在' });
         const actor = req.user?.username || req.user?.id || 'unknown';
         const result = promoteCandidateToAsset(db, mapKnowledgeAsset(row), actor);
+        clearAnalyticsPerfCache();
         res.json({ success: true, data: result.asset, action: result.action });
     } catch (err) {
         res.status(500).json({ success: false, error: err.message });
@@ -4111,6 +4167,7 @@ router.patch('/knowledge-assets/:dedupeKey/contact-side', (req, res) => {
             syncedAssets += 1;
         }
         const refreshed = db.prepare('SELECT * FROM knowledge_asset_candidates WHERE dedupe_key = ?').get(req.params.dedupeKey);
+        clearAnalyticsPerfCache();
         res.json({
             success: true,
             updated,
@@ -4178,6 +4235,7 @@ router.patch('/knowledge-assets/review-batch', (req, res) => {
                 promotedAssets.push({ asset_uid: result.asset.asset_uid, action: result.action });
             }
         }
+        clearAnalyticsPerfCache();
         res.json({ success: true, updated: changed, promoted, promotedAssets });
     } catch (err) {
         res.status(500).json({ success: false, error: err.message });
@@ -4231,6 +4289,7 @@ router.patch('/knowledge-assets/:dedupeKey/review', (req, res) => {
             linkedAsset = result.asset;
             promoteAction = result.action;
         }
+        clearAnalyticsPerfCache();
         res.json({ success: true, data: mapKnowledgeAsset(row), linkedAsset, promoteAction });
     } catch (err) {
         res.status(500).json({ success: false, error: err.message });

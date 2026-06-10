@@ -1,6 +1,16 @@
 const jwt = require('jsonwebtoken');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'social-monitor-fallback-secret';
+const SSO_USER_CACHE_TTL_MS = positiveNumber('SSO_USER_CACHE_TTL_MS', 30 * 60 * 1000);
+const SSO_USER_CACHE_MAX = positiveNumber('SSO_USER_CACHE_MAX', 1000);
+const SSO_ADMIN_CACHE_TTL_MS = positiveNumber('SSO_ADMIN_CACHE_TTL_MS', 60 * 60 * 1000);
+const ssoUserCache = new Map();
+let ssoAdminCache = { expiresAt: 0, values: new Set() };
+
+function positiveNumber(name, fallback) {
+    const value = Number(process.env[name]);
+    return Number.isFinite(value) && value > 0 ? value : fallback;
+}
 
 function truthy(value) {
     return ['1', 'true', 'yes', 'on'].includes(String(value || '').trim().toLowerCase());
@@ -82,9 +92,14 @@ function getUserIdentities(user) {
 function isSsoAdminIdentity(identities) {
     if (!isSsoEnabled() || !identities.length) return false;
     try {
+        const now = Date.now();
+        if (now < ssoAdminCache.expiresAt) {
+            return identities.some(identity => ssoAdminCache.values.has(identity));
+        }
         const { db } = require('../db/database');
         const rows = db.prepare('SELECT identity FROM sso_admins').all();
         const adminSet = new Set(rows.map(row => String(row.identity || '').trim()).filter(Boolean));
+        ssoAdminCache = { expiresAt: now + SSO_ADMIN_CACHE_TTL_MS, values: adminSet };
         return identities.some(identity => adminSet.has(identity));
     } catch (err) {
         console.warn('[auth] Failed to read sso_admins:', err.message);
@@ -189,6 +204,14 @@ async function getSsoUserFromRemote(req, token) {
     const userInfoUrl = getSsoUserInfoUrl();
     if (!isSsoEnabled() || !token || !userInfoUrl || typeof fetch !== 'function') return null;
 
+    const cached = ssoUserCache.get(token);
+    if (cached && Date.now() < cached.expiresAt) {
+        return cached.user;
+    }
+    if (cached) {
+        ssoUserCache.delete(token);
+    }
+
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), Number(process.env.SSO_USERINFO_TIMEOUT_MS || 4000));
     try {
@@ -201,7 +224,15 @@ async function getSsoUserFromRemote(req, token) {
             signal: controller.signal
         });
         if (!response.ok) return null;
-        return mapRemoteUserInfo(await response.json());
+        const user = mapRemoteUserInfo(await response.json());
+        if (user) {
+            if (ssoUserCache.size >= SSO_USER_CACHE_MAX) {
+                const oldestKey = ssoUserCache.keys().next().value;
+                if (oldestKey) ssoUserCache.delete(oldestKey);
+            }
+            ssoUserCache.set(token, { user, expiresAt: Date.now() + SSO_USER_CACHE_TTL_MS });
+        }
+        return user;
     } catch (err) {
         console.warn('[auth] SSO userinfo validation failed:', err.message);
         return null;

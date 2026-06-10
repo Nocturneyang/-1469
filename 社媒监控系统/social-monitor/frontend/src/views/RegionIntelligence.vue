@@ -533,11 +533,14 @@ const fetchRegionAiForSelected = async (cell) => {
   }
   try {
     const res = await api.get('/api/knowledge-assets/intelligence/region-dashboard', {
+      timeout: 60000,
+      silentError: true,
       params: {
         ...filters.value,
         region: cell.collection_region,
         sector: cell.business_sector,
         focusKey: cell.key,
+        ai: 1,
       },
     })
     if (seq !== aiRequestSeq || !res.success) return

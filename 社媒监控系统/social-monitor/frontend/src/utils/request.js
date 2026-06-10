@@ -30,6 +30,7 @@ api.interceptors.response.use(
   },
   (error) => {
     const authStore = useAuthStore()
+    const silentError = Boolean(error.config?.silentError)
 
     if (error.response) {
       if (error.response.status === 401 && isSsoEnabled() && redirectToSsoLogin()) {
@@ -37,12 +38,12 @@ api.interceptors.response.use(
       } else if (error.response.status === 401 || error.response.status === 403) {
         authStore.logout()
         router.push('/login')
-        ElMessage.error(error.response.data?.error || '登录态失效或没有权限,请重新登录')
+        if (!silentError) ElMessage.error(error.response.data?.error || '登录态失效或没有权限,请重新登录')
       } else {
-        ElMessage.error(error.response.data?.error || '接口请求错误')
+        if (!silentError) ElMessage.error(error.response.data?.error || '接口请求错误')
       }
     } else {
-      ElMessage.error('网络请求错误，请检查连接')
+      if (!silentError) ElMessage.error('网络请求错误，请检查连接')
     }
 
     return Promise.reject(error)
