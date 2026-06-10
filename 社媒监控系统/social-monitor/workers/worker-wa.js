@@ -134,6 +134,17 @@ function transitionRuntime(phase, status = runtimeState.status, message = null, 
     }
 }
 
+function transitionWaState(state) {
+    const waState = String(state || '').toUpperCase();
+    if (waState === 'CONNECTED') {
+        runtimeState.lastReadyAt = runtimeState.lastReadyAt || new Date().toISOString();
+        transitionRuntime('ready', 'authenticated', `WA state changed: ${waState}`, 'info', { state });
+        return;
+    }
+
+    transitionRuntime('wa_state', runtimeState.status, `WA state changed: ${state}`, 'info', { state });
+}
+
 function persistAccountStatus(status, pushname = null, qrCode = null, extra = {}) {
     const payload = {
         id: accountId,
@@ -636,7 +647,7 @@ client.on('loading_screen', (percent, message) => {
 });
 
 client.on('change_state', (state) => {
-    transitionRuntime('wa_state', runtimeState.status, `WA state changed: ${state}`, 'info', { state });
+    transitionWaState(state);
 });
 
 client.on('ready', () => {
