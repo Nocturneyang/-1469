@@ -80,6 +80,7 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import api from '@/utils/request'
+import { formatShanghaiDateTime } from '@/utils/time'
 
 const platforms = [
   { label: '全部', value: 'all' },
@@ -184,8 +185,7 @@ const getPlatformIcon = (platform) => {
 
 const formatTime = (timestamp) => {
   if (!timestamp) return ''
-  const date = new Date(timestamp)
-  return date.toLocaleString('zh-CN', {
+  return formatShanghaiDateTime(timestamp, {
     month: '2-digit',
     day: '2-digit',
     hour: '2-digit',

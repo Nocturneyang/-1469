@@ -89,6 +89,7 @@
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import api from '@/utils/request'
 import { downloadAuthenticatedFile } from '@/utils/download'
+import { formatShanghaiDateTime, shanghaiDateString } from '@/utils/time'
 
 const keyword = ref('')
 const sector = ref('')
@@ -111,8 +112,7 @@ const goPage = (p) => { page.value = p; fetchData() }
 
 const formatDate = (dateStr) => {
   if (!dateStr) return '--'
-  const date = new Date(dateStr)
-  return date.toLocaleString('zh-CN', { 
+  return formatShanghaiDateTime(dateStr, {
     year: 'numeric', 
     month: '2-digit', 
     day: '2-digit',
@@ -145,7 +145,7 @@ const downloadKB = (format) => {
   showExportMenu.value = false
   const url = `/api/knowledge-base/export?format=${format}`
   const ext = format === 'csv' ? 'csv' : format === 'jsonl' ? 'jsonl' : 'json'
-  const filename = `qa-kb-${new Date().toISOString().slice(0,10)}.${ext}`
+  const filename = `qa-kb-${shanghaiDateString()}.${ext}`
   downloadAuthenticatedFile(url, filename)
 }
 

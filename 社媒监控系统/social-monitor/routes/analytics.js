@@ -12,6 +12,7 @@ const {
     targetLibraryForAsset,
 } = require('../lib/knowledge-assets');
 const aiClient = require('../lib/ai-client');
+const { shanghaiDateString, shanghaiISOString } = require('../lib/time');
 
 const ANALYTICS_PATH = path.join(process.env.DATA_DIR || path.join(__dirname, '..'), 'db', 'analytics.sqlite');
 const SOURCE_DB_PATH = path.join(process.env.DATA_DIR || path.join(__dirname, '..'), 'db', 'database.sqlite');
@@ -3427,7 +3428,7 @@ router.get('/analytics/dashboard', (req, res) => {
             success: true,
             data: {
                 ready: !!adb || !!sdb,
-                generated_at: new Date().toISOString(),
+                generated_at: shanghaiISOString(),
                 scope: { days },
                 collection: {
                     messages_24h: last24Messages,
@@ -3842,10 +3843,10 @@ router.get('/knowledge-assets/export', (req, res) => {
             ORDER BY asset_value_score DESC, confidence DESC, last_seen_at DESC
             LIMIT 5000
         `).all().map(mapKnowledgeAsset);
-        const stamp = new Date().toISOString().slice(0, 10);
+        const stamp = shanghaiDateString();
         res.setHeader('Content-Type', 'application/json; charset=utf-8');
         res.setHeader('Content-Disposition', `attachment; filename="knowledge-assets-${stamp}.json"`);
-        return res.json({ exported_at: new Date().toISOString(), total: rows.length, data: rows });
+        return res.json({ exported_at: shanghaiISOString(), total: rows.length, data: rows });
     } catch (err) {
         res.status(500).json({ success: false, error: err.message });
     }
@@ -4337,7 +4338,7 @@ router.get('/knowledge-base/export', (req, res) => {
         const fmt = (req.query.format || 'json').toLowerCase();
         const rows = qaRowsWithFormalAssets(adb);
 
-        const timestamp = new Date().toISOString().slice(0, 10);
+        const timestamp = shanghaiDateString();
 
         if (fmt === 'jsonl') {
             // JSONL: 每行一条 {instruction, output} — RAG / fine-tune 直接可用
@@ -4396,7 +4397,7 @@ router.get('/knowledge-base/export', (req, res) => {
             answer_steps: Array.isArray(r.answer_steps) ? r.answer_steps : (r.answer_pattern || '').split('\n').filter(Boolean),
             question_keywords: Array.isArray(r.question_keywords) ? r.question_keywords : (r.question_keywords || '').split(/[,，]/).map(k => k.trim()).filter(Boolean),
         }));
-        return res.json({ exported_at: new Date().toISOString(), total: data.length, data });
+        return res.json({ exported_at: shanghaiISOString(), total: data.length, data });
     } catch (err) {
         res.status(500).json({ success: false, error: err.message });
     }
@@ -4732,7 +4733,7 @@ router.get('/supplier-profiles/:groupName', (req, res) => {
             WHERE group_name = ? AND metric_date >= ?
             ORDER BY metric_date DESC, metric_type
             LIMIT 100
-        `).all(groupName, new Date(Date.now() - 30 * 24 * 3600 * 1000).toISOString().split('T')[0]) : [];
+        `).all(groupName, shanghaiDateString(Date.now() - 30 * 24 * 3600 * 1000)) : [];
 
         const relatedKnowledgeAssets = tableExists(adb, 'knowledge_assets')
             ? adb.prepare(`
@@ -4842,7 +4843,7 @@ router.get('/device-kb/export', (req, res) => {
         const fmt = (req.query.format || 'json').toLowerCase();
         const rows = deviceKbRowsWithFormalAssets(adb);
 
-        const timestamp = new Date().toISOString().slice(0, 10);
+        const timestamp = shanghaiDateString();
 
         if (fmt === 'jsonl') {
             res.setHeader('Content-Type', 'application/jsonl; charset=utf-8');
@@ -4883,7 +4884,7 @@ router.get('/device-kb/export', (req, res) => {
         // 默认 JSON
         res.setHeader('Content-Type', 'application/json; charset=utf-8');
         res.setHeader('Content-Disposition', `attachment; filename="device-kb-${timestamp}.json"`);
-        return res.json({ exported_at: new Date().toISOString(), total: rows.length, data: rows });
+        return res.json({ exported_at: shanghaiISOString(), total: rows.length, data: rows });
     } catch (err) {
         res.status(500).json({ success: false, error: err.message });
     }
@@ -4951,9 +4952,9 @@ router.get('/daily-digest', (req, res) => {
         // Helper function to normalize date format to match database format (YYYY-M-D)
         function normalizeDate(dateStr) {
             if (!dateStr) return dateStr;
-            const d = new Date(dateStr);
-            if (isNaN(d.getTime())) return dateStr;
-            return `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
+            const parts = String(dateStr).split('-').map(Number);
+            if (parts.length !== 3 || parts.some(n => !Number.isFinite(n))) return dateStr;
+            return `${parts[0]}-${parts[1]}-${parts[2]}`;
         }
         
         // If no date specified, get the most recent date from database
@@ -5003,12 +5004,12 @@ router.get('/daily-digest', (req, res) => {
         let trend = null;
         if (targetDate) {
             // Parse the target date to calculate previous dates
-            const targetDateObj = new Date(targetDate);
+            const targetDateObj = new Date(`${targetDate}T00:00:00+08:00`);
             const prevDateObj = new Date(targetDateObj.getTime() - 24 * 60 * 60 * 1000);
             const weekDateObj = new Date(targetDateObj.getTime() - 7 * 24 * 60 * 60 * 1000);
             
-            const prevDate = normalizeDate(prevDateObj.toISOString().split('T')[0]);
-            const weekDate = normalizeDate(weekDateObj.toISOString().split('T')[0]);
+            const prevDate = normalizeDate(shanghaiDateString(prevDateObj));
+            const weekDate = normalizeDate(shanghaiDateString(weekDateObj));
             
             // Build trend query with same filters as main query
             let trendSql = 'SELECT SUM(msg_count) as total FROM daily_digests WHERE digest_date = ?';
@@ -5070,9 +5071,7 @@ router.get('/daily-digest', (req, res) => {
         const dates = allDates.sort((a, b) => {
             const [yearA, monthA, dayA] = a.split('-').map(Number);
             const [yearB, monthB, dayB] = b.split('-').map(Number);
-            const dateA = new Date(yearA, monthA - 1, dayA);
-            const dateB = new Date(yearB, monthB - 1, dayB);
-            return dateB - dateA;
+            return (yearB * 10000 + monthB * 100 + dayB) - (yearA * 10000 + monthA * 100 + dayA);
         }).slice(0, 7);
         
         res.json({

@@ -21,6 +21,7 @@ const path = require('path');
 const Database = require('better-sqlite3');
 const dingtalk = require('../lib/dingtalk');
 const { getRegionInfo } = require('../lib/region-config');
+const { formatShanghai } = require('../lib/time');
 
 const ROOT = process.env.DATA_DIR || path.resolve(__dirname, '..');
 
@@ -117,7 +118,7 @@ async function notifyEscalation(issue, elapsedMs, stageLabel) {
 
 async function notifyCommitmentUnmet(issue) {
   const dueStr = issue.commitment_due
-    ? new Date(issue.commitment_due).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })
+    ? formatShanghai(issue.commitment_due)
     : '未解析';
   const content = [
     `### ⏰ [承诺未兑现] ${issue.region} | ${issue.group_name}`,

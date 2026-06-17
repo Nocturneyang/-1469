@@ -23,6 +23,7 @@ const axios = require('axios');
 const crypto = require('crypto');
 const path = require('path');
 const fs = require('fs');
+const { formatShanghai } = require('./time');
 
 // ─── 签名计算（加签模式）────────────────────────────────────────
 
@@ -105,11 +106,16 @@ function buildText(content, atMobiles = [], atAll = false) {
  * 根据类型和平台解析 webhook URL 及 secret
  */
 const WEBHOOKS_PATH = path.join(process.env.DATA_DIR || path.join(__dirname, '..'), 'config', 'webhooks.json');
+let warnedMissingWebhooks = false;
 
 function getRegionWebhooks() {
   try {
     if (fs.existsSync(WEBHOOKS_PATH)) {
       return JSON.parse(fs.readFileSync(WEBHOOKS_PATH, 'utf8'));
+    }
+    if (!warnedMissingWebhooks) {
+      console.warn('[DingTalk] 未找到 config/webhooks.json，将回退到环境变量 DINGTALK_* 路由');
+      warnedMissingWebhooks = true;
     }
   } catch (err) {
     console.error('Error reading webhooks.json:', err.message);
@@ -249,7 +255,7 @@ async function sendSidChangeAlert({ groupName, region, senderName, sidList, plat
     '',
     `**发送人：** ${senderName}`,
     `**更新节点：** ${sidList.join(' / ')}（共${sidList.length}个）`,
-    `**时间：** ${new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}`,
+    `**时间：** ${formatShanghai()}`,
   ].join('\n');
   return await sendAlert({ title, content, platform, region, businessSector, alertType: alertType || 'SID' });
 }
@@ -259,7 +265,7 @@ async function sendSidChangeAlert({ groupName, region, senderName, sidList, plat
  */
 async function sendEscalation({ groupName, region, issueType, openedAt, durationMins, atMobiles = [], platform, businessSector, alertType }) {
   const title = `[问题升级] ${region}-${groupName} 未解决`;
-  const openedStr = new Date(openedAt).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' });
+  const openedStr = formatShanghai(openedAt);
   const content = [
     `### ⏰ [问题升级] ${region} | ${groupName}`,
     '',
@@ -299,7 +305,7 @@ async function sendAccountAlert({ platform, accountId, region, status, detail })
     `**账号：** ${accountId}`,
     `**区域：** ${region || '未配置'}`,
     `**状态：** ${detail}`,
-    `**时间：** ${new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}`,
+    `**时间：** ${formatShanghai()}`,
   ].join('\n');
 
   const { url, secret } = resolveConfig('SYSTEM_OPS');

@@ -157,6 +157,7 @@
 
 <script setup>
 import { computed } from 'vue'
+import { formatShanghaiDateTime } from '@/utils/time'
 
 const props = defineProps({
   acc: { type: Object, required: true }
@@ -216,9 +217,7 @@ const getPlatformName = (acc) => {
 const formatLatestMsgTime = (timeStr) => {
   if (!timeStr) return '无记录'
   try {
-    const formattedStr = timeStr.replace(' ', 'T') + 'Z'
-    const d = new Date(formattedStr)
-    return d.toLocaleString('zh-CN', { hour12: false })
+    return formatShanghaiDateTime(timeStr)
   } catch (e) {
     return timeStr
   }
@@ -228,14 +227,12 @@ const formatShortTime = (timeStr) => {
   if (!timeStr) return '无'
   try {
     const normalized = timeStr.includes('T') ? timeStr : timeStr.replace(' ', 'T')
-    const d = new Date(normalized)
-    if (Number.isNaN(d.getTime())) return timeStr
-    return d.toLocaleString('zh-CN', {
+    if (Number.isNaN(new Date(normalized).getTime())) return timeStr
+    return formatShanghaiDateTime(normalized, {
       month: '2-digit',
       day: '2-digit',
       hour: '2-digit',
       minute: '2-digit',
-      hour12: false
     })
   } catch (e) {
     return timeStr

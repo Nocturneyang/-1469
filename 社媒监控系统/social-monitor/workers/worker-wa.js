@@ -21,6 +21,7 @@ const { execFile } = require('child_process');
 const { sendAccountAlert } = require('../lib/dingtalk');
 const { getWaChromeLaunchConfig } = require('../lib/wa-chrome-runtime');
 const { createCollectorClient } = require('../lib/collector-client');
+const { shanghaiISOString } = require('../lib/time');
 
 // 区域映射配置
 let regionMap = {};
@@ -40,7 +41,7 @@ const accountName = process.env.ACCOUNT_NAME || 'default';
 const accountId = `wa-${accountName}`;
 const collectorId = process.env.COLLECTOR_ID || `pm2:${accountName}`;
 const runId = process.env.WA_RUN_ID || `${accountName}-${Date.now()}-${process.pid}`;
-const runStartedAt = new Date().toISOString();
+const runStartedAt = shanghaiISOString();
 const collectorApiUrl = process.env.COLLECTOR_API_URL || '';
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '..');
 const {
@@ -137,7 +138,7 @@ function transitionRuntime(phase, status = runtimeState.status, message = null, 
 function transitionWaState(state) {
     const waState = String(state || '').toUpperCase();
     if (waState === 'CONNECTED') {
-        runtimeState.lastReadyAt = runtimeState.lastReadyAt || new Date().toISOString();
+        runtimeState.lastReadyAt = runtimeState.lastReadyAt || shanghaiISOString();
         transitionRuntime('ready', 'authenticated', `WA state changed: ${waState}`, 'info', { state });
         return;
     }
@@ -160,7 +161,7 @@ function persistAccountStatus(status, pushname = null, qrCode = null, extra = {}
         try {
             db.prepare(`
                 UPDATE accounts
-                SET chrome_version = ?, updated_at = datetime('now')
+                SET chrome_version = ?, updated_at = datetime('now', '+8 hours')
                 WHERE id = ?
             `).run(extra.chromeVersion, accountId);
         } catch (e) {
@@ -409,7 +410,7 @@ async function collectAuthDiagnostics(label) {
     const diagnostics = {
         label,
         accountName,
-        ts: new Date().toISOString(),
+        ts: shanghaiISOString(),
         hasBrowser: !!client.pupBrowser,
         hasPage: false,
         webVersion: webVersionOptions.webVersion || null,
@@ -654,7 +655,7 @@ client.on('ready', () => {
     clearQrTimeout();
     clearInitStrikes();
     isFirstInit = false; // 成功登录过一次
-    runtimeState.lastReadyAt = new Date().toISOString();
+    runtimeState.lastReadyAt = shanghaiISOString();
     const pushname = client.info?.pushname || client.info?.wid?.user || accountName;
     console.log(`✅ [WhatsApp] Logged in as: ${pushname} and ready`);
     transitionRuntime('ready', 'authenticated', `WA ready as ${pushname}`);
@@ -804,7 +805,7 @@ client.on('message_create', async (message) => {
                 timestamp: message.timestamp,
             })
         });
-        runtimeState.lastMessageAt = new Date().toISOString();
+        runtimeState.lastMessageAt = shanghaiISOString();
         reportHeartbeat({ phase: 'ready', status: 'authenticated', healthStatus: 'ready' });
 
         console.log(`[WA] Saved group message from ${senderName} in group ${groupName}`);

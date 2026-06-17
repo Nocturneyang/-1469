@@ -19,6 +19,7 @@ const Database = require('better-sqlite3');
 const cron = require('node-cron');
 const dingtalk = require('../lib/dingtalk');
 const aiClient = require('../lib/ai-client');
+const { shanghaiDateStartMs, shanghaiDateString, shanghaiWeekday } = require('../lib/time');
 
 const ROOT = process.env.DATA_DIR || path.resolve(__dirname, '..');
 
@@ -56,22 +57,16 @@ function getValueLabel(receiverAccount, groupName) {
 
 // ─── 时间工具 ─────────────────────────────────────────────────────
 function getLastWeekRange() {
-  const now = new Date();
-  const tzOffset = 8 * 60 * 60 * 1000; // UTC+8
-  // 获取当前时间所在周的周一 00:00:00
-  const localNow = new Date(now.getTime() + tzOffset);
-  const day = localNow.getUTCDay() || 7; 
-  const thisMonday = new Date(localNow.getTime() - (day - 1) * 86400000);
-  thisMonday.setUTCHours(0, 0, 0, 0);
-  
-  const lastMonday = new Date(thisMonday.getTime() - 7 * 86400000);
-  const lastSundayEnd = new Date(thisMonday.getTime() - 1);
+  const today = shanghaiDateString();
+  const thisMondayStart = shanghaiDateStartMs(today) - (shanghaiWeekday() - 1) * 86400000;
+  const lastMondayStart = thisMondayStart - 7 * 86400000;
+  const lastSundayEnd = thisMondayStart - 1;
   
   return {
-    start: lastMonday.getTime() - tzOffset, // 转换回UTC时间戳
-    end: lastSundayEnd.getTime() - tzOffset,
-    dateStr: lastMonday.toISOString().split('T')[0], // YYYY-MM-DD
-    displayStr: `${lastMonday.toISOString().split('T')[0]} 至 ${new Date(lastSundayEnd.getTime()).toISOString().split('T')[0]}`
+    start: lastMondayStart,
+    end: lastSundayEnd,
+    dateStr: shanghaiDateString(lastMondayStart),
+    displayStr: `${shanghaiDateString(lastMondayStart)} 至 ${shanghaiDateString(lastSundayEnd)}`
   };
 }
 

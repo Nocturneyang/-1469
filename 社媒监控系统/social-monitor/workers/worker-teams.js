@@ -20,6 +20,7 @@ const { sendAccountAlert } = require('../lib/dingtalk');
 const sessionStore = require('../lib/teams-session-store');
 const parser = require('../lib/teams-page-parser');
 const backfillQueue = require('../lib/teams-backfill-queue');
+const { getShanghaiParts } = require('../lib/time');
 
 // ─── 配置 ────────────────────────────────────────────────────────────
 const accountName = process.env.ACCOUNT_NAME || 'default';
@@ -57,7 +58,7 @@ async function randomSleep(minMs, maxMs) {
  * 获取当前轮询间隔（凌晨降频）
  */
 function getPollInterval() {
-    const hour = new Date().getHours();
+    const hour = Number(getShanghaiParts().hour);
     // 凌晨 01:00 - 06:00 降低频率（5 分钟）
     if (hour >= 1 && hour < 6) return 5 * 60 * 1000;
     // 正常工作时段（30-60 秒随机）

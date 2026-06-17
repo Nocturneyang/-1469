@@ -3,8 +3,14 @@ const { db } = require('../db/database');
 const Database = require('better-sqlite3');
 const path = require('path');
 const fs = require('fs');
+const { getShanghaiParts } = require('../lib/time');
 
 const router = express.Router();
+
+function shanghaiHourMinute(value) {
+    const parts = getShanghaiParts(value);
+    return `${parts.hour}:${parts.minute}`;
+}
 
 // Analytics database connection
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '..');
@@ -156,14 +162,11 @@ router.get('/alerts', (req, res) => {
         `).all();
         
         const formattedAlerts = alerts.map(a => {
-            const date = new Date(a.created_at);
-            const hours = String(date.getHours()).padStart(2, '0');
-            const minutes = String(date.getMinutes()).padStart(2, '0');
             return {
                 id: a.id,
                 lvl: a.lvl ? a.lvl.toUpperCase() : 'P1',
                 text: a.text || a.account || '未知告警',
-                time: `${hours}:${minutes}`,
+                time: shanghaiHourMinute(a.created_at),
                 group: a.business_sector || '未知'
             };
         });
@@ -189,14 +192,11 @@ router.get('/closed-recent', (req, res) => {
         `).all();
         
         const formattedClosed = closedIssues.map(c => {
-            const date = new Date(c.closed_at * 1000);
-            const hours = String(date.getHours()).padStart(2, '0');
-            const minutes = String(date.getMinutes()).padStart(2, '0');
             return {
                 id: c.id,
                 supplier: c.supplier || c.group_name || '未知',
                 text: c.text || '未知问题',
-                time: `${hours}:${minutes}`,
+                time: shanghaiHourMinute(c.closed_at * 1000),
                 mttr: c.duration_mins ? `${Math.round(c.duration_mins)}min` : '-'
             };
         });

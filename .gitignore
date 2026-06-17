@@ -21,3 +21,21 @@
 !/.dockerignore
 !/.deployhub/
 !/.deployhub/**
+
+# Collector runtime retry queue
+社媒监控系统/social-monitor/collector-outbox/
+
+# WhatsApp runtime credentials and cache
+社媒监控系统/social-monitor/.wwebjs_auth/
+社媒监控系统/social-monitor/.wwebjs_cache/
+社媒监控系统/social-monitor/whatsapp-session-*/
+社媒监控系统/social-monitor/wa-diagnostics/
+
+# Local DingTalk webhook secrets
+社媒监控系统/social-monitor/config/webhooks.json
+
+# SQLite transient files
+社媒监控系统/social-monitor/*.sqlite-wal
+社媒监控系统/social-monitor/*.sqlite-shm
+社媒监控系统/social-monitor/db/*.sqlite-wal
+社媒监控系统/social-monitor/db/*.sqlite-shm

@@ -25,6 +25,7 @@ const {
   stableHash,
 } = require('../lib/knowledge-assets');
 const { isInternalStaff } = require('../lib/staff-detector');
+const { shanghaiDateString } = require('../lib/time');
 
 const ROOT = process.env.DATA_DIR || path.resolve(__dirname, '..');
 const sourceDb = new Database(path.join(ROOT, 'db', 'database.sqlite'), { readonly: true });
@@ -1187,7 +1188,7 @@ function buildRegionalIntelligence() {
       if (sampleEvidence[0]) evidence.push(`${sample.title}: ${sampleEvidence[0]}`);
     }
     const topTypes = typeStmt.all(group.collection_region, group.business_sector, since);
-    const day = new Date().toISOString().slice(0, 10);
+    const day = shanghaiDateString();
     return withAssetInsight({
       dedupe_key: stableHash(['regional', day, group.collection_region, group.business_sector].join('|')),
       asset_type: 'regional_intelligence',

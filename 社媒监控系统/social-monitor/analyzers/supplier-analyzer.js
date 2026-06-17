@@ -25,6 +25,7 @@ const Database = require('better-sqlite3');
 const dingtalk = require('../lib/dingtalk');
 const aiClient = require('../lib/ai-client');
 const { getRegionInfo, getValueLabel } = require('../lib/region-config');
+const { formatShanghai, shanghaiDateString } = require('../lib/time');
 
 // 向后兼容别名
 const getRegionLabel = getRegionInfo;
@@ -37,6 +38,22 @@ sourceDb.pragma('journal_mode = WAL');
 
 const analyticsDb = new Database(path.join(ROOT, 'db', 'analytics.sqlite'));
 analyticsDb.pragma('journal_mode = WAL');
+
+analyticsDb.exec(`
+  CREATE TABLE IF NOT EXISTS analyzer_runtime_state (
+    analyzer      TEXT NOT NULL,
+    state_key     TEXT NOT NULL,
+    state_type    TEXT NOT NULL,
+    payload       TEXT NOT NULL,
+    first_seen_at INTEGER,
+    last_seen_at  INTEGER,
+    alerted       INTEGER DEFAULT 0,
+    updated_at    DATETIME DEFAULT (datetime('now', '+8 hours')),
+    PRIMARY KEY (analyzer, state_key, state_type)
+  );
+  CREATE INDEX IF NOT EXISTS idx_runtime_state_type
+    ON analyzer_runtime_state(analyzer, state_type, alerted, last_seen_at);
+`);
 
 // 区域配置由 lib/region-config.js 统一管理
 
@@ -172,9 +189,7 @@ function parseCommitmentDeadline(content) {
   const hrMatch = content.match(/(\d+)\s*h(?:ou)?r?s?/i);
   if (hrMatch) return Date.now() + parseInt(hrMatch[1]) * 60 * 60 * 1000;
   if (/eod|end\s+of\s+day/i.test(content)) {
-    const eod = new Date();
-    eod.setHours(18, 0, 0, 0);
-    return eod.getTime();
+    return Date.parse(`${shanghaiDateString()}T18:00:00+08:00`);
   }
   return null;
 }
@@ -272,7 +287,7 @@ function markAlertPushResult(alertId, sendResult, logLabel) {
 
 // ─── 告警消息格式化 ───────────────────────────────────────────────
 function buildP0AlertContent(msg, keyword, regionInfo) {
-  const dt = new Date(msg.timestamp).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' });
+  const dt = formatShanghai(msg.timestamp);
   return [
     `### 🔴 [P0告警] ${regionInfo.region} | ${msg.group_name}`,
     '',
@@ -313,7 +328,7 @@ function compactContent(content, max = 120) {
 }
 
 function formatCnTime(timestamp) {
-  return new Date(timestamp || Date.now()).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' });
+  return formatShanghai(timestamp || Date.now());
 }
 
 function getNoResponseMessages(state) {
@@ -363,7 +378,7 @@ function buildNoResponseContent(state, regionInfo, minutesElapsed, insight) {
   const senders = [...new Set(messages.map((m) => m.sender_name).filter(Boolean))];
   const valueLabel = getValueLabel(firstMsg.receiver_account, firstMsg.group_name);
   const recentLines = messages.slice(-4).map((m) => {
-    const t = new Date(m.timestamp).toLocaleTimeString('zh-CN', { timeZone: 'Asia/Shanghai' });
+    const t = formatShanghai(m.timestamp, { hour: '2-digit', minute: '2-digit', second: '2-digit' });
     return `  - ${t} ${m.sender_name || '外部'}：${compactContent(m.content, 90)}`;
   });
 
@@ -418,6 +433,99 @@ const noResponseState = new Map();
 const NO_RESPONSE_MS = 15 * 60 * 1000;
 const MAX_NO_RESPONSE_CONTEXT_MSGS = 10;
 const NO_RESPONSE_ALERT_FORMAT = 'p2_response_gap_v2';
+const NO_RESPONSE_STATE_TYPE = 'no_response';
+
+const upsertRuntimeState = analyticsDb.prepare(`
+  INSERT INTO analyzer_runtime_state
+    (analyzer, state_key, state_type, payload, first_seen_at, last_seen_at, alerted, updated_at)
+  VALUES
+    (@analyzer, @state_key, @state_type, @payload, @first_seen_at, @last_seen_at, @alerted, datetime('now', '+8 hours'))
+  ON CONFLICT(analyzer, state_key, state_type) DO UPDATE SET
+    payload = excluded.payload,
+    first_seen_at = excluded.first_seen_at,
+    last_seen_at = excluded.last_seen_at,
+    alerted = excluded.alerted,
+    updated_at = datetime('now', '+8 hours')
+`);
+
+const deleteRuntimeState = analyticsDb.prepare(`
+  DELETE FROM analyzer_runtime_state
+  WHERE analyzer = ? AND state_key = ? AND state_type = ?
+`);
+
+const selectRuntimeState = analyticsDb.prepare(`
+  SELECT state_key, payload
+  FROM analyzer_runtime_state
+  WHERE analyzer = ? AND state_type = ?
+`);
+
+function compactMessageForState(msg) {
+  if (!msg) return null;
+  return {
+    id: msg.id,
+    platform: msg.platform,
+    message_id: msg.message_id,
+    group_id: msg.group_id,
+    group_name: msg.group_name,
+    sender_id: msg.sender_id,
+    sender_name: msg.sender_name,
+    content: String(msg.content || '').slice(0, 500),
+    has_media: msg.has_media,
+    receiver_account: msg.receiver_account,
+    timestamp: msg.timestamp
+  };
+}
+
+function persistNoResponseState(key, state) {
+  if (!key || !state?.firstMsg) return;
+  const messages = getNoResponseMessages(state).map(compactMessageForState).filter(Boolean);
+  const firstMsg = compactMessageForState(state.firstMsg || messages[0]);
+  if (!firstMsg) return;
+  const payload = {
+    firstExternalTs: state.firstExternalTs,
+    firstMsg,
+    externalMsgs: messages,
+    alerted: Boolean(state.alerted),
+    lastExternalTs: state.lastExternalTs || state.firstExternalTs
+  };
+  upsertRuntimeState.run({
+    analyzer: ANALYZER_NAME,
+    state_key: key,
+    state_type: NO_RESPONSE_STATE_TYPE,
+    payload: JSON.stringify(payload),
+    first_seen_at: payload.firstExternalTs,
+    last_seen_at: payload.lastExternalTs,
+    alerted: payload.alerted ? 1 : 0
+  });
+}
+
+function clearNoResponseState(key) {
+  noResponseState.delete(key);
+  deleteRuntimeState.run(ANALYZER_NAME, key, NO_RESPONSE_STATE_TYPE);
+}
+
+function loadNoResponseState() {
+  let restored = 0;
+  for (const row of selectRuntimeState.all(ANALYZER_NAME, NO_RESPONSE_STATE_TYPE)) {
+    try {
+      const payload = JSON.parse(row.payload || '{}');
+      if (!payload.firstMsg || !payload.firstExternalTs) continue;
+      noResponseState.set(row.state_key, {
+        firstExternalTs: payload.firstExternalTs,
+        firstMsg: payload.firstMsg,
+        externalMsgs: Array.isArray(payload.externalMsgs) ? payload.externalMsgs : [payload.firstMsg],
+        alerted: Boolean(payload.alerted),
+        lastExternalTs: payload.lastExternalTs || payload.firstExternalTs
+      });
+      restored += 1;
+    } catch (err) {
+      console.warn(`[supplier-analyzer] 跳过损坏运行态 ${row.state_key}: ${err.message}`);
+    }
+  }
+  if (restored > 0) {
+    console.log(`[supplier-analyzer] 已恢复 ${restored} 个无响应检测状态`);
+  }
+}
 
 function appendNoResponseMessage(state, msg) {
   const msgs = getNoResponseMessages(state);
@@ -446,7 +554,7 @@ const P0_CACHE_TTL = 2 * 60 * 1000;
 
 function buildP0ContextPrompt(msg, keyword, contextMsgs) {
   const contextBlock = contextMsgs.map(m => {
-    const t = new Date(m.timestamp).toLocaleTimeString('zh-CN', { timeZone: 'Asia/Shanghai' });
+    const t = formatShanghai(m.timestamp, { hour: '2-digit', minute: '2-digit', second: '2-digit' });
     return `[${t}] ${m.sender_name}: ${m.content}`;
   }).join('\n');
 
@@ -716,17 +824,22 @@ async function processNewMessages() {
 
     const key = msg.group_id || msg.group_name;
     if (!noResponseState.has(key)) {
-      noResponseState.set(key, { firstExternalTs: now, firstMsg: msg, externalMsgs: [msg], alerted: false, lastExternalTs: now });
+      const state = { firstExternalTs: now, firstMsg: msg, externalMsgs: [msg], alerted: false, lastExternalTs: now };
+      noResponseState.set(key, state);
+      persistNoResponseState(key, state);
     } else {
       const state = noResponseState.get(key);
-      if (!state.alerted) appendNoResponseMessage(state, msg);
+      if (!state.alerted) {
+        appendNoResponseMessage(state, msg);
+        persistNoResponseState(key, state);
+      }
     }
   }
 
   for (const msg of internalMsgs) {
     const key = msg.group_id || msg.group_name;
     if (noResponseState.has(key)) {
-      noResponseState.delete(key); // ITNIO 已回复，清除状态
+      clearNoResponseState(key); // ITNIO 已回复，清除状态
     }
   }
 
@@ -746,6 +859,7 @@ async function processNewMessages() {
         const mergedIds = mergeMsgIds(recentP2.source_msg_ids, noResponseMsgIds);
         analyticsDb.prepare('UPDATE alert_records SET source_msg_ids = ? WHERE id = ?').run(mergedIds, recentP2.id);
         state.alerted = true;
+        persistNoResponseState(key, state);
         console.log(`[P2-DEDUP:${NO_RESPONSE_ALERT_FORMAT}] ${regionInfo.region}-${msg.group_name} | 30分钟内已有响应缺口告警，合并${noResponseMsgIds.length}条消息`);
         continue;
       }
@@ -780,6 +894,7 @@ async function processNewMessages() {
       });
       markAlertPushResult(alertInfo.lastInsertRowid, sendResult, `[P2:${NO_RESPONSE_ALERT_FORMAT}] ${regionInfo.region}-${msg.group_name}`);
       state.alerted = true;
+      persistNoResponseState(key, state);
       console.log(`[P2-ResponseGap:${NO_RESPONSE_ALERT_FORMAT}] ${regionInfo.region}-${msg.group_name} | ${minutesElapsed}分钟响应缺口`);
     }
   }
@@ -831,7 +946,7 @@ function detectGroupType(groupName) {
 
 // ─── 分时轮询调度 ─────────────────────────────────────────────────
 function getPollingInterval() {
-  const hour = new Date().toLocaleString('en-US', { timeZone: 'Asia/Shanghai', hour: 'numeric', hour12: false });
+  const hour = formatShanghai(new Date(), { hour: 'numeric', hour12: false }, 'en-US');
   const h = parseInt(hour, 10);
   if (h >= 14 && h < 20) return 15 * 1000; // 高峰：15秒
   if (h >= 6 && h < 9) return 60 * 1000;   // 低谷：60秒
@@ -855,6 +970,7 @@ module.exports = {
 if (require.main === module) {
   // ─── 启动 ────────────────────────────────────────────────────────
   console.log('[supplier-analyzer] 启动，分时轮询：高峰15s / 普通30s / 低谷60s');
+  loadNoResponseState();
   tick();
 
   process.on('SIGINT', () => {

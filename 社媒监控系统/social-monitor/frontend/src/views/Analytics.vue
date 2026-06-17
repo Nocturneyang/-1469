@@ -236,6 +236,7 @@ import {
   WarningFilled,
 } from '@element-plus/icons-vue'
 import api from '@/utils/request'
+import { formatShanghaiDateTime } from '@/utils/time'
 
 const defaultDashboard = () => ({
   ready: false,
@@ -310,7 +311,7 @@ const formatTime = (value) => {
   if (!value) return '-'
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return String(value).slice(0, 16)
-  return date.toLocaleString('zh-CN', {
+  return formatShanghaiDateTime(value, {
     month: '2-digit',
     day: '2-digit',
     hour: '2-digit',

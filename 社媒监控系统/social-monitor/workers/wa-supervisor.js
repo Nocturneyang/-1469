@@ -6,6 +6,7 @@ require('dotenv').config({ path: path.join(process.env.DATA_DIR || path.join(__d
 const { db, recordRuntimeEvent } = require('../db/database');
 const { getWaChromeStats, getPuppeteerChromeInfo } = require('../lib/wa-chrome-runtime');
 const { createRuntimeAdapter } = require('../lib/wa-runtime-adapters');
+const { parseShanghaiDate, shanghaiISOString } = require('../lib/time');
 const puppeteer = require('puppeteer');
 
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '..');
@@ -123,11 +124,11 @@ function updateAccountRuntime(accountId, patch) {
         params[key] = value;
     }
 
-    fields.push("last_supervisor_check_at = datetime('now')");
-    fields.push("updated_at = datetime('now')");
+    fields.push("last_supervisor_check_at = datetime('now', '+8 hours')");
+    fields.push("updated_at = datetime('now', '+8 hours')");
 
     const insertColumns = ['id', 'platform', 'status', ...patchKeys, 'last_supervisor_check_at', 'updated_at'];
-    const insertValues = ['@id', "'whatsapp'", "'unknown'", ...patchKeys.map(key => `@${key}`), "datetime('now')", "datetime('now')"];
+    const insertValues = ['@id', "'whatsapp'", "'unknown'", ...patchKeys.map(key => `@${key}`), "datetime('now', '+8 hours')", "datetime('now', '+8 hours')"];
 
     db.prepare(`
         INSERT INTO accounts (${insertColumns.join(', ')})
@@ -161,8 +162,7 @@ function getCollectorHeartbeats() {
 
 function secondsSince(value) {
     if (!value) return null;
-    const normalized = String(value).includes('T') ? String(value) : `${String(value).replace(' ', 'T')}Z`;
-    const ts = new Date(normalized).getTime();
+    const ts = parseShanghaiDate(value).getTime();
     if (Number.isNaN(ts)) return null;
     return Math.max(0, Math.round((Date.now() - ts) / 1000));
 }
@@ -547,7 +547,7 @@ async function tick() {
             collector_phase: heartbeat ? heartbeat.phase : null,
             collector_run_id: heartbeat ? heartbeat.run_id : null,
             collector_heartbeat_age_seconds: heartbeatAge,
-            last_runtime_event_at: new Date().toISOString(),
+            last_runtime_event_at: shanghaiISOString(),
             chrome_rss_mb: runtime ? Math.round(runtime.rssMb) : 0,
             chrome_process_count: runtime ? runtime.processCount : 0,
             chrome_version: chromeInfo.chromeVersion || 'unknown',

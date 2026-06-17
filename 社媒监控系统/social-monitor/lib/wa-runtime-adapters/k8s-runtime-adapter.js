@@ -1,6 +1,7 @@
 const { execFile } = require('child_process');
 const fs = require('fs');
 const https = require('https');
+const { shanghaiISOString } = require('../time');
 
 const SERVICE_ACCOUNT_DIR = '/var/run/secrets/kubernetes.io/serviceaccount';
 
@@ -132,7 +133,7 @@ class K8sRuntimeAdapter {
                 template: {
                     metadata: {
                         annotations: {
-                            'kubectl.kubernetes.io/restartedAt': new Date().toISOString()
+                            'kubectl.kubernetes.io/restartedAt': shanghaiISOString()
                         }
                     }
                 }

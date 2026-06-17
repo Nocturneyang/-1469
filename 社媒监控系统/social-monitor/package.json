@@ -26,6 +26,7 @@
     "media:report": "node scripts/media-retention.js",
     "media:prune": "node scripts/media-retention.js --execute",
     "db:backup": "node scripts/db-backup.js",
+    "db:archive": "node scripts/archive-messages.js",
     "db:backup:list": "node scripts/db-backup.js --list",
     "db:backup:prune": "node scripts/db-backup.js --prune",
     "postinstall": "node scripts/install-chrome.js"

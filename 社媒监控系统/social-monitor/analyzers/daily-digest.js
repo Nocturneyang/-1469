@@ -24,6 +24,7 @@ const cron = require('node-cron');
 const dingtalk = require('../lib/dingtalk');
 const aiClient = require('../lib/ai-client');
 const { readEnvFile } = require('../lib/env-config');
+const { formatShanghai, shanghaiDateStartMs, shanghaiDateString } = require('../lib/time');
 
 const ROOT = process.env.DATA_DIR || path.resolve(__dirname, '..');
 const DEFAULT_LINK_ONLY_ACCOUNTS = 'wa-wa_shebi,tgu-tgu_supplier';
@@ -122,22 +123,17 @@ function isInternalSender(name) {
 
 // ─── 时间工具 ─────────────────────────────────────────────────────
 function getYesterdayRange() {
-  const now = new Date();
-  const tzOffset = 8 * 60 * 60 * 1000; // UTC+8
-  const todayStart = new Date(
-    Math.floor((now.getTime() + tzOffset) / 86400000) * 86400000 - tzOffset
-  );
-  const yesterdayStart = new Date(todayStart.getTime() - 86400000);
+  const todayStartMs = shanghaiDateStartMs(shanghaiDateString());
+  const yesterdayStartMs = todayStartMs - 86400000;
   return {
-    start: yesterdayStart.getTime(),
-    end: todayStart.getTime() - 1,
-    dateStr: yesterdayStart.toLocaleDateString('zh-CN', { timeZone: 'Asia/Shanghai' }).replace(/\//g, '-'),
+    start: yesterdayStartMs,
+    end: todayStartMs - 1,
+    dateStr: shanghaiDateString(yesterdayStartMs),
   };
 }
 
 function formatTs(ts) {
-  return new Date(ts).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai',
-    hour: '2-digit', minute: '2-digit' });
+  return formatShanghai(ts, { hour: '2-digit', minute: '2-digit' });
 }
 
 // ─── 分板块沉默阈值（小时）────────────────────────────────────

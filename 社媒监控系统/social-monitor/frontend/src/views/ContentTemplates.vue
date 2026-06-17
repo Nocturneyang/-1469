@@ -61,6 +61,7 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import api from '@/utils/request'
+import { formatShanghaiDateTime } from '@/utils/time'
 
 const keyword = ref('')
 const customer = ref('')
@@ -84,8 +85,7 @@ const goPage = (p) => { page.value = p; fetchData() }
 
 const formatDate = (dateStr) => {
   if (!dateStr) return '--'
-  const date = new Date(dateStr)
-  return date.toLocaleString('zh-CN', { 
+  return formatShanghaiDateTime(dateStr, {
     year: 'numeric', 
     month: '2-digit', 
     day: '2-digit',

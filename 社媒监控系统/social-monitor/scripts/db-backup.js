@@ -2,6 +2,7 @@
 const fs = require('fs');
 const path = require('path');
 const Database = require('better-sqlite3');
+const { shanghaiFilenameTimestamp, shanghaiISOString } = require('../lib/time');
 
 const ROOT = process.env.DATA_DIR || path.join(__dirname, '..');
 const DB_DIR = path.join(ROOT, 'db');
@@ -25,7 +26,7 @@ function parseArgs(argv) {
 }
 
 function timestamp() {
-    return new Date().toISOString().replace(/[:.]/g, '-');
+    return shanghaiFilenameTimestamp().replace(/\./g, '-');
 }
 
 function safeName(value) {
@@ -38,7 +39,7 @@ function fileInfo(filePath) {
     return {
         path: filePath,
         bytes: stat.size,
-        mtime: stat.mtime.toISOString()
+        mtime: shanghaiISOString(stat.mtime)
     };
 }
 
@@ -61,7 +62,7 @@ async function createBackup(options = {}) {
         { name: 'analytics.sqlite', required: false }
     ];
     const manifest = {
-        createdAt: new Date().toISOString(),
+        createdAt: shanghaiISOString(),
         root: ROOT,
         targetDir,
         files: []
@@ -108,7 +109,7 @@ function listBackups() {
             return {
                 name: entry.name,
                 path: dir,
-                createdAt: manifest?.createdAt || stat.mtime.toISOString(),
+                createdAt: manifest?.createdAt || shanghaiISOString(stat.mtime),
                 files: manifest?.files || []
             };
         })

@@ -136,6 +136,22 @@ CREATE TABLE IF NOT EXISTS suppressed_alerts (
 
 CREATE INDEX IF NOT EXISTS idx_suppressed_msg ON suppressed_alerts(source_msg_id);
 
+-- ⑧b 分析器运行态快照（仅分析库）
+CREATE TABLE IF NOT EXISTS analyzer_runtime_state (
+  analyzer      TEXT NOT NULL,
+  state_key     TEXT NOT NULL,
+  state_type    TEXT NOT NULL,
+  payload       TEXT NOT NULL,
+  first_seen_at INTEGER,
+  last_seen_at  INTEGER,
+  alerted       INTEGER DEFAULT 0,
+  updated_at    DATETIME DEFAULT (datetime('now', '+8 hours')),
+  PRIMARY KEY (analyzer, state_key, state_type)
+);
+
+CREATE INDEX IF NOT EXISTS idx_runtime_state_type
+  ON analyzer_runtime_state(analyzer, state_type, alerted, last_seen_at);
+
 -- ⑨ QA 知识库（问题闭环时自动提取）
 CREATE TABLE IF NOT EXISTS qa_knowledge_base (
   id                INTEGER PRIMARY KEY AUTOINCREMENT,

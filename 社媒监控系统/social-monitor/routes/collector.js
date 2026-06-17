@@ -114,7 +114,7 @@ router.post('/account-status', (req, res) => {
         if (body.chromeVersion) {
             db.prepare(`
                 UPDATE accounts
-                SET chrome_version = ?, updated_at = datetime('now')
+                SET chrome_version = ?, updated_at = datetime('now', '+8 hours')
                 WHERE id = ?
             `).run(body.chromeVersion, body.id);
         }

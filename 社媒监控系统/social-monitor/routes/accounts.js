@@ -9,11 +9,47 @@ const {
     getWaWebVersionCacheInfo
 } = require('../lib/wa-chrome-runtime');
 const { readEnvFile, writeEnvKeys } = require('../lib/env-config');
+const { parseShanghaiDate } = require('../lib/time');
 const puppeteer = require('puppeteer');
 
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '..');
 const WA_ACCOUNTS_CONFIG_PATH = path.join(DATA_DIR, 'config', 'wa-accounts.json');
 const LOCAL_WA_RUNTIME_ENABLED = process.env.LOCAL_WA_RUNTIME_ENABLED !== 'false';
+const ACCOUNT_PM2_COMMAND_TIMEOUT_MS = positiveEnvNumber('ACCOUNT_PM2_COMMAND_TIMEOUT_MS', 60000);
+const ACCOUNT_RESTART_DELAY_MS = positiveEnvNumber('ACCOUNT_RESTART_DELAY_MS', 500);
+
+function positiveEnvNumber(name, fallback) {
+    const value = Number(process.env[name]);
+    return Number.isFinite(value) && value > 0 ? value : fallback;
+}
+
+function wait(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function execManagedCommand(command, options = {}) {
+    const execOptions = {
+        timeout: ACCOUNT_PM2_COMMAND_TIMEOUT_MS,
+        ...options
+    };
+    return new Promise((resolve, reject) => {
+        exec(command, execOptions, (error, stdout, stderr) => {
+            if (error) {
+                error.stdout = stdout;
+                error.stderr = stderr;
+                return reject(error);
+            }
+            resolve({ stdout, stderr });
+        });
+    });
+}
+
+function execErrorDetail(error) {
+    return [error?.message, error?.stderr, error?.stdout]
+        .filter(Boolean)
+        .join('\n')
+        .slice(0, 1200);
+}
 
 function getConfiguredEnvValue(key) {
     return process.env[key] || readEnvFile()[key] || '';
@@ -74,8 +110,7 @@ function collectWaChromeStats() {
 
 function secondsSince(value) {
     if (!value) return null;
-    const normalized = String(value).includes('T') ? String(value) : String(value).replace(' ', 'T') + 'Z';
-    const ts = new Date(normalized).getTime();
+    const ts = parseShanghaiDate(value).getTime();
     if (Number.isNaN(ts)) return null;
     return Math.max(0, Math.round((Date.now() - ts) / 1000));
 }
@@ -178,7 +213,7 @@ function clearWaSession(accountName) {
     }
 }
 
-function killWaChromeProcesses(accountName, callback = () => {}) {
+function killWaChromeProcesses(accountName, callback) {
     const patterns = [
         `whatsapp-session-${accountName}`,
         `.wwebjs_auth/session-${accountName}`
@@ -186,7 +221,16 @@ function killWaChromeProcesses(accountName, callback = () => {}) {
     const cmd = patterns
         .map(pattern => `pgrep -f "${pattern}" 2>/dev/null`)
         .join(' ; ');
-    exec(`(${cmd}) | sort -u | xargs kill -9 2>/dev/null || true`, { shell: '/bin/bash' }, callback);
+    const promise = execManagedCommand(`(${cmd}) | sort -u | xargs kill -9 2>/dev/null || true`, { shell: '/bin/bash' });
+    if (typeof callback === 'function') {
+        promise.then(() => callback()).catch(callback);
+    }
+    return promise;
+}
+
+async function restartPm2Worker(workerName) {
+    await wait(ACCOUNT_RESTART_DELAY_MS);
+    return execManagedCommand(`pm2 restart ${workerName}`);
 }
 
 function serializeEcosystemConfig(config) {
@@ -325,6 +369,23 @@ function clearTgUserRuntimeConfig(accountName) {
     });
 }
 
+let mutationChain = Promise.resolve();
+
+function serializeMutation(taskFn) {
+    const run = mutationChain.then(() => taskFn());
+    mutationChain = run.catch(() => {});
+    return run;
+}
+
+function runSerializedMutation(label, req, res, taskFn) {
+    return serializeMutation(() => Promise.resolve().then(taskFn)).catch(err => {
+        console.error(`${label} Error:`, err);
+        if (!res.headersSent) {
+            res.status(500).json({ success: false, error: err.message });
+        }
+    });
+}
+
 function createAccountsRouter({ safeWriteEcosystem }) {
     const router = express.Router();
 
@@ -439,9 +500,8 @@ function createAccountsRouter({ safeWriteEcosystem }) {
                         acc.health_color = '#25D366'; // WhatsApp Green
                     } else {
                         // Calculate time difference
-                        const now = new Date();
-                        const formattedStr = acc.latest_msg_time.replace(' ', 'T') + 'Z';
-                        const lastMsgDate = new Date(formattedStr);
+                        const now = Date.now();
+                        const lastMsgDate = parseShanghaiDate(acc.latest_msg_time);
                         const diffHrs = (now - lastMsgDate) / (1000 * 60 * 60);
                         
                         if (diffHrs < 2) {
@@ -552,7 +612,7 @@ function createAccountsRouter({ safeWriteEcosystem }) {
         }
     });
 
-    router.post('/logout', (req, res) => {
+    router.post('/logout', (req, res) => runSerializedMutation('Logout', req, res, async () => {
         const { id } = req.body;
         if (!id) return res.status(400).json({ success: false, error: 'Missing account id' });
         if (!/^(wa|tg|tgu)-[a-zA-Z0-9_-]+$/.test(id)) return res.status(400).json({ success: false, error: 'Invalid account id format' });
@@ -568,19 +628,17 @@ function createAccountsRouter({ safeWriteEcosystem }) {
                 if (fs.existsSync(sessionPath)) {
                     fs.rmSync(sessionPath, { recursive: true, force: true });
                 }
-                
-                exec(`pm2 restart worker-wa-${accName}`, (error) => {
-                    if(error) console.log('Notice: Could not restart PM2 via API.', error.message);
-                });
+
+                await restartPm2Worker(`worker-wa-${accName}`);
             }
             res.json({ success: true, message: 'Logged out. Account is resetting.' });
         } catch (err) {
             console.error('Logout Error:', err);
             res.status(500).json({ success: false, error: err.message });
         }
-    });
+    }));
 
-    router.post('/restart', (req, res) => {
+    router.post('/restart', (req, res) => runSerializedMutation('Restart', req, res, async () => {
         const { id } = req.body;
         if (!id) return res.status(400).json({ success: false, error: 'Missing account id' });
         if (!/^(wa|tg|tgu|teams)-[a-zA-Z0-9_-]+$/.test(id)) return res.status(400).json({ success: false, error: 'Invalid account id format' });
@@ -611,7 +669,7 @@ function createAccountsRouter({ safeWriteEcosystem }) {
 
             if (id.startsWith('wa-')) {
                 const LOCK_FILE = '/tmp/wa_chrome_init.lock';
-                killWaChromeProcesses(accName);
+                await killWaChromeProcesses(accName);
 
                 try {
                     if (fs.existsSync(LOCK_FILE)) {
@@ -625,20 +683,16 @@ function createAccountsRouter({ safeWriteEcosystem }) {
                 } catch (_) {}
             }
 
-            setTimeout(() => {
-                exec(`pm2 restart ${workerName}`, (error) => {
-                    if (error) console.log(`Notice: Could not restart PM2 ${workerName}.`, error.message);
-                });
-            }, 500);
+            await restartPm2Worker(workerName);
 
             res.json({ success: true, message: 'Restart command sent. Login session was preserved.' });
         } catch (err) {
             console.error('Restart Error:', err);
             res.status(500).json({ success: false, error: err.message });
         }
-    });
+    }));
 
-    router.post('/relogin', (req, res) => {
+    router.post('/relogin', (req, res) => runSerializedMutation('Relogin', req, res, async () => {
         const { id } = req.body;
         if (!id) return res.status(400).json({ success: false, error: 'Missing account id' });
         if (!/^(wa|tg|tgu|teams)-[a-zA-Z0-9_-]+$/.test(id)) return res.status(400).json({ success: false, error: 'Invalid account id format' });
@@ -667,38 +721,29 @@ function createAccountsRouter({ safeWriteEcosystem }) {
 
             db.prepare(`UPDATE accounts SET status = 'initializing', qr_code = NULL WHERE id = ?`).run(id);
 
-            const restartWorker = () => {
-                setTimeout(() => {
-                    exec(`pm2 restart ${workerName}`, (error) => {
-                        if (error) console.log(`Notice: Could not restart PM2 ${workerName}.`, error.message);
-                    });
-                }, 500);
-            };
-
             // ── WA 账号额外清理：杀 Chrome、释放锁、清 Session Auth ────────
             if (id.startsWith('wa-')) {
                 // 1. 杀掉该账号所有 Chrome 进程，杀完后再删除 session，避免残留文件句柄污染新 profile。
-                killWaChromeProcesses(accName, () => {
-                        // 2. 人工重新登录必须绕过自动保护冷却，否则会一直等旧 cooldown，不出二维码。
-                        clearWaInitGuards(accName, 'relogin');
+                await killWaChromeProcesses(accName);
 
-                        // 3. 完整清除 LocalAuth profile，确保下次启动生成全新 QR。
-                        clearWaSession(accName);
-                        console.log(`[RELOGIN] ${accName} Session 已完整清除，准备重启`);
-                        restartWorker();
-                    });
-            } else {
-                restartWorker();
+                // 2. 人工重新登录必须绕过自动保护冷却，否则会一直等旧 cooldown，不出二维码。
+                clearWaInitGuards(accName, 'relogin');
+
+                // 3. 完整清除 LocalAuth profile，确保下次启动生成全新 QR。
+                clearWaSession(accName);
+                console.log(`[RELOGIN] ${accName} Session 已完整清除，准备重启`);
             }
+
+            await restartPm2Worker(workerName);
             
             res.json({ success: true, message: 'Restart command sent. QR code will appear shortly.' });
         } catch (err) {
             console.error('Relogin Error:', err);
             res.status(500).json({ success: false, error: err.message });
         }
-    });
+    }));
 
-    router.delete('/:id', (req, res) => {
+    router.delete('/:id', (req, res) => runSerializedMutation('Delete Account', req, res, async () => {
         const { id } = req.params;
         console.log('[DELETE ACCOUNT] Request to delete:', id);
         if (!id) return res.status(400).json({ success: false, error: 'Missing account id' });
@@ -742,22 +787,27 @@ function createAccountsRouter({ safeWriteEcosystem }) {
                 if (result.removed) safeWriteEcosystem(result.content);
             }
 
-            exec(`npx pm2 delete ${workerName}`, (error) => {
-                if (error) console.log(`Notice: Could not delete PM2 process ${workerName} (may already be stopped).`);
-                exec('npx pm2 save', (err) => {
-                    if (err) console.error('[DELETE ACCOUNT] PM2 save failed:', err);
-                    else console.log('[DELETE ACCOUNT] PM2 save succeeded');
-                });
-            });
+            try {
+                await execManagedCommand(`npx pm2 delete ${workerName}`);
+            } catch (error) {
+                console.log(`Notice: Could not delete PM2 process ${workerName} (may already be stopped).`, error.message);
+            }
+
+            try {
+                await execManagedCommand('npx pm2 save');
+                console.log('[DELETE ACCOUNT] PM2 save succeeded');
+            } catch (err) {
+                console.error('[DELETE ACCOUNT] PM2 save failed:', err);
+            }
 
             res.json({ success: true, message: 'Account permanently deleted.' });
         } catch (err) {
             console.error('[DELETE ACCOUNT] Error:', err);
             res.status(500).json({ success: false, error: err.message });
         }
-    });
+    }));
 
-    router.post('/create', (req, res) => {
+    router.post('/create', (req, res) => runSerializedMutation('Create', req, res, async () => {
         const { platform, id, token } = req.body;
         console.log('[CREATE ACCOUNT] Request:', { platform, id, token });
         if (!platform || !id) return res.status(400).json({ success: false, error: 'Missing platform or id' });
@@ -781,12 +831,12 @@ function createAccountsRouter({ safeWriteEcosystem }) {
                 if (!LOCAL_WA_RUNTIME_ENABLED) {
                     db.prepare(`
                         INSERT INTO accounts (id, platform, status, health_status, runtime_provider, updated_at)
-                        VALUES (?, 'whatsapp', 'remote_pending', 'remote_collector_required', 'remote-collector', datetime('now'))
+                        VALUES (?, 'whatsapp', 'remote_pending', 'remote_collector_required', 'remote-collector', datetime('now', '+8 hours'))
                         ON CONFLICT(id) DO UPDATE SET
                             status = excluded.status,
                             health_status = excluded.health_status,
                             runtime_provider = excluded.runtime_provider,
-                            updated_at = datetime('now')
+                            updated_at = datetime('now', '+8 hours')
                     `).run('wa-' + trimmedId);
                     return res.json({
                         success: true,
@@ -822,26 +872,32 @@ function createAccountsRouter({ safeWriteEcosystem }) {
                 spawnEnv.TG_BOT_TOKEN = token;
             }
 
-            exec(cmd, { 
-                cwd: path.join(__dirname, '..'),
-                env: { ...process.env, ...spawnEnv }
-            }, (error) => {
-                if (error) {
-                    const detail = [error.message, error.stderr, error.stdout].filter(Boolean).join('\n').slice(0, 1200);
-                    console.error(`[ACCOUNTS] Failed to start PM2 process ${workerName}:`, detail);
-                    db.prepare(`UPDATE accounts SET status = 'error', health_status = 'runtime_start_failed', updated_at = datetime('now') WHERE id = ?`)
-                        .run(platform === 'whatsapp' ? 'wa-' + trimmedId : 'tg-' + trimmedId);
-                    return res.status(500).json({ success: false, error: `PM2 启动失败: ${detail}` });
-                }
-                console.log(`[ACCOUNTS] Successfully started PM2 process ${workerName}`);
-                exec('npx pm2 save');
-                res.json({ success: true, message: 'Account creation started' });
-            });
+            try {
+                await execManagedCommand(cmd, {
+                    cwd: path.join(__dirname, '..'),
+                    env: { ...process.env, ...spawnEnv }
+                });
+            } catch (error) {
+                const detail = execErrorDetail(error);
+                console.error(`[ACCOUNTS] Failed to start PM2 process ${workerName}:`, detail);
+                db.prepare(`UPDATE accounts SET status = 'error', health_status = 'runtime_start_failed', updated_at = datetime('now', '+8 hours') WHERE id = ?`)
+                    .run(platform === 'whatsapp' ? 'wa-' + trimmedId : 'tg-' + trimmedId);
+                return res.status(500).json({ success: false, error: `PM2 启动失败: ${detail}` });
+            }
+
+            console.log(`[ACCOUNTS] Successfully started PM2 process ${workerName}`);
+            try {
+                await execManagedCommand('npx pm2 save');
+                console.log('[ACCOUNTS] PM2 save succeeded');
+            } catch (saveErr) {
+                console.error('[ACCOUNTS] PM2 save failed:', saveErr);
+            }
+            res.json({ success: true, message: 'Account creation started' });
         } catch (err) {
             console.error('Create Error:', err);
             res.status(500).json({ success: false, error: err.message });
         }
-    });
+    }));
 
     return router;
 }

@@ -11,6 +11,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { shanghaiISOString } = require('./time');
 
 /**
  * 检查是否有待处理的回溯指令
@@ -52,7 +53,7 @@ function writeBackfillStatus(accountName, status) {
         if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
         fs.writeFileSync(statusPath, JSON.stringify({
             ...status,
-            updatedAt: new Date().toISOString()
+            updatedAt: shanghaiISOString()
         }), 'utf8');
     } catch {}
 }

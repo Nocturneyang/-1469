@@ -75,7 +75,7 @@ function createTgUserRouter({ safeWriteEcosystem }) {
                 expireAt: Date.now() + LOGIN_TIMEOUT_MS
             });
 
-            db.prepare(`INSERT OR REPLACE INTO accounts (id, platform, status, updated_at) VALUES (?, 'telegram', 'logging_in', datetime('now'))`).run(`tgu-${account_name}`);
+            db.prepare(`INSERT OR REPLACE INTO accounts (id, platform, status, updated_at) VALUES (?, 'telegram', 'logging_in', datetime('now', '+8 hours'))`).run(`tgu-${account_name}`);
 
             res.json({ success: true, message: '验证码已发送到手机', status: 'logging_in' });
         } catch (err) {
@@ -106,7 +106,7 @@ function createTgUserRouter({ safeWriteEcosystem }) {
 
             const sessionString = s.client.session.save();
             saveSession(account_name, sessionString);
-            db.prepare(`UPDATE accounts SET status='authenticated', updated_at=datetime('now') WHERE id=?`).run(`tgu-${account_name}`);
+            db.prepare(`UPDATE accounts SET status='authenticated', updated_at=datetime('now', '+8 hours') WHERE id=?`).run(`tgu-${account_name}`);
             
             global[`tgu_client_${account_name}`] = s.client;
 
@@ -115,7 +115,7 @@ function createTgUserRouter({ safeWriteEcosystem }) {
             const errName = err.constructor?.name || '';
             if (errName.includes('SessionPasswordNeeded') || err.message?.includes('SESSION_PASSWORD_NEEDED')) {
                 s.expireAt = Date.now() + LOGIN_TIMEOUT_MS;
-                db.prepare(`UPDATE accounts SET status='need_2fa', updated_at=datetime('now') WHERE id=?`).run(`tgu-${account_name}`);
+                db.prepare(`UPDATE accounts SET status='need_2fa', updated_at=datetime('now', '+8 hours') WHERE id=?`).run(`tgu-${account_name}`);
                 return res.json({ success: true, need2fa: true, status: 'need_2fa', message: '需要输入两步验证密码' });
             }
             console.error('[TGUser API] verify-code error:', err.message);
@@ -148,7 +148,7 @@ function createTgUserRouter({ safeWriteEcosystem }) {
 
             const sessionString = s.client.session.save();
             saveSession(account_name, sessionString);
-            db.prepare(`UPDATE accounts SET status='authenticated', updated_at=datetime('now') WHERE id=?`).run(`tgu-${account_name}`);
+            db.prepare(`UPDATE accounts SET status='authenticated', updated_at=datetime('now', '+8 hours') WHERE id=?`).run(`tgu-${account_name}`);
             
             global[`tgu_client_${account_name}`] = s.client;
 
@@ -321,7 +321,7 @@ function createTgUserRouter({ safeWriteEcosystem }) {
         try {
             revokeSession(name);
             cleanupLoginSession(name);
-            db.prepare(`UPDATE accounts SET status='idle', updated_at=datetime('now') WHERE id=?`).run(`tgu-${name}`);
+            db.prepare(`UPDATE accounts SET status='idle', updated_at=datetime('now', '+8 hours') WHERE id=?`).run(`tgu-${name}`);
 
             const { exec } = require('child_process');
             exec(`npx pm2 delete worker-tgu-${name}`, () => {
@@ -433,12 +433,12 @@ function createTgUserRouter({ safeWriteEcosystem }) {
             if (!LOCAL_TG_RUNTIME_ENABLED) {
                 db.prepare(`
                     INSERT INTO accounts (id, platform, status, health_status, runtime_provider, updated_at)
-                    VALUES (?, 'telegram', 'remote_pending', 'remote_collector_required', 'remote-collector', datetime('now'))
+                    VALUES (?, 'telegram', 'remote_pending', 'remote_collector_required', 'remote-collector', datetime('now', '+8 hours'))
                     ON CONFLICT(id) DO UPDATE SET
                         status = excluded.status,
                         health_status = excluded.health_status,
                         runtime_provider = excluded.runtime_provider,
-                        updated_at = datetime('now')
+                        updated_at = datetime('now', '+8 hours')
                 `).run(`tgu-${id}`);
 
                 return res.json({
@@ -479,7 +479,7 @@ function createTgUserRouter({ safeWriteEcosystem }) {
                 }
             }
 
-            db.prepare(`INSERT OR REPLACE INTO accounts (id, platform, status, updated_at) VALUES (?, 'telegram', 'idle', datetime('now'))`).run(`tgu-${id}`);
+            db.prepare(`INSERT OR REPLACE INTO accounts (id, platform, status, updated_at) VALUES (?, 'telegram', 'idle', datetime('now', '+8 hours'))`).run(`tgu-${id}`);
 
             const { spawn, exec } = require('child_process');
             const spawnEnv = applyCollectorEnv({

@@ -15,6 +15,7 @@ const collectorRoutes = require('./routes/collector');
 const createTgUserRouter = require('./routes/tg-user');
 const createTeamsRouter = require('./routes/teams');
 const { getAnalyticsDb } = require('./routes/analytics');
+const { shanghaiISOString } = require('./lib/time');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -94,7 +95,7 @@ function buildHealthReport() {
         ok: ready,
         status: ready ? 'ready' : 'degraded',
         service: 'social-monitor',
-        startedAt: STARTED_AT.toISOString(),
+        startedAt: shanghaiISOString(STARTED_AT),
         uptimeSeconds: Math.round(process.uptime()),
         checks: {
             sqlite,
@@ -297,7 +298,7 @@ app.post('/api/config/value-labels', requireAdmin, (req, res) => {
         const config = readRegionConfig();
         if (type === 'group') {
             config._group_overrides = config._group_overrides || {};
-            config._group_overrides[key] = { value_label, reason: reason || '', updated_at: new Date().toISOString() };
+            config._group_overrides[key] = { value_label, reason: reason || '', updated_at: shanghaiISOString() };
         } else {
             const item = (config.accounts || []).find(a => a.account === key);
             if (!item) return res.status(404).json({ success: false, error: '账号不存在' });
@@ -537,7 +538,7 @@ app.use('/api/accounts/create-teams', requireAdmin, (req, res, next) => {
     teamsRouter(req, res, next);
 });
 
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
     console.log(`🌐 Social Monitor UI Server listening on http://localhost:${PORT}`);
 });
 
@@ -549,6 +550,12 @@ app.use((err, req, res, next) => {
 
 process.on('uncaughtException', (err) => {
     console.error('[server] uncaughtException:', err.message, err.stack);
+    try {
+        const adb = getAnalyticsDb();
+        if (adb) adb.close();
+    } catch (_) {}
+    server.close(() => process.exit(1));
+    setTimeout(() => process.exit(1), 5000).unref();
 });
 
 process.on('unhandledRejection', (reason) => {

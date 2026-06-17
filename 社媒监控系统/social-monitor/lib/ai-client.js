@@ -20,6 +20,7 @@
 require('dotenv').config();
 const axios = require('axios');
 const dingtalk = require('./dingtalk');
+const { formatShanghai } = require('./time');
 
 // ─── 读取配置 ────────────────────────────────────────────────────
 // 支持 OPENAI_* 和 ANTHROPIC_* 两种命名，OPENAI_* 优先（.env文件配置）
@@ -110,7 +111,7 @@ async function openCircuit(reason) {
         `**原因：** ${reason}`,
         `**当前模式：** 纯关键词匹配（降级）`,
         `**自动恢复：** 30分钟后重试`,
-        `**时间：** ${new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}`,
+        `**时间：** ${formatShanghai()}`,
       ].join('\n'),
     }).catch(() => { });   // 降级通知本身失败不抛出
   }
@@ -230,29 +231,75 @@ async function callAI(prompt, options = {}) {
 // ─── JSON 提取 ────────────────────────────────────────────────────
 function extractJSON(text) {
   if (!text) return null;
+  const raw = String(text).trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '');
   // 先尝试直接解析
-  try { return JSON.parse(text); } catch { }
+  try { return JSON.parse(raw); } catch { }
 
-  // 使用平衡括号匹配提取完整 JSON
+  // 使用字符串感知的平衡括号匹配，避免 JSON 字符串内的 { } 干扰
   let depth = 0;
   let start = -1;
-  for (let i = 0; i < text.length; i++) {
-    if (text[i] === '{') {
+  let inString = false;
+  let escaped = false;
+  for (let i = 0; i < raw.length; i++) {
+    const ch = raw[i];
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (ch === '\\') {
+        escaped = true;
+      } else if (ch === '"') {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (ch === '"') {
+      inString = true;
+    } else if (ch === '{') {
       if (depth === 0) start = i;
       depth++;
-    } else if (text[i] === '}') {
+    } else if (ch === '}') {
       depth--;
       if (depth === 0 && start !== -1) {
-        const jsonStr = text.slice(start, i + 1);
+        const jsonStr = raw.slice(start, i + 1);
         try { return JSON.parse(jsonStr); } catch { }
       }
     }
   }
 
   // 降级：尝试匹配第一个完整的 JSON 对象
-  const m = text.match(/\{[\s\S]*?\}/);
+  const m = raw.match(/\{[\s\S]*?\}/);
   if (m) { try { return JSON.parse(m[0]); } catch { } }
   return null;
+}
+
+function sampleText(text, maxChars) {
+  const value = String(text || '').trim();
+  if (!value || value.length <= maxChars) return value;
+  const chunk = Math.floor((maxChars - 80) / 3);
+  if (chunk <= 0) return value.slice(0, maxChars);
+  const head = value.slice(0, chunk);
+  const midStart = Math.max(0, Math.floor(value.length / 2) - Math.floor(chunk / 2));
+  const middle = value.slice(midStart, midStart + chunk);
+  const tail = value.slice(-chunk);
+  return [
+    head,
+    '\n...[中段采样]...\n',
+    middle,
+    '\n...[末段采样]...\n',
+    tail
+  ].join('').slice(0, maxChars);
+}
+
+function sampleArrayEvenly(items, maxItems) {
+  if (!Array.isArray(items) || items.length <= maxItems) return items || [];
+  if (maxItems <= 1) return items.slice(0, maxItems);
+  const result = [];
+  const last = items.length - 1;
+  for (let i = 0; i < maxItems; i += 1) {
+    result.push(items[Math.round((i * last) / (maxItems - 1))]);
+  }
+  return result;
 }
 
 // ─── 供应商告警 Prompt ────────────────────────────────────────────
@@ -262,13 +309,13 @@ function extractJSON(text) {
 async function analyzeAlertMessages(displayName, groupType, msgs, senderNames, contextAnchor) {
   const limited = msgs.slice(0, MAX_MSGS_PER_CALL);
   const messagesBlock = limited.map(m => {
-    const t = new Date(m.timestamp).toLocaleTimeString('zh-CN', { timeZone: 'Asia/Shanghai' });
+    const t = formatShanghai(m.timestamp, { hour: '2-digit', minute: '2-digit', second: '2-digit' });
     return `[${t}] ${m.sender_name}: ${m.content}`;
   }).join('\n');
 
   const contextBlock = contextAnchor && contextAnchor.length > 0
     ? contextAnchor.map(m => {
-        const t = new Date(m.timestamp).toLocaleTimeString('zh-CN', { timeZone: 'Asia/Shanghai' });
+        const t = formatShanghai(m.timestamp, { hour: '2-digit', minute: '2-digit', second: '2-digit' });
         return `[${t}] ${m.sender_name}: ${m.content}`;
       }).join('\n')
     : '（无上文）';
@@ -321,14 +368,13 @@ ${messagesBlock}
 async function analyzeDailyDigest(displayName, messagesContent, openIssues = [], internalContent = '') {
   const openIssuesList = openIssues.length > 0
     ? openIssues.map(i => {
-      const t = new Date(i.opened_at).toLocaleTimeString('zh-CN',
-        { timeZone: 'Asia/Shanghai', hour: '2-digit', minute: '2-digit' });
+      const t = formatShanghai(i.opened_at, { hour: '2-digit', minute: '2-digit' });
       return `- ${t} ${i.issue_type}（持续中）${i.commitment_text ? ` | 承诺："${i.commitment_text}"` : ''}`;
     }).join('\n')
     : '（无）';
 
   const internalBlock = internalContent
-    ? `\n我方运营回复（内部方案参考，不要作为外部讨论输出）：\n---\n${internalContent.slice(0, 1200)}\n---\n`
+    ? `\n我方运营回复（内部方案参考，不要作为外部讨论输出）：\n---\n${sampleText(internalContent, 1200)}\n---\n`
     : '';
 
   const prompt =
@@ -336,7 +382,7 @@ async function analyzeDailyDigest(displayName, messagesContent, openIssues = [],
 
 昨日外部消息（已过滤内部账号）：
 ---
-${messagesContent.slice(0, 3000)}
+${sampleText(messagesContent, 3000)}
 ---
 ${internalBlock}
 昨日未关闭问题（若有）：
@@ -466,7 +512,7 @@ ${reviewerReply.slice(0, 500)}
  */
 async function analyzeIssueToQA(displayName, sector, messages, resolutionSummary) {
   const conversation = messages.map(m => {
-    const t = new Date(m.timestamp).toLocaleTimeString('zh-CN', { timeZone: 'Asia/Shanghai', hour: '2-digit', minute: '2-digit' });
+    const t = formatShanghai(m.timestamp, { hour: '2-digit', minute: '2-digit' });
     return `[${t}] ${m.sender_name}: ${m.content}`;
   }).join('\n');
 
@@ -479,7 +525,7 @@ async function analyzeIssueToQA(displayName, sector, messages, resolutionSummary
 
 完整对话：
 ---
-${conversation.slice(0, 3000)}
+${sampleText(conversation, 3000)}
 ---
 
 字段要求：
@@ -521,7 +567,7 @@ ${conversation.slice(0, 3000)}
  */
 async function analyzeDeviceKnowledge(displayName, messages) {
   const conversation = messages.map(m => {
-    const t = new Date(m.timestamp).toLocaleTimeString('zh-CN', { timeZone: 'Asia/Shanghai', hour: '2-digit', minute: '2-digit' });
+    const t = formatShanghai(m.timestamp, { hour: '2-digit', minute: '2-digit' });
     return `[${t}] ${m.sender_name}: ${m.content}`;
   }).join('\n');
 
@@ -532,7 +578,7 @@ async function analyzeDeviceKnowledge(displayName, messages) {
 
 完整对话：
 ---
-${conversation.slice(0, 2600)}
+${sampleText(conversation, 2600)}
 ---
 
 字段要求：
@@ -574,7 +620,7 @@ ${conversation.slice(0, 2600)}
  */
 async function analyzeContentTemplate(displayName, messages, reviewVerdict) {
   const conversation = messages.map(m => {
-    const t = new Date(m.timestamp).toLocaleTimeString('zh-CN', { timeZone: 'Asia/Shanghai', hour: '2-digit', minute: '2-digit' });
+    const t = formatShanghai(m.timestamp, { hour: '2-digit', minute: '2-digit' });
     return `[${t}] ${m.sender_name}: ${m.content}`;
   }).join('\n');
 
@@ -586,7 +632,7 @@ async function analyzeContentTemplate(displayName, messages, reviewVerdict) {
 
 完整对话：
 ---
-${conversation.slice(0, 2600)}
+${sampleText(conversation, 2600)}
 ---
 
 字段要求：
@@ -635,12 +681,13 @@ ${conversation.slice(0, 2600)}
  * @returns {Promise<object|null>}
  */
 async function analyzeSupplierProfile(groupName, sector, messages, stats) {
-  // 构造精简的消息样本（优先近期较长消息，控制批量画像调用成本）
-  const sample = messages
-    .filter(m => m.content && m.content.length > 20)
-    .slice(0, 20)
+  // 构造首中尾均衡的消息样本，避免活跃群只分析到某一段时间
+  const sample = sampleArrayEvenly(
+    messages.filter(m => m.content && m.content.length > 20),
+    20
+  )
     .map(m => {
-      const t = new Date(m.timestamp).toLocaleDateString('zh-CN', { timeZone: 'Asia/Shanghai' });
+      const t = formatShanghai(m.timestamp, { year: 'numeric', month: '2-digit', day: '2-digit' });
       return `[${t}] ${m.sender_name}: ${m.content.slice(0, 160)}`;
     })
     .join('\n');
@@ -660,7 +707,7 @@ async function analyzeSupplierProfile(groupName, sector, messages, stats) {
 
 近30天消息样本：
 ---
-${sample.slice(0, 2600)}
+${sampleText(sample, 2600)}
 ---
 
 输出规则：

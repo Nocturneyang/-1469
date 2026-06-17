@@ -20,6 +20,7 @@ const { sendAccountAlert } = require('../lib/dingtalk');
 const tokenStore = require('../lib/teams-token-store');
 const graphClient = require('../lib/microsoft-graph-client');
 const backfillQueue = require('../lib/teams-backfill-queue');
+const { getShanghaiParts } = require('../lib/time');
 
 // ─── 配置 ────────────────────────────────────────────────────────────
 const accountName = process.env.ACCOUNT_NAME || 'default';
@@ -198,7 +199,7 @@ async function main() {
         // 定时轮询主循环
         while (true) {
             // 凌晨降频：01:00 - 06:00 降低频率（5 分钟）
-            const hour = new Date().getHours();
+            const hour = Number(getShanghaiParts().hour);
             const interval = (hour >= 1 && hour < 6) 
                 ? 5 * 60 * 1000 
                 : 30000 + Math.random() * 30000;

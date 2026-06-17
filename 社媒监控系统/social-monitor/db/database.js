@@ -1,6 +1,7 @@
 const Database = require('better-sqlite3');
 const path = require('path');
 const fs = require('fs');
+const { shanghaiISOString } = require('../lib/time');
 
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '..');
 const dbPath = path.join(DATA_DIR, 'db', 'database.sqlite');
@@ -56,7 +57,7 @@ function initSchema() {
             timestamp INTEGER,
             raw_data TEXT,
             is_synced INTEGER DEFAULT 0, -- 0: 未同步, 1: 已同步
-            created_at DATETIME DEFAULT (datetime('now')),
+            created_at DATETIME DEFAULT (datetime('now', '+8 hours')),
             UNIQUE(platform, message_id)
         );
 
@@ -88,7 +89,7 @@ function initSchema() {
             last_runtime_event_at DATETIME,
             last_restart_reason TEXT,
             last_supervisor_check_at DATETIME,
-            updated_at DATETIME DEFAULT (datetime('now'))
+            updated_at DATETIME DEFAULT (datetime('now', '+8 hours'))
         );
 
         CREATE TABLE IF NOT EXISTS collector_heartbeats (
@@ -107,7 +108,7 @@ function initSchema() {
             last_ready_at DATETIME,
             last_message_at DATETIME,
             started_at DATETIME,
-            updated_at DATETIME DEFAULT (datetime('now')),
+            updated_at DATETIME DEFAULT (datetime('now', '+8 hours')),
             PRIMARY KEY (account_id, collector_id)
         );
 
@@ -121,7 +122,7 @@ function initSchema() {
             run_id TEXT,
             message TEXT,
             data_json TEXT,
-            created_at DATETIME DEFAULT (datetime('now'))
+            created_at DATETIME DEFAULT (datetime('now', '+8 hours'))
         );
 
         CREATE TABLE IF NOT EXISTS sso_admins (
@@ -130,8 +131,8 @@ function initSchema() {
             display_name TEXT,
             note TEXT,
             created_by TEXT,
-            created_at DATETIME DEFAULT (datetime('now')),
-            updated_at DATETIME DEFAULT (datetime('now'))
+            created_at DATETIME DEFAULT (datetime('now', '+8 hours')),
+            updated_at DATETIME DEFAULT (datetime('now', '+8 hours'))
         );
 
         CREATE INDEX IF NOT EXISTS idx_collector_heartbeats_platform ON collector_heartbeats(platform, updated_at);
@@ -142,7 +143,7 @@ function initSchema() {
             username TEXT UNIQUE NOT NULL,
             password_hash TEXT NOT NULL,
             role TEXT NOT NULL DEFAULT 'viewer',
-            created_at DATETIME DEFAULT (datetime('now')),
+            created_at DATETIME DEFAULT (datetime('now', '+8 hours')),
             last_login DATETIME
         );
     `);
@@ -272,7 +273,7 @@ function initSchema() {
                 last_ready_at DATETIME,
                 last_message_at DATETIME,
                 started_at DATETIME,
-                updated_at DATETIME DEFAULT (datetime('now')),
+                updated_at DATETIME DEFAULT (datetime('now', '+8 hours')),
                 PRIMARY KEY (account_id, collector_id)
             );
 
@@ -286,7 +287,7 @@ function initSchema() {
                 run_id TEXT,
                 message TEXT,
                 data_json TEXT,
-                created_at DATETIME DEFAULT (datetime('now'))
+                created_at DATETIME DEFAULT (datetime('now', '+8 hours'))
             );
 
             CREATE INDEX IF NOT EXISTS idx_collector_heartbeats_platform ON collector_heartbeats(platform, updated_at);
@@ -298,8 +299,8 @@ function initSchema() {
                 display_name TEXT,
                 note TEXT,
                 created_by TEXT,
-                created_at DATETIME DEFAULT (datetime('now')),
-                updated_at DATETIME DEFAULT (datetime('now'))
+                created_at DATETIME DEFAULT (datetime('now', '+8 hours')),
+                updated_at DATETIME DEFAULT (datetime('now', '+8 hours'))
             );
         `);
     } catch (err) {
@@ -335,7 +336,7 @@ function saveMessage(data) {
                 content, has_media, media_path, timestamp, raw_data, created_at
             ) VALUES (
                 @platform, @receiver_account, @business_sector, @message_id, @group_id, @group_name, @sender_id, @sender_name,
-                @content, @has_media, @media_path, @timestamp, @raw_data, datetime('now')
+                @content, @has_media, @media_path, @timestamp, @raw_data, datetime('now', '+8 hours')
             )
             ON CONFLICT(platform, message_id) DO NOTHING
         `);
@@ -354,12 +355,12 @@ function updateAccountStatus(id, platform, status, pushname = null, qrCode = nul
     try {
         const stmt = db.prepare(`
             INSERT INTO accounts (id, platform, status, pushname, qr_code, updated_at)
-            VALUES (@id, @platform, @status, @pushname, @qr_code, datetime('now'))
+            VALUES (@id, @platform, @status, @pushname, @qr_code, datetime('now', '+8 hours'))
             ON CONFLICT(id) DO UPDATE SET
               status=excluded.status,
               pushname=COALESCE(excluded.pushname, pushname),
               qr_code=excluded.qr_code,
-              updated_at=datetime('now')
+              updated_at=datetime('now', '+8 hours')
         `);
         stmt.run({ id, platform, status, pushname, qr_code: qrCode });
     } catch (err) {
@@ -369,8 +370,8 @@ function updateAccountStatus(id, platform, status, pushname = null, qrCode = nul
 
 function toDateTime(value) {
     if (!value) return null;
-    if (value instanceof Date) return value.toISOString();
-    if (typeof value === 'number') return new Date(value).toISOString();
+    if (value instanceof Date) return shanghaiISOString(value);
+    if (typeof value === 'number') return shanghaiISOString(value);
     return value;
 }
 
@@ -384,7 +385,7 @@ function upsertCollectorHeartbeat(data) {
             ) VALUES (
                 @account_id, @platform, @collector_id, @run_id, @process_pid, @status, @phase, @health_status,
                 @chrome_rss_mb, @chrome_process_count, @chrome_version, @last_error,
-                @last_ready_at, @last_message_at, @started_at, datetime('now')
+                @last_ready_at, @last_message_at, @started_at, datetime('now', '+8 hours')
             )
             ON CONFLICT(account_id, collector_id) DO UPDATE SET
                 run_id = excluded.run_id,
@@ -399,7 +400,7 @@ function upsertCollectorHeartbeat(data) {
                 last_ready_at = COALESCE(excluded.last_ready_at, last_ready_at),
                 last_message_at = COALESCE(excluded.last_message_at, last_message_at),
                 started_at = COALESCE(excluded.started_at, started_at),
-                updated_at = datetime('now')
+                updated_at = datetime('now', '+8 hours')
         `);
 
         stmt.run({

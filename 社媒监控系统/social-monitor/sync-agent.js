@@ -3,6 +3,7 @@ require('dotenv').config({ path: path.join(process.env.DATA_DIR || __dirname, '.
 const axios = require('axios');
 const fs = require('fs');
 const { db } = require('./db/database');
+const { shanghaiISOString } = require('./lib/time');
 const DATA_DIR = process.env.DATA_DIR || __dirname;
 
 // Configuration
@@ -32,7 +33,7 @@ async function syncMessagesToCenter() {
             return;
         }
 
-        console.log(`[Sync Agent] ${new Date().toISOString()} - Found ${rows.length} unsynced messages. Starting sync...`);
+        console.log(`[Sync Agent] ${shanghaiISOString()} - Found ${rows.length} unsynced messages. Starting sync...`);
 
         // 2. 构造 Payload（含 Base64 媒体文件读取）
         const messagesPayload = rows.map(row => {
@@ -128,4 +129,3 @@ process.on('SIGINT', () => {
     try { db.close(); } catch (_) {}
     process.exit(0);
 });
-

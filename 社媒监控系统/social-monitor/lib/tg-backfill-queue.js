@@ -10,6 +10,7 @@
 const path = require('path');
 const Database = require('better-sqlite3');
 const { saveMessage } = require('../db/database');
+const { SHANGHAI_TIME_ZONE, shanghaiDateStartMs, shanghaiDateString } = require('./time');
 
 const analyticsDbPath = path.join(process.env.DATA_DIR || path.join(__dirname, '..'), 'db', 'analytics.sqlite');
 
@@ -36,8 +37,8 @@ function initSchema() {
             today_count INTEGER DEFAULT 0,
             total_count INTEGER DEFAULT 0,
             last_reset_date TEXT,
-            created_at DATETIME DEFAULT (datetime('now')),
-            updated_at DATETIME DEFAULT (datetime('now')),
+            created_at DATETIME DEFAULT (datetime('now', '+8 hours')),
+            updated_at DATETIME DEFAULT (datetime('now', '+8 hours')),
             UNIQUE(account_name, chat_id)
         );
     `);
@@ -55,7 +56,13 @@ function randomSleep(minMs, maxMs) {
 
 // ─── 今日计数重置检测 ─────────────────────────────────────────────────────────
 function todayDateStr() {
-    return new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+    return shanghaiDateString();
+}
+
+function nextShanghaiMidnightDelayMs(now = new Date()) {
+    const todayStart = shanghaiDateStartMs(shanghaiDateString(now));
+    const nextMidnight = todayStart + 24 * 60 * 60 * 1000 + 10 * 1000;
+    return Math.max(1000, nextMidnight - now.getTime());
 }
 
 function resetDailyCountIfNeeded(db, taskId, lastResetDate) {
@@ -63,12 +70,58 @@ function resetDailyCountIfNeeded(db, taskId, lastResetDate) {
     if (lastResetDate !== today) {
         db.prepare(`
             UPDATE tg_backfill_tasks
-            SET today_count = 0, last_reset_date = ?, updated_at = datetime('now')
+            SET today_count = 0, last_reset_date = ?, updated_at = datetime('now', '+8 hours')
             WHERE id = ?
         `).run(today, taskId);
         return true;
     }
     return false;
+}
+
+function peerIdValue(peer) {
+    if (!peer) return '';
+    const raw = peer.userId || peer.channelId || peer.chatId || peer.id || peer;
+    return raw != null ? String(raw) : '';
+}
+
+function formatEntityName(entity) {
+    if (!entity) return '';
+    return `${entity.firstName || ''} ${entity.lastName || ''}`.trim()
+        || entity.username
+        || entity.title
+        || '';
+}
+
+function indexHistoryEntities(result) {
+    const byId = new Map();
+    for (const entity of [...(result.users || []), ...(result.chats || [])]) {
+        const id = peerIdValue(entity.id);
+        if (id) byId.set(id, entity);
+    }
+    return byId;
+}
+
+async function resolveSenderInfo(client, msg, entityIndex, senderCache) {
+    const senderId = peerIdValue(msg.fromId);
+    if (!senderId) return { sender_id: '', sender_name: '' };
+
+    if (senderCache.has(senderId)) return senderCache.get(senderId);
+
+    let entity = entityIndex.get(senderId);
+    if (!entity) {
+        try {
+            entity = await client.getEntity(msg.fromId);
+        } catch (_) {
+            entity = null;
+        }
+    }
+
+    const info = {
+        sender_id: senderId,
+        sender_name: formatEntityName(entity)
+    };
+    senderCache.set(senderId, info);
+    return info;
 }
 
 // ─── 公开 API ────────────────────────────────────────────────────────────────
@@ -107,7 +160,7 @@ function pauseTasks(accountName) {
     const db = getDb();
     db.prepare(`
         UPDATE tg_backfill_tasks
-        SET status = 'paused', updated_at = datetime('now')
+        SET status = 'paused', updated_at = datetime('now', '+8 hours')
         WHERE account_name = ? AND status IN ('pending', 'running')
     `).run(accountName);
 }
@@ -120,7 +173,7 @@ function resumeTasks(accountName) {
     const db = getDb();
     db.prepare(`
         UPDATE tg_backfill_tasks
-        SET status = 'pending', updated_at = datetime('now')
+        SET status = 'pending', updated_at = datetime('now', '+8 hours')
         WHERE account_name = ? AND status = 'paused'
     `).run(accountName);
 }
@@ -135,7 +188,7 @@ function resetTask(accountName, chatId) {
     db.prepare(`
         UPDATE tg_backfill_tasks
         SET offset_id = 0, status = 'pending', today_count = 0, total_count = 0,
-            updated_at = datetime('now')
+            updated_at = datetime('now', '+8 hours')
         WHERE account_name = ? AND chat_id = ?
     `).run(accountName, String(chatId));
 }
@@ -182,11 +235,9 @@ async function runBackfillLoop(client, accountName, rateLimitCfg, onCircuitBreak
         // 达到日配额，等到次日 00:00
         if (freshTask.today_count >= daily_limit) {
             const now = new Date();
-            const tomorrow = new Date(now);
-            tomorrow.setDate(tomorrow.getDate() + 1);
-            tomorrow.setHours(0, 0, 10, 0); // 次日 00:00:10
-            const waitMs = tomorrow - now;
-            console.log(`[Backfill] Daily limit reached (${freshTask.today_count}/${daily_limit}). Sleeping until ${tomorrow.toLocaleString()}`);
+            const waitMs = nextShanghaiMidnightDelayMs(now);
+            const resumeAt = new Date(now.getTime() + waitMs);
+            console.log(`[Backfill] Daily limit reached (${freshTask.today_count}/${daily_limit}). Sleeping until ${resumeAt.toLocaleString('zh-CN', { timeZone: SHANGHAI_TIME_ZONE })}`);
             await sleep(waitMs);
             continue;
         }
@@ -194,7 +245,7 @@ async function runBackfillLoop(client, accountName, rateLimitCfg, onCircuitBreak
         // 标记为 running
         db.prepare(`
             UPDATE tg_backfill_tasks
-            SET status = 'running', updated_at = datetime('now')
+            SET status = 'running', updated_at = datetime('now', '+8 hours')
             WHERE id = ?
         `).run(task.id);
 
@@ -214,12 +265,14 @@ async function runBackfillLoop(client, accountName, rateLimitCfg, onCircuitBreak
             );
 
             const messages = result.messages || [];
+            const entityIndex = indexHistoryEntities(result);
+            const senderCache = new Map();
 
             if (messages.length === 0) {
                 // 该群历史已拉完
                 db.prepare(`
                     UPDATE tg_backfill_tasks
-                    SET status = 'completed', updated_at = datetime('now')
+                    SET status = 'completed', updated_at = datetime('now', '+8 hours')
                     WHERE id = ?
                 `).run(task.id);
                 console.log(`[Backfill] Completed chat: ${freshTask.chat_title || freshTask.chat_id}`);
@@ -237,6 +290,7 @@ async function runBackfillLoop(client, accountName, rateLimitCfg, onCircuitBreak
                     const groupIdStr = String(freshTask.chat_id);
                     const groupIdAbs = groupIdStr.replace(/^-100/, '').replace(/^-/, '');
                     const globalMessageId = `${groupIdAbs}_${msgId}`;
+                    const senderInfo = await resolveSenderInfo(client, msg, entityIndex, senderCache);
 
                     await saveMessageFn({
                         platform: 'telegram',
@@ -244,8 +298,8 @@ async function runBackfillLoop(client, accountName, rateLimitCfg, onCircuitBreak
                         message_id: globalMessageId,
                         group_id: groupIdStr,
                         group_name: freshTask.chat_title || String(freshTask.chat_id),
-                        sender_id: msg.fromId ? String(msg.fromId.userId || msg.fromId.channelId || '') : '',
-                        sender_name: '',
+                        sender_id: senderInfo.sender_id,
+                        sender_name: senderInfo.sender_name,
                         content: msg.message || '',
                         has_media: msg.media ? 1 : 0,
                         media_path: null,
@@ -265,7 +319,7 @@ async function runBackfillLoop(client, accountName, rateLimitCfg, onCircuitBreak
                 SET offset_id = ?,
                     today_count = today_count + ?,
                     total_count = total_count + ?,
-                    updated_at = datetime('now')
+                    updated_at = datetime('now', '+8 hours')
                 WHERE id = ?
             `).run(newOffsetId, savedCount, savedCount, task.id);
 
@@ -285,7 +339,7 @@ async function runBackfillLoop(client, accountName, rateLimitCfg, onCircuitBreak
                 console.error(`[Backfill] CIRCUIT BREAK: ${errName} for ${accountName}`);
                 db.prepare(`
                     UPDATE tg_backfill_tasks
-                    SET status = 'paused', updated_at = datetime('now')
+                    SET status = 'paused', updated_at = datetime('now', '+8 hours')
                     WHERE account_name = ?
                 `).run(accountName);
                 if (typeof onCircuitBreak === 'function') onCircuitBreak(err);
@@ -296,7 +350,7 @@ async function runBackfillLoop(client, accountName, rateLimitCfg, onCircuitBreak
                 console.error(`[Backfill] Error for ${freshTask.chat_id}:`, err.message || err);
                 db.prepare(`
                     UPDATE tg_backfill_tasks
-                    SET status = 'pending', updated_at = datetime('now')
+                    SET status = 'pending', updated_at = datetime('now', '+8 hours')
                     WHERE id = ?
                 `).run(task.id);
                 await sleep(30000);

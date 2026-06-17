@@ -1,6 +1,7 @@
 const axios = require('axios');
 const fs = require('fs');
 const path = require('path');
+const { shanghaiISOString } = require('./time');
 
 const DURABLE_ENDPOINTS = new Set([
     '/api/collector/events',
@@ -27,7 +28,7 @@ function createCollectorClient({ baseUrl, token, timeoutMs = 8000, logger = cons
         if (!durableEnabled || !DURABLE_ENDPOINTS.has(endpoint)) return;
         try {
             fs.mkdirSync(queueDir, { recursive: true });
-            const record = JSON.stringify({ endpoint, payload, queued_at: new Date().toISOString() });
+            const record = JSON.stringify({ endpoint, payload, queued_at: shanghaiISOString() });
             fs.appendFileSync(path.join(queueDir, endpointFileName(endpoint)), record + '\n', 'utf8');
         } catch (err) {
             logger.warn(`[CollectorClient] Failed to enqueue ${endpoint}: ${err.message}`);

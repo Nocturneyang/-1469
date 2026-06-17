@@ -84,6 +84,7 @@
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import api from '@/utils/request'
 import { downloadAuthenticatedFile } from '@/utils/download'
+import { formatShanghaiDateTime, shanghaiDateString } from '@/utils/time'
 
 const keyword = ref('')
 const category = ref('')
@@ -106,8 +107,7 @@ const goPage = (p) => { page.value = p; fetchData() }
 
 const formatDate = (dateStr) => {
   if (!dateStr) return '--'
-  const date = new Date(dateStr)
-  return date.toLocaleString('zh-CN', { 
+  return formatShanghaiDateTime(dateStr, {
     year: 'numeric', 
     month: '2-digit', 
     day: '2-digit',
@@ -140,7 +140,7 @@ const downloadKB = (format) => {
   const ext = format === 'csv' ? 'csv' : format === 'jsonl' ? 'jsonl' : 'json'
   downloadAuthenticatedFile(
     `/api/device-kb/export?format=${format}`,
-    `device-kb-${new Date().toISOString().slice(0,10)}.${ext}`
+    `device-kb-${shanghaiDateString()}.${ext}`
   )
 }
 

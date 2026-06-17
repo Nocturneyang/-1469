@@ -36,7 +36,7 @@ router.post('/login', (req, res) => {
             { expiresIn: '24h' }
         );
 
-        db.prepare("UPDATE users SET last_login = datetime('now') WHERE id = ?").run(user.id);
+        db.prepare("UPDATE users SET last_login = datetime('now', '+8 hours') WHERE id = ?").run(user.id);
 
         res.json({
             success: true,
@@ -62,7 +62,7 @@ router.post('/view-login', (req, res) => {
             { expiresIn: '24h' }
         );
 
-        db.prepare("UPDATE users SET last_login = datetime('now') WHERE id = ?").run(user.id);
+        db.prepare("UPDATE users SET last_login = datetime('now', '+8 hours') WHERE id = ?").run(user.id);
 
         res.json({
             success: true,
@@ -116,7 +116,7 @@ router.post('/sso-admins', authenticateToken, requireAdmin, (req, res) => {
             ON CONFLICT(identity) DO UPDATE SET
                 display_name = excluded.display_name,
                 note = excluded.note,
-                updated_at = datetime('now')
+                updated_at = datetime('now', '+8 hours')
         `).run(identity, displayName || identity, note, req.user?.username || 'admin');
         res.json({ success: true, message: '钉钉管理员已保存' });
     } catch (err) {

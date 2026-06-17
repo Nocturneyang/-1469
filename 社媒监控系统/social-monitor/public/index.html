@@ -2287,6 +2287,20 @@ support"></textarea>
         .replace(/'/g, '&#39;');
     }
 
+    const SHANGHAI_TIME_ZONE = 'Asia/Shanghai';
+    function parseShanghaiDate(value) {
+      if (!value) return null;
+      if (typeof value === 'number') return new Date(value);
+      const text = String(value).trim();
+      const hasTimezone = /(?:z|[+-]\d{2}:?\d{2})$/i.test(text);
+      const naiveDateTime = /^\d{4}-\d{2}-\d{2}(?:[ T]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?)?$/.test(text);
+      if (!hasTimezone && naiveDateTime) {
+        const normalized = text.includes('T') ? text : text.replace(' ', 'T');
+        return new Date(normalized.includes('T') ? `${normalized}+08:00` : `${normalized}T00:00:00+08:00`);
+      }
+      return new Date(value);
+    }
+
     // UI 路由逻辑
     function switchView(viewName, el) {
       if (!el) el = document.querySelector(`.nav-item[data-view="${viewName}"]`);
@@ -2383,7 +2397,7 @@ support"></textarea>
         data.data.forEach(m => {
           const isWa = m.platform === 'whatsapp';
           const icon = isWa ? '🟢' : '🔵';
-          const timeStr = new Date(m.timestamp).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' });
+          const timeStr = parseShanghaiDate(m.timestamp).toLocaleString('zh-CN', { timeZone: SHANGHAI_TIME_ZONE, month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' });
 
           let mediaHtml = '';
           if (m.has_media && m.media_path) {
@@ -4699,7 +4713,7 @@ support"></textarea>
             <div class="qa-card-meta">
               <span>🔄 ${d.frequency}次</span>
               <span>✅ ${d.solution_effectiveness || 0}次成功</span>
-              <span>📅 ${(d.last_seen_at ? new Date(d.last_seen_at).toLocaleDateString('zh-CN') : '')}</span>
+              <span>📅 ${(d.last_seen_at ? parseShanghaiDate(d.last_seen_at).toLocaleDateString('zh-CN', { timeZone: SHANGHAI_TIME_ZONE }) : '')}</span>
               <span>📋 ${escapeHtml(d.source_group_name || '')}</span>
             </div>
           </div>
@@ -4755,7 +4769,7 @@ support"></textarea>
             ${t.compliance_notes ? `<div style="font-size:12px;color:var(--t2);margin-bottom:4px">📋 ${escapeHtml(t.compliance_notes)}</div>` : ''}
             <div class="qa-card-meta">
               <span>🔄 ${t.frequency}次</span>
-              <span>📅 ${(t.last_seen_at ? new Date(t.last_seen_at).toLocaleDateString('zh-CN') : '')}</span>
+              <span>📅 ${(t.last_seen_at ? parseShanghaiDate(t.last_seen_at).toLocaleDateString('zh-CN', { timeZone: SHANGHAI_TIME_ZONE }) : '')}</span>
               <span>📋 ${escapeHtml(t.source_group_name || '')}</span>
             </div>
           </div>

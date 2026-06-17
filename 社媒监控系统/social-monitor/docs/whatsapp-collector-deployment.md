@@ -70,6 +70,31 @@ npm run db:backup:prune -- --execute
 
 默认备份目录为 `DATA_DIR/backups`，保留期由 `BACKUP_RETENTION_DAYS=14` 控制。备份使用 SQLite backup API，比直接复制 WAL 模式数据库更稳。
 
+### messages 热/冷归档
+
+采集库 `db/database.sqlite` 仍是热数据单文件库。长期运行时，`messages` 表会持续增长；当页面/API 只需要近期热数据、历史消息主要用于追溯时，可以按月归档旧消息。
+
+先查看候选归档量：
+
+```bash
+npm run db:archive
+```
+
+默认保留最近 `MESSAGE_ARCHIVE_RETENTION_DAYS=180` 天，候选数据会按月份写入 `db/archives/database-archive-YYYYMM.sqlite`。脚本默认 dry-run，不会修改热库。
+
+确认分析器游标已越过候选消息后再执行：
+
+```bash
+npm run db:archive -- --execute
+```
+
+安全口径：
+
+- 执行前脚本会读取 `analytics.sqlite.analysis_cursor`，若仍有分析器 `last_msg_id` 小于候选归档最大消息 ID，会拒绝执行。
+- 单次最多处理 `MESSAGE_ARCHIVE_MAX_ROWS=50000` 行，数据很多时分多次执行。
+- 归档只移动 `messages` 行，不删除 `media/` 文件；媒体文件仍按 `npm run media:report` / `npm run media:prune` 单独治理。
+- 只有人工确认历史消息不再需要被增量分析器读取时，才使用 `-- --execute`；`-- --force` 仅用于确认游标异常但业务上已允许归档的场景。
+
 ### SSO 环境变量
 
 - `SSO_ENABLED=true`
@@ -124,6 +149,9 @@ npx pm2 save
 - 3 个 WA 稳态约 `2GB` Chrome RSS。
 - 5 个 WA 稳态约 `3GB - 6GB`。
 - 单账号异常峰值可能到 `2GB - 3GB`，本地 16GB 机器可承接波动。
+- 单台 collector 建议托管 WA 账号不超过 `6` 个；压测稳定后最多按 `5-8` 个账号规划，不把偶发在线数当作长期容量。
+- `wa-accounts.json` 中的 `maxStartingAccounts: 1` 是稳定性保护：Chrome 初始化串行执行，冷启动 N 个账号会排队，不应通过提高并发来解决容量问题。
+- 当账号规模超过单机 Chrome 内存或冷启动时间上限时，优先新增 collector 机器，把 WA 账号分摊到多台本地 collector；主系统、分析层和生产 SQLite 仍保持中心化。
 
 不要让同一个 WA 账号在本地和生产同时运行；同一个账号只保留一个有效 Chrome session。
 

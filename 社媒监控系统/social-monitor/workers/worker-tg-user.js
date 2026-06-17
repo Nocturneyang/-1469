@@ -40,6 +40,7 @@ const { getSession, saveSession, getRateLimit } = require('../lib/tg-session-sto
 const { registerTask, runBackfillLoop } = require('../lib/tg-backfill-queue');
 const { sendAlert, sendAccountAlert } = require('../lib/dingtalk');
 const { createCollectorClient } = require('../lib/collector-client');
+const { formatShanghai, shanghaiISOString } = require('../lib/time');
 
 // ─── 配置读取 ────────────────────────────────────────────────────────────────
 const accountName = process.env.TG_ACCOUNT_NAME || 'default';
@@ -47,7 +48,7 @@ const accountKey = accountName.toUpperCase().replace(/-/g, '_');
 const accountId = `tgu-${accountName}`;
 const collectorId = process.env.COLLECTOR_ID || `pm2:tgu:${accountName}`;
 const runId = process.env.TG_RUN_ID || `${accountName}-${Date.now()}-${process.pid}`;
-const runStartedAt = new Date().toISOString();
+const runStartedAt = shanghaiISOString();
 const collectorClient = createCollectorClient({
     baseUrl: process.env.COLLECTOR_API_URL,
     token: process.env.COLLECTOR_TOKEN,
@@ -107,7 +108,7 @@ async function setAccountStatus(status, pushname = null, qrCode = null) {
 async function persistMessage(payload) {
     const localResult = saveMessage(payload);
     if (collectorClient) await collectorClient.message(payload);
-    reportHeartbeat({ lastMessageAt: new Date().toISOString() });
+    reportHeartbeat({ lastMessageAt: shanghaiISOString() });
     return localResult;
 }
 
@@ -129,8 +130,7 @@ if (!apiId || !apiHash) {
         lastError: 'TG_API_ID or TG_API_HASH not configured'
     });
     setInterval(() => { }, 3600000);
-    return;
-}
+} else {
 reportHeartbeat({ phase: 'booting', status: 'initializing', healthStatus: 'booting' });
 const heartbeatTimer = setInterval(() => reportHeartbeat(), 15000);
 heartbeatTimer.unref();
@@ -154,6 +154,64 @@ function writeStatus(state) {
 
 function sleep(ms) {
     return new Promise(r => setTimeout(r, ms));
+}
+
+function createTtlCache(ttlMs, maxSize = 500) {
+    const store = new Map();
+    return {
+        get(key) {
+            if (!key) return null;
+            const item = store.get(key);
+            if (!item) return null;
+            if (Date.now() - item.ts > ttlMs) {
+                store.delete(key);
+                return null;
+            }
+            return item.value;
+        },
+        set(key, value) {
+            if (!key || !value) return;
+            if (store.size >= maxSize) {
+                const oldest = store.keys().next().value;
+                if (oldest) store.delete(oldest);
+            }
+            store.set(key, { value, ts: Date.now() });
+        }
+    };
+}
+
+function peerCacheKey(peer) {
+    if (!peer) return '';
+    if (typeof peer === 'string' || typeof peer === 'number' || typeof peer === 'bigint') return String(peer);
+    const type = peer.className || peer.constructor?.name || 'peer';
+    const id = peer.userId || peer.channelId || peer.chatId || peer.id || '';
+    return id ? `${type}:${id}` : String(peer);
+}
+
+function formatSenderName(sender) {
+    if (!sender) return '';
+    return `${sender.firstName || ''} ${sender.lastName || ''}`.trim() || sender.username || '';
+}
+
+const chatCache = createTtlCache(10 * 60 * 1000);
+const senderCache = createTtlCache(10 * 60 * 1000);
+
+async function getCachedChat(msg) {
+    const key = peerCacheKey(msg.peerId || msg.chatId || msg.inputChat);
+    const cached = chatCache.get(key);
+    if (cached) return cached;
+    const chat = await msg.getChat().catch(() => null);
+    if (chat) chatCache.set(key || peerCacheKey(chat.id), chat);
+    return chat;
+}
+
+async function getCachedSender(msg) {
+    const key = peerCacheKey(msg.senderId || msg.fromId);
+    const cached = senderCache.get(key);
+    if (cached) return cached;
+    const sender = await msg.getSender().catch(() => null);
+    if (sender) senderCache.set(key || peerCacheKey(sender.id), sender);
+    return sender;
 }
 
 // ─── 主逻辑 ──────────────────────────────────────────────────────────────────
@@ -223,7 +281,7 @@ async function main() {
             const displayName = `${me.firstName || ''} ${me.lastName || ''}`.trim() || me.username || accountName;
             console.log(`✅ [TGUser:${accountName}] Post-login connected as: ${displayName}`);
             await setAccountStatus('warmup', displayName, null);
-            reportHeartbeat({ lastReadyAt: new Date().toISOString() });
+            reportHeartbeat({ lastReadyAt: shanghaiISOString() });
             recordCollectorEvent('connected', `TG user collector connected as ${displayName}`);
             writeStatus({ status: 'warmup', account: accountName, displayName });
         } catch (meErr) {
@@ -243,7 +301,7 @@ async function main() {
             const displayName = `${me.firstName || ''} ${me.lastName || ''}`.trim() || me.username || accountName;
             console.log(`✅ [TGUser:${accountName}] Connected as: ${displayName}`);
             await setAccountStatus('warmup', displayName, null);
-            reportHeartbeat({ lastReadyAt: new Date().toISOString() });
+            reportHeartbeat({ lastReadyAt: shanghaiISOString() });
             recordCollectorEvent('connected', `TG user collector connected as ${displayName}`);
             writeStatus({ status: 'warmup', account: accountName, displayName });
             global[`tgu_client_${accountName}`] = client;
@@ -275,7 +333,7 @@ async function main() {
         const msg = event.message;
         if (!msg) return;
 
-        const chat = await msg.getChat().catch(() => null);
+        const chat = await getCachedChat(msg);
         if (!chat) return;
 
         // 只处理群组 / 超级群 / 频道
@@ -295,10 +353,8 @@ async function main() {
         }
 
         const groupName = chat.title || groupId;
-        const sender = await msg.getSender().catch(() => null);
-        const senderName = sender
-            ? `${sender.firstName || ''} ${sender.lastName || ''}`.trim() || sender.username || ''
-            : '';
+        const sender = await getCachedSender(msg);
+        const senderName = formatSenderName(sender);
         const senderId = sender ? String(sender.id) : '';
 
         const globalMessageId = `${groupIdAbs}_${msg.id}`;
@@ -369,7 +425,7 @@ async function main() {
                     `### 🔴 [TG采集熔断] tgu-${accountName}`,
                     '',
                     `**错误类型：** ${errName}`,
-                    `**触发时间：** ${new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}`,
+                    `**触发时间：** ${formatShanghai()}`,
                     `**已暂停：** 历史回溯队列暂停24小时，实时监听不受影响`,
                     `**处理建议：** 检查账号是否被封控，必要时更换账号或等待解封`
                 ].join('\n')
@@ -424,3 +480,4 @@ main().catch(async (err) => {
     await sleep(30000);
     process.exit(1);
 });
+}

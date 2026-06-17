@@ -495,6 +495,7 @@ import { computed, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import api from '@/utils/request'
 import { downloadAuthenticatedFile } from '@/utils/download'
+import { formatShanghaiDateTime, shanghaiDateString } from '@/utils/time'
 
 const TYPE_LABELS = {
   entity_relationship: '实体关系图谱',
@@ -549,7 +550,7 @@ const formatNum = (value) => Number(value || 0).toLocaleString('zh-CN')
 const timeLabel = (value) => {
   const n = Number(value)
   if (!n) return '-'
-  return new Date(n).toLocaleString('zh-CN', { hour12: false })
+  return formatShanghaiDateTime(n)
 }
 const actionEffectLabel = (item) => {
   const metrics = item.metrics || {}
@@ -696,7 +697,7 @@ const exportAssets = async () => {
   exporting.value = true
   const ok = await downloadAuthenticatedFile(
     '/api/knowledge-assets/export',
-    `knowledge-assets-${new Date().toISOString().slice(0, 10)}.json`
+    `knowledge-assets-${shanghaiDateString()}.json`
   )
   exporting.value = false
   if (ok) ElMessage.success('候选资产已导出')

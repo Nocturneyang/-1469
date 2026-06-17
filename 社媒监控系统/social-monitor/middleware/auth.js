@@ -1,6 +1,11 @@
 const jwt = require('jsonwebtoken');
 
-const JWT_SECRET = process.env.JWT_SECRET || 'social-monitor-fallback-secret';
+const JWT_SECRET = process.env.JWT_SECRET;
+if (!JWT_SECRET || JWT_SECRET.length < 32) {
+    console.error('[FATAL] JWT_SECRET 未配置或长度不足 32 位，拒绝启动。请设置强随机密钥：');
+    console.error('  node -e "console.log(require(\'crypto\').randomBytes(48).toString(\'base64url\'))"');
+    process.exit(1);
+}
 const SSO_USER_CACHE_TTL_MS = positiveNumber('SSO_USER_CACHE_TTL_MS', 30 * 60 * 1000);
 const SSO_USER_CACHE_MAX = positiveNumber('SSO_USER_CACHE_MAX', 1000);
 const SSO_ADMIN_CACHE_TTL_MS = positiveNumber('SSO_ADMIN_CACHE_TTL_MS', 60 * 60 * 1000);

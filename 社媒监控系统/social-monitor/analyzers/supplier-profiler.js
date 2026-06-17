@@ -18,6 +18,7 @@ const fs = require('fs');
 const Database = require('better-sqlite3');
 const cron = require('node-cron');
 const aiClient = require('../lib/ai-client');
+const { getShanghaiParts, shanghaiDateString } = require('../lib/time');
 
 const ROOT = process.env.DATA_DIR || path.resolve(__dirname, '..');
 
@@ -114,7 +115,7 @@ function calcActiveHours(groupId, groupName) {
     `).all(groupId || '', groupName, Date.now() - 30 * 24 * 3600 * 1000);
 
     for (const r of rows) {
-      const h = new Date(r.timestamp + 8 * 3600 * 1000).getUTCHours();
+      const h = Number(getShanghaiParts(r.timestamp).hour);
       if (h < 6) buckets['00-06']++;
       else if (h < 12) buckets['06-12']++;
       else if (h < 18) buckets['12-18']++;
@@ -133,7 +134,7 @@ async function generateProfiles() {
 
   console.log('[supplier-profiler] 开始计算供应商画像...');
   const now = Date.now();
-  const today = new Date(now + 8 * 3600 * 1000).toISOString().split('T')[0];
+  const today = shanghaiDateString(now);
 
   // 获取所有有过 issue 的群组
   const groups = analyticsDb.prepare(`
@@ -289,7 +290,7 @@ async function generateProfiles() {
     `).all(Date.now() - 7 * 24 * 3600 * 1000);
 
     for (const msg of recentMsgs) {
-      const msgDate = new Date(msg.timestamp + 8 * 3600 * 1000).toISOString().split('T')[0];
+      const msgDate = shanghaiDateString(msg.timestamp);
       extractMetrics(msg.content, msg.group_name, msg.id, msgDate);
     }
     console.log('[supplier-profiler] 通道质量指标提取完成');
