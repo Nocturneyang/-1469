@@ -39,3 +39,7 @@
 社媒监控系统/social-monitor/*.sqlite-shm
 社媒监控系统/social-monitor/db/*.sqlite-wal
 社媒监控系统/social-monitor/db/*.sqlite-shm
+
+# Agent tools config files
+社媒监控系统/social-monitor/.gemini/
+社媒监控系统/social-monitor/.specify/

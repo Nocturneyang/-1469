@@ -6,37 +6,11 @@
         <button class="btn-primary" @click="openAddModal">+ 添加帐号</button>
       </div>
 
-      <div v-if="waSupervisor" class="wa-supervisor-strip">
-        <div class="wa-supervisor-head">
-          <div>
-            <div class="wa-supervisor-title">WhatsApp Supervisor</div>
-            <div class="wa-supervisor-sub">长期在线容量 {{ waCapacityText }}</div>
-          </div>
-          <el-button size="small" :icon="RefreshRight" :loading="waSupervisorLoading" circle @click="fetchWaSupervisor" />
-        </div>
-        <div class="wa-supervisor-metrics">
-          <div class="wa-metric">
-            <span>Chrome RSS</span>
-            <strong>{{ waRuntimeSummary.totalRssMb }} MB</strong>
-          </div>
-          <div class="wa-metric">
-            <span>Chrome 进程</span>
-            <strong>{{ waRuntimeSummary.totalProcessCount }}</strong>
-          </div>
-          <div class="wa-metric">
-            <span>在线账号</span>
-            <strong>{{ waRuntimeSummary.accountCount }}</strong>
-          </div>
-          <div class="wa-metric">
-            <span>Chrome 版本</span>
-            <strong>{{ waChromeVersion }}</strong>
-          </div>
-          <div class="wa-metric">
-            <span>WebVersion</span>
-            <strong>{{ waWebVersion }}</strong>
-          </div>
-        </div>
-      </div>
+      <WaSupervisorStatus
+        :wa-supervisor="waSupervisor"
+        :loading="waSupervisorLoading"
+        @refresh="fetchWaSupervisor"
+      />
 
       <div v-if="loading" class="loading-state">
         <div style="text-align: center; padding: 40px; color: var(--t3)">加载中...</div>
@@ -196,99 +170,56 @@
     </el-dialog>
 
     <!-- TGU Rate Limit Modal -->
-    <el-dialog v-model="rlModalVisible" title="频控安全与风控设置" width="500px">
-       <div class="mb-4 text-center">当前配置账号: <span class="font-bold">tgu-{{ _rlAccountName }}</span></div>
-       <el-form label-width="120px" size="small">
-          <el-form-item label="启用历史回溯">
-             <el-switch v-model="rlForm.enable_backfill" />
-          </el-form-item>
-          <el-form-item label="自动回溯天数">
-             <el-input-number v-model="rlForm.backfill_days" :min="0" :max="30" controls-position="right" />
-          </el-form-item>
-          <el-form-item label="每日拉取上限">
-             <el-input-number v-model="rlForm.daily_limit" :min="0" :step="100" controls-position="right" />
-          </el-form-item>
-          <el-form-item label="登录预热期(秒)">
-             <el-input-number v-model="rlForm.warmup_seconds" :min="0" controls-position="right" />
-          </el-form-item>
-          <el-form-item label="单次拉取批次回溯">
-             <el-input-number v-model="rlForm.batch_size" :min="10" :max="100" controls-position="right" />
-          </el-form-item>
-          <el-form-item label="批次最小休眠(ms)">
-             <el-input-number v-model="rlForm.sleep_min_ms" :min="0" :step="1000" controls-position="right" />
-          </el-form-item>
-          <el-form-item label="批次最大休眠(ms)">
-             <el-input-number v-model="rlForm.sleep_max_ms" :min="1000" :step="1000" controls-position="right" />
-          </el-form-item>
-       </el-form>
-       <template #footer>
-          <el-button @click="rlModalVisible = false">取消</el-button>
-          <el-button type="primary" @click="submitRateLimit" :loading="rlLoading">保存配置</el-button>
-       </template>
-    </el-dialog>
+    <TguRateLimitModal
+      v-model="rlModalVisible"
+      :account-name="_rlAccountName"
+    />
 
     <!-- TGU Reconfig Groups Modal -->
-    <el-dialog v-model="rcModalVisible" title="重新配置监控群聊 (Whitelist)" width="500px">
-       <div class="mb-4 text-center">当前配置账号: <span class="font-bold">tgu-{{ _rcAccountName }}</span></div>
-       <el-form label-position="top">
-          <el-form-item label="监控范围">
-             <el-select v-model="rcMode" class="w-100">
-                <el-option label="监听所有群聊 (高风险)" value="all" />
-                <el-option label="仅监听指定群聊 (推荐)" value="partial" />
-             </el-select>
-          </el-form-item>
-          
-          <div v-show="rcMode === 'partial'" class="dialog-list-container" v-loading="rcDialogsLoading">
-             <el-checkbox-group v-model="rcWhitelist">
-                <el-checkbox v-for="item in rcDialogs" :key="item.id" :label="item.id" class="dialog-list-item">
-                  {{ item.title }}
-                </el-checkbox>
-             </el-checkbox-group>
-             <div v-if="!rcDialogsLoading && rcDialogs.length === 0" class="empty-text">未发现群组/频道</div>
-          </div>
-       </el-form>
-       <template #footer>
-          <el-button @click="rcModalVisible = false">取消</el-button>
-          <el-button type="primary" @click="submitReconfigGroups" :loading="rcLoading">保存并重启服务</el-button>
-       </template>
-    </el-dialog>
+    <TguReconfigGroupsModal
+      v-model="rcModalVisible"
+      :account-name="_rcAccountName"
+      @success="fetchAccounts"
+    />
 
     <!-- TGU Backfill Modal -->
-    <el-dialog v-model="bfModalVisible" title="TG 历史回溯监控" width="600px">
-       <div class="mb-4 flex-between">
-         <span>当前配置账号: <span class="font-bold">tgu-{{ _bfAccountName }}</span></span>
-         <div>
-            <el-button size="small" type="warning" plain @click="backfillPauseAll">暂停全部</el-button>
-            <el-button size="small" type="success" plain @click="backfillResumeAll">恢复全部</el-button>
-         </div>
-       </div>
-
-       <el-table :data="bfTasks" style="width: 100%" v-loading="bfLoading">
-          <el-table-column prop="chat_title" label="群组" show-overflow-tooltip width="200" />
-          <el-table-column label="状态" width="100">
-             <template #default="scope">
-                <el-tag size="small" :type="getBfStatusType(scope.row.status)">{{ getBfStatusText(scope.row.status) }}</el-tag>
-             </template>
-          </el-table-column>
-          <el-table-column prop="today_count" label="今日下载" align="right" />
-          <el-table-column prop="total_count" label="总计" align="right" />
-          <el-table-column label="操作" width="80" align="center">
-             <template #default="scope">
-                <el-button link type="danger" size="small" @click="resetBackfillTask(scope.row.chat_id)">重置</el-button>
-             </template>
-          </el-table-column>
-       </el-table>
-    </el-dialog>
+    <TguBackfillModal
+      v-model="bfModalVisible"
+      :account-name="_bfAccountName"
+    />
 
   </div>
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted, reactive, computed } from 'vue'
+import { ref, onMounted, onUnmounted, reactive } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus, Delete, RefreshRight } from '@element-plus/icons-vue'
-import api from '@/utils/request'
+import {
+  getAccounts,
+  getWaSupervisorStatus,
+  createWaAccount as createWaAccountApi,
+  createTeamsAccount,
+  createTgUserAccount,
+  restartAccount,
+  reloginAccount,
+  logoutAccount,
+  deleteAccountApi,
+  startTgUserLogin,
+  verifyTgCode,
+  verifyTg2FA,
+  getTgUserDialogs,
+  getTgUserConfig,
+  updateTgUserWhitelist,
+  reloginTeams,
+  startTeamsBackfill,
+  revokeTgUser,
+  getTgRateLimit
+} from '@/api/accounts'
 import AccountCard from '@/components/admin/AccountCard.vue'
+import WaSupervisorStatus from '@/components/admin/WaSupervisorStatus.vue'
+import TguBackfillModal from '@/components/admin/TguBackfillModal.vue'
+import TguRateLimitModal from '@/components/admin/TguRateLimitModal.vue'
+import TguReconfigGroupsModal from '@/components/admin/TguReconfigGroupsModal.vue'
 
 const accounts = ref([])
 const loading = ref(true)
@@ -322,61 +253,21 @@ const tguForm = reactive({
 
 // Rate Limit Modal
 const rlModalVisible = ref(false)
-const rlLoading = ref(false)
 const _rlAccountName = ref('')
-const rlForm = reactive({
-  enable_backfill: true,
-  backfill_days: 7,
-  daily_limit: 500,
-  warmup_seconds: 600,
-  batch_size: 50,
-  sleep_min_ms: 3000,
-  sleep_max_ms: 8000
-})
 
 // Reconfig Modal
 const rcModalVisible = ref(false)
-const rcLoading = ref(false)
-const rcDialogsLoading = ref(false)
 const _rcAccountName = ref('')
-const rcMode = ref('partial')
-const rcDialogs = ref([])
-const rcWhitelist = ref([])
 
 // Backfill Modal
 const bfModalVisible = ref(false)
-const bfLoading = ref(false)
 const _bfAccountName = ref('')
-const bfTasks = ref([])
-
 
 let pollTimer = null
 
-const waRuntimeSummary = computed(() => {
-  const runtime = waSupervisor.value?.runtime || {}
-  const summary = runtime.summary || runtime
-  return {
-    totalRssMb: summary.totalRssMb || 0,
-    totalProcessCount: summary.totalProcessCount || 0,
-    accountCount: summary.accountCount || runtime.accounts?.length || 0
-  }
-})
-
-const waChromeVersion = computed(() => waSupervisor.value?.chrome?.chromeVersion || '未知')
-const waWebVersion = computed(() => waSupervisor.value?.webVersionCache?.latest?.version || '未缓存')
-
-const waCapacityText = computed(() => {
-  const root = waSupervisor.value?.config || {}
-  const cfg = root.capacity || root
-  const maxOnline = cfg.maxOnlineAccounts || '-'
-  const maxStarting = cfg.maxStartingAccounts || '-'
-  const maxRss = cfg.maxChromeRssMbTotal || '-'
-  return `${maxOnline} 个在线 / ${maxStarting} 个启动中 / ${maxRss} MB 总预算`
-})
-
 const fetchAccounts = async () => {
   try {
-    const res = await api.get('/api/accounts')
+    const res = await getAccounts()
     if (res.success) accounts.value = res.data || []
   } catch (e) {
     console.error(e)
@@ -388,7 +279,7 @@ const fetchAccounts = async () => {
 const fetchWaSupervisor = async () => {
   waSupervisorLoading.value = true
   try {
-    const res = await api.get('/api/accounts/wa-supervisor')
+    const res = await getWaSupervisorStatus()
     if (res.success) waSupervisor.value = res.data
   } catch (e) {
     console.error(e)
@@ -409,7 +300,7 @@ const openAddModal = () => {
 const createWaAccount = async () => {
   if (!newWaId.value) return ElMessage.warning('请输入标识符')
   try {
-    const res = await api.post('/api/accounts/create', { platform: 'whatsapp', id: newWaId.value })
+    const res = await createWaAccountApi({ platform: 'whatsapp', id: newWaId.value })
     if (res.success) {
       ElMessage.success('进程启动指令已下发！请查看列表获取扫描二维码')
       addModalVisible.value = false
@@ -423,7 +314,7 @@ const createWaAccount = async () => {
 const createTgBot = async () => {
   if (!newTgId.value || !newTgToken.value) return ElMessage.warning('请输入完整信息')
   try {
-    const res = await api.post('/api/accounts/create', { platform: 'telegram', id: newTgId.value, token: newTgToken.value })
+    const res = await createWaAccountApi({ platform: 'telegram', id: newTgId.value, token: newTgToken.value })
     if (res.success) {
       ElMessage.success('TG 机器人启动成功')
       addModalVisible.value = false
@@ -437,7 +328,7 @@ const createTgBot = async () => {
 const createTeams = async () => {
   if (!newTeamsId.value) return ElMessage.warning('请输入标识符')
   try {
-    const res = await api.post('/api/accounts/create-teams', { id: newTeamsId.value })
+    const res = await createTeamsAccount({ id: newTeamsId.value })
     if (res.success) {
       ElMessage.success('Teams 进程已启动！请在账号管理页面点击「登录引导」')
       addModalVisible.value = false
@@ -453,7 +344,7 @@ const deleteAccount = async (id) => {
     await ElMessageBox.confirm('系统将停止 PM2 节点进程并销毁数据，确定删除吗？', '危险警告', {
       type: 'error', confirmButtonText: '删除'
     })
-    const res = await api.delete('/api/accounts/' + id)
+    const res = await deleteAccountApi(id)
     if (res.success) {
       ElMessage.success('节点环境已销毁')
       fetchAccounts()
@@ -466,7 +357,7 @@ const deleteAccount = async (id) => {
 const handleRestart = async (acc) => {
   try {
     await ElMessageBox.confirm('确定要重启该账号进程吗？这会保留登录态，不会清除 Session。', '提示', { type: 'warning' })
-    const res = await api.post('/api/accounts/restart', { id: acc.id })
+    const res = await restartAccount({ id: acc.id })
     if (res.success) {
       ElMessage.success('重启指令已发送，登录态已保留')
       fetchAccounts()
@@ -480,8 +371,7 @@ const handleRelogin = async (acc, actionType) => {
   try {
     const isLogout = actionType === 'logout'
     await ElMessageBox.confirm(isLogout ? '确定要注销下线该账号吗？' : '确定要重新启动该账号进行登录吗？', '提示', { type: 'warning' })
-    const endpoint = isLogout ? '/api/accounts/logout' : '/api/accounts/relogin'
-    const res = await api.post(endpoint, { id: acc.id })
+    const res = isLogout ? await logoutAccount({ id: acc.id }) : await reloginAccount({ id: acc.id })
     if (res.success) {
       ElMessage.success('指令已发送')
       fetchAccounts()
@@ -495,7 +385,7 @@ const handleTeamsRelogin = async (acc) => {
   try {
     const name = acc.id.replace('teams-', '')
     await ElMessageBox.confirm('确定要重新登录账号 ' + acc.id + '？ 这将清除已保存的 Session。', '警告', { type: 'warning' })
-    const res = await api.post('/api/teams/relogin/' + name)
+    const res = await reloginTeams(name)
     if (res.success) {
       ElMessage.success('Session 已清除，进程重启中...')
       fetchAccounts()
@@ -514,7 +404,7 @@ const handleTeamsBackfill = async (acc) => {
     })
     if(days) {
       const name = acc.id.replace('teams-', '')
-      const res = await api.post('/api/teams/backfill/' + name + '/start', { days: parseInt(days) })
+      const res = await startTeamsBackfill(name, { days: parseInt(days) })
       if(res.success) ElMessage.success('回溯指令已发送，请查看日志确认状态')
       else ElMessage.error(res.error)
     }
@@ -548,7 +438,7 @@ const tguSendCode = async () => {
   if (!tguForm.id || !tguForm.apiId || !tguForm.apiHash || !tguForm.phone) return ElMessage.warning('请填写所有必填项')
   tguLoading.value = true
   try {
-    const createRes = await api.post('/api/accounts/create-tg-user', {
+    const createRes = await createTgUserAccount({
       id: tguForm.id,
       api_id: tguForm.apiId,
       api_hash: tguForm.apiHash,
@@ -561,7 +451,7 @@ const tguSendCode = async () => {
       return ElMessage.error('创建失败：' + createRes.error)
     }
 
-    const loginRes = await api.post('/api/tg-user/start-login', {
+    const loginRes = await startTgUserLogin({
       account_name: tguForm.id,
       phone: tguForm.phone,
       api_id: tguForm.apiId,
@@ -584,7 +474,7 @@ const tguVerifyCode = async () => {
   if (!tguForm.code) return ElMessage.warning('请输入验证码')
   tguLoading.value = true
   try {
-    const res = await api.post('/api/tg-user/verify-code', {
+    const res = await verifyTgCode({
       account_name: tguForm.id,
       code: tguForm.code
     })
@@ -605,7 +495,7 @@ const tguVerify2FA = async () => {
   if (!tguForm.password) return ElMessage.warning('请输入密码')
   tguLoading.value = true
   try {
-    const res = await api.post('/api/tg-user/verify-2fa', {
+    const res = await verifyTg2FA({
       account_name: tguForm.id,
       password: tguForm.password
     })
@@ -623,7 +513,7 @@ const tguVerify2FA = async () => {
 const loadTguDialogs = async () => {
   tguDialogsLoading.value = true
   try {
-    const res = await api.get('/api/tg-user/dialogs/' + tguForm.id)
+    const res = await getTgUserDialogs(tguForm.id)
     if (res.success) {
       tguForm.dialogs = res.data || []
       tguForm.whitelist = tguForm.dialogs.map(d => d.id) // check all by default
@@ -640,7 +530,7 @@ const submitTguWhitelist = async () => {
   }
   tguLoading.value = true
   try {
-    const res = await api.post('/api/tg-user/whitelist/' + tguForm.id, {
+    const res = await updateTgUserWhitelist(tguForm.id, {
       mode: tguForm.monitorMode,
       whitelist: tguForm.whitelist
     })
@@ -658,7 +548,7 @@ const submitTguWhitelist = async () => {
 const tguRevokeSession = async (name) => {
   try {
     await ElMessageBox.confirm('确定撤销账号 tgu-' + name + ' 的 Session 并停止进程吗？', '警告', { type: 'warning' })
-    const res = await api.post('/api/tg-user/revoke/' + name)
+    const res = await revokeTgUser(name)
     if (res.success) {
        ElMessage.success('Session 已撤销')
        fetchAccounts()
@@ -673,9 +563,9 @@ const openTguReloginModal = async (acc) => {
   tguLoading.value = true
   try {
     // 1. 获取现有 API 凭证
-    const configRes = await api.get('/api/tg-user/config/' + name)
+    const configRes = await getTgUserConfig(name)
     // 2. 获取现有频控与回溯配置
-    const rlRes = await api.get('/api/tg-user/ratelimit/' + name)
+    const rlRes = await getTgRateLimit(name)
     
     // 3. 填充登录表单
     tguForm.id = name
@@ -705,134 +595,22 @@ const openTguReloginModal = async (acc) => {
 
 
 // --- Rate Limit Modal ---
-const openRateLimitModal = async (name) => {
+const openRateLimitModal = (name) => {
   _rlAccountName.value = name
   rlModalVisible.value = true
-  try {
-    const res = await api.get('/api/tg-user/ratelimit/' + name)
-    if (res.success && res.data) {
-      const c = res.data
-      rlForm.enable_backfill = c.enable_backfill
-      rlForm.backfill_days = c.backfill_days
-      rlForm.daily_limit = c.daily_limit
-      rlForm.warmup_seconds = c.warmup_seconds
-      rlForm.batch_size = c.batch_size
-      rlForm.sleep_min_ms = c.sleep_min_ms
-      rlForm.sleep_max_ms = c.sleep_max_ms
-    }
-  } catch(e) {}
 }
-
-const submitRateLimit = async () => {
-  rlLoading.value = true
-  try {
-    const res = await api.post('/api/tg-user/ratelimit/' + _rlAccountName.value, rlForm)
-    if (res.success) {
-      ElMessage.success('频控配置已保存！')
-      rlModalVisible.value = false
-    } else {
-      ElMessage.error(res.error)
-    }
-  } catch(e) {}
-  rlLoading.value = false
-}
-
 
 // --- Reconfig Groups Modal ---
-const openReconfigGroupsModal = async (name) => {
+const openReconfigGroupsModal = (name) => {
   _rcAccountName.value = name
   rcModalVisible.value = true
-  rcDialogsLoading.value = true
-  try {
-    const res = await api.get('/api/tg-user/dialogs/' + name)
-    if (res.success) {
-       rcDialogs.value = res.data || []
-       const wl = res.whitelist
-       if (wl === null) {
-          rcMode.value = 'all'
-          rcWhitelist.value = rcDialogs.value.map(d => d.id)
-       } else {
-          rcMode.value = 'partial'
-          rcWhitelist.value = []
-          rcDialogs.value.forEach(d => {
-             if(wl.includes(d.id.toString()) || wl.includes('-100'+d.id) || wl.includes(d.id)) {
-                rcWhitelist.value.push(d.id)
-             }
-          })
-       }
-    } else {
-       ElMessage.error(res.error)
-    }
-  } catch(e) {}
-  rcDialogsLoading.value = false
 }
-
-const submitReconfigGroups = async () => {
-  if (rcMode.value === 'partial' && rcWhitelist.value.length === 0) return ElMessage.warning('请至少选择一个群聊')
-  rcLoading.value = true
-  try {
-    const res = await api.post('/api/tg-user/whitelist/' + _rcAccountName.value, {
-       mode: rcMode.value,
-       whitelist: rcWhitelist.value
-    })
-    if (res.success) {
-       ElMessage.success('配置已保存！后台服务将自动生效')
-       rcModalVisible.value = false
-       await api.post('/api/accounts/relogin', { id: 'tgu-' + _rcAccountName.value })
-    } else {
-       ElMessage.error(res.error)
-    }
-  } catch(e) {}
-  rcLoading.value = false
-}
-
 
 // --- Backfill Modal ---
-const openBackfillModal = async (name) => {
+const openBackfillModal = (name) => {
   _bfAccountName.value = name
   bfModalVisible.value = true
-  await loadBackfillTasks()
 }
-
-const loadBackfillTasks = async () => {
-  bfLoading.value = true
-  try {
-    const res = await api.get('/api/tg-user/backfill/' + _bfAccountName.value)
-    if (res.success) bfTasks.value = res.data || []
-  } catch(e) {}
-  bfLoading.value = false
-}
-
-const backfillPauseAll = async () => {
-  await api.post('/api/tg-user/backfill/' + _bfAccountName.value + '/pause')
-  ElMessage.success('已发送暂停指令')
-  loadBackfillTasks()
-}
-
-const backfillResumeAll = async () => {
-  await api.post('/api/tg-user/backfill/' + _bfAccountName.value + '/resume')
-  ElMessage.success('已发送恢复指令')
-  loadBackfillTasks()
-}
-
-const resetBackfillTask = async (chatId) => {
-  try {
-    await ElMessageBox.confirm('确定重置该群的回溯进度？将从头重新拉取', '提示', { type: 'warning' })
-    await api.post('/api/tg-user/backfill/' + _bfAccountName.value + '/reset', { chat_id: chatId })
-    ElMessage.success('已重置回溯进度')
-    loadBackfillTasks()
-  } catch(e) {}
-}
-
-const getBfStatusType = (status) => {
-  const m = { pending: 'warning', running: 'success', paused: 'info', completed: 'success', error: 'danger' }
-  return m[status] || 'info'
-}
-const getBfStatusText = (status) => {
-  const m = { pending: '待处理', running: '进行中', paused: '已暂停', completed: '已完成', error: '出错' }
-  return m[status] || status
-}
-
 
 onMounted(() => {
   refreshAdminData()

@@ -23,6 +23,15 @@
 ├── .deployhub/                       # Deploy Hub 部署配置
 ├── 社媒监控系统/
 │   ├── social-monitor/               # 主 Node.js 应用
+│   │   ├── docs/                     # 标准规范化设计文档
+│   │   │   ├── demand/               # 需求分析（如：社媒监控可行性分析）
+│   │   │   ├── product/              # 产品设计（如：分析与推送概述、数据分析方案）
+│   │   │   ├── architecture/         # 架构设计（如：WA采集器架构、前后端分离设计）
+│   │   │   ├── plan/                 # 开发与升级计划（如：TG/Teams开发计划、优化计划）
+│   │   │   ├── development/          # 技术手册与笔记（如：Node集成指南、Lessons Learned）
+│   │   │   ├── test/                 # 测试设计与规范
+│   │   │   ├── report/               # 数据库探查报告、发言人深度洞察报告
+│   │   │   └── archive/              # 历史交付报告与归档设计方案
 │   │   ├── analyzers/                # 告警、知识库、画像、资产发现等分析进程
 │   │   ├── workers/                  # WA/TG/Teams 采集进程
 │   │   ├── lib/                      # AI、钉钉、区域、员工识别、知识资产公共逻辑
@@ -183,7 +192,7 @@ git push
 ## 相关文档
 
 - [AGENTS.md](./AGENTS.md)：Agent 协作规则和项目操作约束。
-- [主应用 README](./社媒监控系统/social-monitor/README.md)：早期主应用说明。
-- [知识资产路线图](./社媒监控系统/social-monitor/docs/knowledge-assets-roadmap.md)：知识资产设计和演进说明。
-- [WhatsApp 采集器部署](./社媒监控系统/social-monitor/docs/whatsapp-collector-deployment.md)：采集器部署说明。
-- [WhatsApp 采集迁移计划](./社媒监控系统/social-monitor/docs/whatsapp-collector-migration-plan.md)：本地采集与云端分析拆分方案。
+- [标准规约文档](./社媒监控系统/social-monitor/docs/)：包含所有的需求分析、产品设计、架构设计、开发计划及报告文档。
+  - [架构：WhatsApp 采集器架构设计](./社媒监控系统/social-monitor/docs/architecture/WhatsApp采集器-架构设计-V1.0.md)
+  - [计划：WhatsApp 采集迁移计划](./社媒监控系统/social-monitor/docs/plan/WhatsApp采集器-迁移计划.md)
+  - [产品：WhatsApp 统一账号管理产品设计](./社媒监控系统/social-monitor/docs/product/WhatsApp管理-产品设计-V1.0.md)

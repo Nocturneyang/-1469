@@ -5,6 +5,7 @@ const { db } = require('./db/database');
 const fs = require('fs');
 const envConfig = require('./lib/env-config');
 const { authenticateToken, requireAdmin, resolveAuthenticatedUser, isSsoEnabled } = require('./middleware/auth');
+const { responseHelperMiddleware } = require('./middleware/response');
 const authRoutes = require('./routes/auth');
 const dataRoutes = require('./routes/data');
 const createAccountsRouter = require('./routes/accounts');
@@ -108,6 +109,7 @@ function buildHealthReport() {
 
 // ─── 登录接口 (Auth Routes) ──────────────────────────────────────
 app.use(cors());
+app.use(responseHelperMiddleware);
 app.use('/api/collector', express.json({ limit: process.env.COLLECTOR_BODY_LIMIT || '30mb' }), collectorRoutes);
 app.use(express.json({ limit: process.env.JSON_BODY_LIMIT || '2mb' }));
 app.use('/api/auth', authRoutes);

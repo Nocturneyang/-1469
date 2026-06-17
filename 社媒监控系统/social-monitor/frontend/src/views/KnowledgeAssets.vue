@@ -493,7 +493,19 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
-import api from '@/utils/request'
+import {
+  getKnowledgeAssets,
+  getKnowledgeAssetsSummary,
+  getKnowledgeAssetsFacets,
+  reviewKnowledgeAssetsBatch,
+  getFormalAssets,
+  getFormalAssetsSummary,
+  getIntelligenceRegions,
+  getKnowledgeAssetDetail,
+  getKnowledgeAssetSources,
+  reviewKnowledgeAsset,
+  retagKnowledgeAssetContactSide
+} from '@/api/analytics'
 import { downloadAuthenticatedFile } from '@/utils/download'
 import { formatShanghaiDateTime, shanghaiDateString } from '@/utils/time'
 
@@ -606,12 +618,12 @@ const goPage = (p) => {
 }
 
 const fetchSummary = async () => {
-  const res = await api.get('/api/knowledge-assets/summary')
+  const res = await getKnowledgeAssetsSummary()
   if (res.success) summary.value = res.data || { ready: false, total: 0, top: [], byType: [], manualPending: 0, machineHandled: 0 }
 }
 
 const fetchFormalSummary = async () => {
-  const res = await api.get('/api/knowledge-assets/formal/summary')
+  const res = await getFormalAssetsSummary()
   if (res.success) {
     formalSummary.value = res.data || { ready: false, total: 0, top: [], byType: [] }
     formalAssets.value = res.data?.top || []
@@ -619,28 +631,24 @@ const fetchFormalSummary = async () => {
 }
 
 const loadFormalByType = async (type) => {
-  const res = await api.get('/api/knowledge-assets/formal', {
-    params: { type, status: 'active', limit: 8, sort: 'value' }
-  })
+  const res = await getFormalAssets({ type, status: 'active', limit: 8, sort: 'value' })
   if (res.success) formalAssets.value = res.data || []
 }
 
 const fetchFacets = async () => {
-  const res = await api.get('/api/knowledge-assets/facets')
+  const res = await getKnowledgeAssetsFacets()
   if (res.success) facets.value = res.data || facets.value
 }
 
 const fetchRegionalIntel = async () => {
-  const res = await api.get('/api/knowledge-assets/intelligence/regions', { params: { days: 30 } })
+  const res = await getIntelligenceRegions({ days: 30 })
   if (res.success) regionalIntel.value = res.data || []
 }
 
 const fetchAssets = async () => {
   loading.value = true
   try {
-    const res = await api.get('/api/knowledge-assets', {
-      params: { ...filters.value, page: page.value, limit }
-    })
+    const res = await getKnowledgeAssets({ ...filters.value, page: page.value, limit })
     if (res.success) {
       items.value = res.data || []
       total.value = res.total || 0
@@ -666,7 +674,7 @@ const togglePageSelection = () => {
 }
 
 const openDetail = async (item) => {
-  const res = await api.get(`/api/knowledge-assets/${encodeURIComponent(item.dedupe_key)}`)
+  const res = await getKnowledgeAssetDetail(item.dedupe_key)
   if (res.success) {
     detail.value = res.data
     linkedAsset.value = null
@@ -685,7 +693,7 @@ const closeDetail = () => {
 const fetchSources = async (key) => {
   sourceLoading.value = true
   try {
-    const res = await api.get(`/api/knowledge-assets/${encodeURIComponent(key)}/sources`)
+    const res = await getKnowledgeAssetSources(key)
     if (res.success) sourceMessages.value = res.data || []
   } finally {
     sourceLoading.value = false
@@ -705,7 +713,7 @@ const exportAssets = async () => {
 
 const batchReview = async (status) => {
   if (selectedKeys.value.length === 0) return
-  const res = await api.patch('/api/knowledge-assets/review-batch', {
+  const res = await reviewKnowledgeAssetsBatch({
     status,
     dedupeKeys: selectedKeys.value,
     note: reviewNote.value,
@@ -720,7 +728,7 @@ const batchReview = async (status) => {
 
 const review = async (status) => {
   if (!detail.value) return
-  const res = await api.patch(`/api/knowledge-assets/${encodeURIComponent(detail.value.dedupe_key)}/review`, {
+  const res = await reviewKnowledgeAsset(detail.value.dedupe_key, {
     status,
     note: reviewNote.value,
   })
@@ -734,7 +742,7 @@ const review = async (status) => {
 
 const tagContactSide = async (side) => {
   if (!detail.value || detail.value.asset_type !== 'contact_role') return
-  const res = await api.patch(`/api/knowledge-assets/${encodeURIComponent(detail.value.dedupe_key)}/contact-side`, { side })
+  const res = await retagKnowledgeAssetContactSide(detail.value.dedupe_key, { side })
   if (res.success) {
     detail.value = res.data
     ElMessage.success(side === 'internal' ? '已标记为我方人员，并同步内部白名单' : '已标记为外部联系人')

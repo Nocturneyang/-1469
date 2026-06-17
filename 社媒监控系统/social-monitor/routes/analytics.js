@@ -3542,7 +3542,7 @@ router.get('/analytics/summary', (req, res) => {
 });
 
 router.get('/status', (req, res) => {
-    res.json({ success: true, running: true });
+    res.sendSuccess({ running: true });
 });
 
 // ─── 统一知识资产候选池 ───────────────────────────────────────────
@@ -3550,7 +3550,7 @@ router.get('/knowledge-assets/summary', (req, res) => {
     try {
         const adb = getAnalyticsDb();
         if (!adb || !tableExists(adb, 'knowledge_asset_candidates')) {
-            return res.json({ success: true, data: { ready: false, total: 0, byType: [], byStatus: [], top: [] } });
+            return res.sendSuccess({ ready: false, total: 0, byType: [], byStatus: [], top: [] });
         }
 
         const total = adb.prepare('SELECT COUNT(*) AS c FROM knowledge_asset_candidates').get()?.c || 0;
@@ -3613,9 +3613,9 @@ router.get('/knowledge-assets/summary', (req, res) => {
             LIMIT 12
         `).all().map(mapKnowledgeAsset);
 
-        res.json({ success: true, data: { ready: true, total, highValue, pending, confirmed, manualPending, machineHandled, byType, byStatus, bySector, byInteraction, byMachineDecision, top } });
+        res.sendSuccess({ ready: true, total, highValue, pending, confirmed, manualPending, machineHandled, byType, byStatus, bySector, byInteraction, byMachineDecision, top });
     } catch (err) {
-        res.status(500).json({ success: false, error: err.message });
+        res.sendError(err.message, 500);
     }
 });
 

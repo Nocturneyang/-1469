@@ -235,7 +235,7 @@ import {
   TrendCharts,
   WarningFilled,
 } from '@element-plus/icons-vue'
-import api from '@/utils/request'
+import { getDashboard } from '@/api/analytics'
 import { formatShanghaiDateTime } from '@/utils/time'
 
 const defaultDashboard = () => ({
@@ -437,7 +437,7 @@ const typeWidth = (count) => Math.max(8, Math.round((Number(count || 0) / maxAss
 const fetchDashboard = async () => {
   loading.value = true
   try {
-    const res = await api.get('/api/analytics/dashboard', { params: { days: days.value } })
+    const res = await getDashboard({ days: days.value })
     if (res.success && res.data) {
       dashboard.value = { ...defaultDashboard(), ...res.data }
     }
