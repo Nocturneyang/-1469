@@ -4,6 +4,7 @@ const Database = require('better-sqlite3');
 const path = require('path');
 const fs = require('fs');
 const { getShanghaiParts } = require('../lib/time');
+const { isMediaUploadDisabled } = require('../lib/media-policy');
 
 const router = express.Router();
 
@@ -23,6 +24,26 @@ const STATS_CACHE_TTL_MS = Number(process.env.STATS_CACHE_TTL_MS || 5000);
 const REGION_CACHE_TTL_MS = Number(process.env.REGION_CACHE_TTL_MS || 60000);
 let statsCache = { expiresAt: 0, data: null };
 let regionCache = { expiresAt: 0, data: {} };
+
+function normalizeMediaPath(value) {
+    const raw = String(value || '').trim();
+    if (!raw) return null;
+    if (/^https?:\/\//i.test(raw)) return raw;
+    const clean = raw.split('?')[0].replace(/\\/g, '/').replace(/^\/+/, '');
+    if (clean.startsWith('media/')) return clean;
+    return `media/${path.posix.basename(clean)}`;
+}
+
+function isMediaAvailable(value) {
+    if (isMediaUploadDisabled()) return false;
+    const normalized = normalizeMediaPath(value);
+    if (!normalized) return false;
+    if (/^https?:\/\//i.test(normalized)) return true;
+    const absolute = path.join(DATA_DIR, normalized);
+    const mediaRoot = path.join(DATA_DIR, 'media');
+    if (!absolute.startsWith(mediaRoot + path.sep)) return false;
+    return fs.existsSync(absolute);
+}
 
 // Helper function to read account regions mapping
 function getAccountRegions() {
@@ -112,10 +133,13 @@ router.get('/messages', (req, res) => {
         const regionMap = getAccountRegions();
         const messagesWithRegion = messages.map(msg => {
             const regionInfo = regionMap[msg.receiver_account] || {};
+            const mediaAvailable = isMediaAvailable(msg.media_path);
             return {
                 ...msg,
                 region: regionInfo.region || '',
-                business_sector: regionInfo.business_sector || ''
+                business_sector: regionInfo.business_sector || '',
+                media_available: mediaAvailable,
+                media_path: mediaAvailable ? msg.media_path : null
             };
         });
         

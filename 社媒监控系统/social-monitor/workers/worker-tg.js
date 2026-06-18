@@ -10,6 +10,7 @@ const {
 } = require('../db/database');
 const { createCollectorClient } = require('../lib/collector-client');
 const { shanghaiISOString } = require('../lib/time');
+const { isMediaUploadDisabled } = require('../lib/media-policy');
 
 const accountName = process.env.TG_ACCOUNT_NAME || 'default';
 const accountId = `tg-${accountName}`;
@@ -120,7 +121,7 @@ bot.on('message', async (msg) => {
         let hasMedia = false;
         
         // Handle photos
-        if (msg.photo && msg.photo.length > 0) {
+        if (!isMediaUploadDisabled() && msg.photo && msg.photo.length > 0) {
             hasMedia = true;
             const photo = msg.photo[msg.photo.length - 1]; // highest resolution
             try {
@@ -131,7 +132,7 @@ bot.on('message', async (msg) => {
             } catch (err) {
                 console.error('[Telegram] Failed to download media:', err.message);
             }
-        } else if (msg.document) {
+        } else if (!isMediaUploadDisabled() && msg.document) {
             hasMedia = true;
             try {
                 const mediaDir = path.join(process.env.DATA_DIR || path.join(__dirname, '..'), 'media');
@@ -156,7 +157,7 @@ bot.on('message', async (msg) => {
             sender_id: msg.from.id.toString(),
             sender_name: senderName,
             content: content,
-            has_media: hasMedia ? 1 : 0,
+            has_media: mediaPath ? 1 : 0,
             media_path: mediaPath,
             timestamp: msg.date * 1000,
             raw_data: JSON.stringify(msg)

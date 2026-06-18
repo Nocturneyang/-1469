@@ -25,6 +25,8 @@
     "wa:web-version:prune": "node scripts/wa-web-version-prune.js",
     "media:report": "node scripts/media-retention.js",
     "media:prune": "node scripts/media-retention.js --execute",
+    "media:clear-refs": "node scripts/clear-media-references.js",
+    "db:health": "node scripts/sqlite-health-check.js",
     "db:backup": "node scripts/db-backup.js",
     "db:archive": "node scripts/archive-messages.js",
     "db:backup:list": "node scripts/db-backup.js --list",

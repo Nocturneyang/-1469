@@ -22,6 +22,7 @@ const { sendAccountAlert } = require('../lib/dingtalk');
 const { getWaChromeLaunchConfig } = require('../lib/wa-chrome-runtime');
 const { createCollectorClient } = require('../lib/collector-client');
 const { shanghaiISOString } = require('../lib/time');
+const { isMediaUploadDisabled } = require('../lib/media-policy');
 
 // 区域映射配置
 let regionMap = {};
@@ -182,6 +183,7 @@ async function persistMessage(data) {
 
 async function persistMedia({ media, messageId, ext }) {
     if (!media || !media.data) return null;
+    if (isMediaUploadDisabled()) return null;
 
     if (collectorClient) {
         const result = await collectorClient.media({
@@ -203,6 +205,7 @@ async function persistMedia({ media, messageId, ext }) {
             }
             return result.media_path;
         }
+        if (result?.success) return null;
     }
 
     const fileName = `wa_${messageId}_${Date.now()}.${ext}`;
@@ -793,7 +796,7 @@ client.on('message_create', async (message) => {
             sender_id: contact.id._serialized,
             sender_name: senderName,
             content: message.body || '',
-            has_media: hasMedia ? 1 : 0,
+            has_media: mediaPath ? 1 : 0,
             media_path: mediaPath,
             timestamp: message.timestamp * 1000,
             // 只保存轻量元数据，不含 media base64，避免 DB 膨胀

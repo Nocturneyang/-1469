@@ -13,6 +13,7 @@ const {
 } = require('../lib/knowledge-assets');
 const aiClient = require('../lib/ai-client');
 const { shanghaiDateString, shanghaiISOString } = require('../lib/time');
+const { isSqliteStorageError } = require('../lib/storage-health');
 
 const ANALYTICS_PATH = path.join(process.env.DATA_DIR || path.join(__dirname, '..'), 'db', 'analytics.sqlite');
 const SOURCE_DB_PATH = path.join(process.env.DATA_DIR || path.join(__dirname, '..'), 'db', 'database.sqlite');
@@ -60,10 +61,12 @@ function getAnalyticsDb() {
     if (!fs.existsSync(ANALYTICS_PATH)) return null;
     try {
         const Database = require('better-sqlite3');
-        _analyticsDb = new Database(ANALYTICS_PATH, { readonly: true });
+        _analyticsDb = new Database(ANALYTICS_PATH, { readonly: true, fileMustExist: true });
+        _analyticsDb.pragma('busy_timeout = 5000');
         return _analyticsDb;
     } catch (e) {
         console.error('[server] 无法打开 analytics.sqlite:', e.message);
+        _analyticsDb = null;
         return null;
     }
 }
@@ -73,10 +76,12 @@ function getSourceDb() {
     if (!fs.existsSync(SOURCE_DB_PATH)) return null;
     try {
         const Database = require('better-sqlite3');
-        _sourceDb = new Database(SOURCE_DB_PATH, { readonly: true });
+        _sourceDb = new Database(SOURCE_DB_PATH, { readonly: true, fileMustExist: true });
+        _sourceDb.pragma('busy_timeout = 5000');
         return _sourceDb;
     } catch (e) {
         console.error('[server] 无法打开 database.sqlite:', e.message);
+        _sourceDb = null;
         return null;
     }
 }
@@ -86,14 +91,64 @@ function openWritableAnalyticsDb() {
     const Database = require('better-sqlite3');
     const db = new Database(ANALYTICS_PATH);
     db.pragma('journal_mode = WAL');
+    db.pragma('busy_timeout = 5000');
     return db;
+}
+
+function closeCachedDb(kind) {
+    if ((!kind || kind === 'analytics') && _analyticsDb) {
+        try { _analyticsDb.close(); } catch (_) {}
+        _analyticsDb = null;
+    }
+    if ((!kind || kind === 'source') && _sourceDb) {
+        try { _sourceDb.close(); } catch (_) {}
+        _sourceDb = null;
+    }
+}
+
+function analyticsStorageWarning(err) {
+    const detail = String(err?.message || '').trim();
+    if (/malformed/i.test(detail)) {
+        return '分析库暂时不可用：SQLite 文件疑似损坏，请先释放生产存储空间并执行数据库完整性检查/恢复。';
+    }
+    if (/disk i\/o|no space|quota|unknown system error -122/i.test(detail)) {
+        return '分析库暂时不可用：生产持久化存储空间不足或 I/O 异常，请先清理媒体/备份并检查数据库。';
+    }
+    return '分析库暂时不可用，请检查生产存储空间和 SQLite 健康状态。';
+}
+
+function handleAnalyticsStorageError(res, err, fallbackPayload) {
+    if (!isSqliteStorageError(err)) return false;
+    closeCachedDb();
+    clearAnalyticsPerfCache();
+    console.error('[server] analytics storage degraded:', err.message);
+    res.status(200).json({
+        success: true,
+        degraded: true,
+        warning: analyticsStorageWarning(err),
+        ...fallbackPayload,
+    });
+    return true;
+}
+
+function sendAnalyticsStorageFailure(res, err, status = 503) {
+    if (!isSqliteStorageError(err)) return false;
+    closeCachedDb();
+    clearAnalyticsPerfCache();
+    console.error('[server] analytics storage failure:', err.message);
+    res.status(status).json({
+        success: false,
+        error: analyticsStorageWarning(err),
+    });
+    return true;
 }
 
 function tableExists(db, tableName) {
     try {
         const row = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name = ?").get(tableName);
         return !!row;
-    } catch (_) {
+    } catch (err) {
+        if (isSqliteStorageError(err)) throw err;
         return false;
     }
 }
@@ -320,6 +375,65 @@ function mapFormalKnowledgeAsset(row) {
         target_library_path: targetLibrary.path,
         evidence: (asset.evidence || []).map(item => redactMessageText(item, 220)),
     };
+}
+
+function emptyKnowledgeAssetSummary() {
+    return {
+        ready: false,
+        total: 0,
+        highValue: 0,
+        pending: 0,
+        confirmed: 0,
+        manualPending: 0,
+        machineHandled: 0,
+        byType: [],
+        byStatus: [],
+        bySector: [],
+        byInteraction: [],
+        byMachineDecision: [],
+        top: [],
+    };
+}
+
+function emptyKnowledgeFacets() {
+    return { types: [], sectors: [], regions: [], statuses: [], valueLevels: [] };
+}
+
+function emptyRegionDashboard(query = {}) {
+    return {
+        total: 0,
+        view_scope: intelligenceScopeMeta(query.scope),
+        matrix: [],
+        regions: [],
+        sectors: [],
+        top_entities: [],
+        top_actions: [],
+        top_risks: [],
+        top_assets: [],
+    };
+}
+
+function emptyDomainDashboard(kind) {
+    return {
+        profile: domainProfileFor(kind),
+        summary: {},
+        cards: [],
+        priority_actions: [],
+        top_assets: [],
+    };
+}
+
+function emptyEntityGraph() {
+    return {
+        nodes: [],
+        edges: [],
+        center_options: [],
+        summary: { asset_count: 0, node_count: 0, edge_count: 0 },
+    };
+}
+
+function emptyFormalKnowledgeAssetSummary() {
+    return { ready: false, total: 0, active: 0, byType: [], bySector: [], top: [] };
 }
 
 function relatedValue(asset, type) {
@@ -3550,71 +3664,76 @@ router.get('/knowledge-assets/summary', (req, res) => {
     try {
         const adb = getAnalyticsDb();
         if (!adb || !tableExists(adb, 'knowledge_asset_candidates')) {
-            return res.sendSuccess({ ready: false, total: 0, byType: [], byStatus: [], top: [] });
+            return res.sendSuccess(emptyKnowledgeAssetSummary());
         }
 
-        const total = adb.prepare('SELECT COUNT(*) AS c FROM knowledge_asset_candidates').get()?.c || 0;
-        const highValue = adb.prepare("SELECT COUNT(*) AS c FROM knowledge_asset_candidates WHERE value_level = 'high' OR asset_value_score >= 75").get()?.c || 0;
-        const pending = adb.prepare("SELECT COUNT(*) AS c FROM knowledge_asset_candidates WHERE review_status = 'pending_review'").get()?.c || 0;
-        const confirmed = adb.prepare("SELECT COUNT(*) AS c FROM knowledge_asset_candidates WHERE review_status = 'confirmed'").get()?.c || 0;
-        const manualPending = adb.prepare(`
-            SELECT COUNT(*) AS c
-            FROM knowledge_asset_candidates
-            WHERE review_status = 'pending_review'
-              AND json_extract(metrics, '$.machine_assessment.manual_review_required') = 1
-        `).get()?.c || 0;
-        const machineHandled = adb.prepare(`
-            SELECT COUNT(*) AS c
-            FROM knowledge_asset_candidates
-            WHERE COALESCE(json_extract(metrics, '$.machine_assessment.manual_review_required'), 0) = 0
-        `).get()?.c || 0;
-        const byType = adb.prepare(`
-            SELECT asset_type, COUNT(*) AS count, ROUND(AVG(asset_value_score), 1) AS avg_value, ROUND(AVG(confidence), 2) AS avg_confidence
-            FROM knowledge_asset_candidates
-            GROUP BY asset_type
-            ORDER BY count DESC
-        `).all();
-        const byStatus = adb.prepare(`
-            SELECT review_status, COUNT(*) AS count
-            FROM knowledge_asset_candidates
-            GROUP BY review_status
-            ORDER BY count DESC
-        `).all();
-        const bySector = adb.prepare(`
-            SELECT business_sector, COUNT(*) AS count, ROUND(AVG(asset_value_score), 1) AS avg_value
-            FROM knowledge_asset_candidates
-            WHERE business_sector IS NOT NULL AND business_sector != ''
-            GROUP BY business_sector
-            ORDER BY count DESC
-        `).all();
-        const byInteraction = adb.prepare(`
-            SELECT json_extract(metrics, '$.machine_assessment.interaction_side') AS interaction_side,
-                   json_extract(metrics, '$.machine_assessment.interaction_label') AS interaction_label,
-                   COUNT(*) AS count,
-                   SUM(CASE WHEN json_extract(metrics, '$.machine_assessment.manual_review_required') = 1 THEN 1 ELSE 0 END) AS needs_review
-            FROM knowledge_asset_candidates
-            GROUP BY interaction_side, interaction_label
-            ORDER BY count DESC
-        `).all();
-        const byMachineDecision = adb.prepare(`
-            SELECT json_extract(metrics, '$.machine_assessment.decision') AS decision,
-                   json_extract(metrics, '$.machine_assessment.label') AS label,
-                   COUNT(*) AS count
-            FROM knowledge_asset_candidates
-            GROUP BY decision, label
-            ORDER BY count DESC
-        `).all();
-        const top = adb.prepare(`
-            SELECT *
-            FROM knowledge_asset_candidates
-            WHERE review_status = 'pending_review'
-              AND json_extract(metrics, '$.machine_assessment.manual_review_required') = 1
-            ORDER BY asset_value_score DESC, confidence DESC, last_seen_at DESC
-            LIMIT 12
-        `).all().map(mapKnowledgeAsset);
+        const data = cachedPerfValue('knowledge-assets-summary', 'all', () => {
+            const total = adb.prepare('SELECT COUNT(*) AS c FROM knowledge_asset_candidates').get()?.c || 0;
+            const highValue = adb.prepare("SELECT COUNT(*) AS c FROM knowledge_asset_candidates WHERE value_level = 'high' OR asset_value_score >= 75").get()?.c || 0;
+            const pending = adb.prepare("SELECT COUNT(*) AS c FROM knowledge_asset_candidates WHERE review_status = 'pending_review'").get()?.c || 0;
+            const confirmed = adb.prepare("SELECT COUNT(*) AS c FROM knowledge_asset_candidates WHERE review_status = 'confirmed'").get()?.c || 0;
+            const manualPending = adb.prepare(`
+                SELECT COUNT(*) AS c
+                FROM knowledge_asset_candidates
+                WHERE review_status = 'pending_review'
+                  AND json_extract(metrics, '$.machine_assessment.manual_review_required') = 1
+            `).get()?.c || 0;
+            const machineHandled = adb.prepare(`
+                SELECT COUNT(*) AS c
+                FROM knowledge_asset_candidates
+                WHERE COALESCE(json_extract(metrics, '$.machine_assessment.manual_review_required'), 0) = 0
+            `).get()?.c || 0;
+            const byType = adb.prepare(`
+                SELECT asset_type, COUNT(*) AS count, ROUND(AVG(asset_value_score), 1) AS avg_value, ROUND(AVG(confidence), 2) AS avg_confidence
+                FROM knowledge_asset_candidates
+                GROUP BY asset_type
+                ORDER BY count DESC
+            `).all();
+            const byStatus = adb.prepare(`
+                SELECT review_status, COUNT(*) AS count
+                FROM knowledge_asset_candidates
+                GROUP BY review_status
+                ORDER BY count DESC
+            `).all();
+            const bySector = adb.prepare(`
+                SELECT business_sector, COUNT(*) AS count, ROUND(AVG(asset_value_score), 1) AS avg_value
+                FROM knowledge_asset_candidates
+                WHERE business_sector IS NOT NULL AND business_sector != ''
+                GROUP BY business_sector
+                ORDER BY count DESC
+            `).all();
+            const byInteraction = adb.prepare(`
+                SELECT json_extract(metrics, '$.machine_assessment.interaction_side') AS interaction_side,
+                       json_extract(metrics, '$.machine_assessment.interaction_label') AS interaction_label,
+                       COUNT(*) AS count,
+                       SUM(CASE WHEN json_extract(metrics, '$.machine_assessment.manual_review_required') = 1 THEN 1 ELSE 0 END) AS needs_review
+                FROM knowledge_asset_candidates
+                GROUP BY interaction_side, interaction_label
+                ORDER BY count DESC
+            `).all();
+            const byMachineDecision = adb.prepare(`
+                SELECT json_extract(metrics, '$.machine_assessment.decision') AS decision,
+                       json_extract(metrics, '$.machine_assessment.label') AS label,
+                       COUNT(*) AS count
+                FROM knowledge_asset_candidates
+                GROUP BY decision, label
+                ORDER BY count DESC
+            `).all();
+            const top = adb.prepare(`
+                SELECT *
+                FROM knowledge_asset_candidates
+                WHERE review_status = 'pending_review'
+                  AND json_extract(metrics, '$.machine_assessment.manual_review_required') = 1
+                ORDER BY asset_value_score DESC, confidence DESC, last_seen_at DESC
+                LIMIT 12
+            `).all().map(mapKnowledgeAsset);
 
-        res.sendSuccess({ ready: true, total, highValue, pending, confirmed, manualPending, machineHandled, byType, byStatus, bySector, byInteraction, byMachineDecision, top });
+            return { ready: true, total, highValue, pending, confirmed, manualPending, machineHandled, byType, byStatus, bySector, byInteraction, byMachineDecision, top };
+        });
+
+        res.sendSuccess(data);
     } catch (err) {
+        if (handleAnalyticsStorageError(res, err, { data: emptyKnowledgeAssetSummary() })) return;
         res.sendError(err.message, 500);
     }
 });
@@ -3673,6 +3792,7 @@ router.get('/knowledge-assets/intelligence/regions', (req, res) => {
             }))
         });
     } catch (err) {
+        if (handleAnalyticsStorageError(res, err, { data: [] })) return;
         res.status(500).json({ success: false, error: err.message });
     }
 });
@@ -3699,6 +3819,7 @@ router.get('/knowledge-assets/intelligence/region-dashboard', async (req, res) =
             data,
         });
     } catch (err) {
+        if (handleAnalyticsStorageError(res, err, { data: emptyRegionDashboard(req.query) })) return;
         res.status(500).json({ success: false, error: err.message });
     }
 });
@@ -3718,6 +3839,7 @@ router.get('/knowledge-assets/intelligence/domain-dashboard', async (req, res) =
             data,
         });
     } catch (err) {
+        if (handleAnalyticsStorageError(res, err, { data: emptyDomainDashboard(req.query.kind) })) return;
         res.status(500).json({ success: false, error: err.message });
     }
 });
@@ -3736,6 +3858,7 @@ router.get('/knowledge-assets/entity-graph', (req, res) => {
             data: buildEntityGraph(assets, String(center || '').trim(), view),
         });
     } catch (err) {
+        if (handleAnalyticsStorageError(res, err, { data: emptyEntityGraph() })) return;
         res.status(500).json({ success: false, error: err.message });
     }
 });
@@ -3744,21 +3867,22 @@ router.get('/knowledge-assets/facets', (req, res) => {
     try {
         const adb = getAnalyticsDb();
         if (!adb || !tableExists(adb, 'knowledge_asset_candidates')) {
-            return res.json({ success: true, data: { types: [], sectors: [], regions: [], statuses: [], valueLevels: [] } });
+            return res.json({ success: true, data: emptyKnowledgeFacets() });
         }
 
-        const pick = (sql, col) => adb.prepare(sql).all().map(r => r[col]).filter(Boolean);
-        res.json({
-            success: true,
-            data: {
+        const data = cachedPerfValue('knowledge-assets-facets', 'all', () => {
+            const pick = (sql, col) => adb.prepare(sql).all().map(r => r[col]).filter(Boolean);
+            return {
                 types: pick('SELECT DISTINCT asset_type FROM knowledge_asset_candidates ORDER BY asset_type', 'asset_type'),
                 sectors: pick('SELECT DISTINCT business_sector FROM knowledge_asset_candidates ORDER BY business_sector', 'business_sector'),
                 regions: pick('SELECT DISTINCT collection_region FROM knowledge_asset_candidates ORDER BY collection_region', 'collection_region'),
                 statuses: pick('SELECT DISTINCT review_status FROM knowledge_asset_candidates ORDER BY review_status', 'review_status'),
                 valueLevels: pick('SELECT DISTINCT value_level FROM knowledge_asset_candidates ORDER BY value_level', 'value_level'),
-            }
+            };
         });
+        res.json({ success: true, data });
     } catch (err) {
+        if (handleAnalyticsStorageError(res, err, { data: emptyKnowledgeFacets() })) return;
         res.status(500).json({ success: false, error: err.message });
     }
 });
@@ -3804,25 +3928,35 @@ router.get('/knowledge-assets', (req, res) => {
             params.push(minValueNum);
         }
 
-        const whereSql = where.join(' AND ');
-        const total = adb.prepare(`SELECT COUNT(*) AS c FROM knowledge_asset_candidates WHERE ${whereSql}`).get(...params)?.c || 0;
-        const orderMap = {
-            value: 'asset_value_score DESC, confidence DESC, last_seen_at DESC',
-            confidence: 'confidence DESC, asset_value_score DESC, last_seen_at DESC',
-            recent: 'last_seen_at DESC, asset_value_score DESC',
-            frequency: 'frequency DESC, asset_value_score DESC',
-        };
-        const orderBy = orderMap[sort] || orderMap.value;
-        const rows = adb.prepare(`
-            SELECT *
-            FROM knowledge_asset_candidates
-            WHERE ${whereSql}
-            ORDER BY ${orderBy}
-            LIMIT ? OFFSET ?
-        `).all(...params, limitNum, offset).map(mapKnowledgeAsset);
+        const result = cachedPerfValue('knowledge-assets-list', {
+            keyword, type, sector, region, status, valueLevel, minValue: minValueNum || '',
+            effective, interaction, machineDecision, manualReview, page: pageNum, limit: limitNum, sort: sort || 'value',
+        }, () => {
+            const whereSql = where.join(' AND ');
+            const total = adb.prepare(`SELECT COUNT(*) AS c FROM knowledge_asset_candidates WHERE ${whereSql}`).get(...params)?.c || 0;
+            const orderMap = {
+                value: 'asset_value_score DESC, confidence DESC, last_seen_at DESC',
+                confidence: 'confidence DESC, asset_value_score DESC, last_seen_at DESC',
+                recent: 'last_seen_at DESC, asset_value_score DESC',
+                frequency: 'frequency DESC, asset_value_score DESC',
+            };
+            const orderBy = orderMap[sort] || orderMap.value;
+            const rows = adb.prepare(`
+                SELECT *
+                FROM knowledge_asset_candidates
+                WHERE ${whereSql}
+                ORDER BY ${orderBy}
+                LIMIT ? OFFSET ?
+            `).all(...params, limitNum, offset).map(mapKnowledgeAsset);
 
-        res.json({ success: true, data: rows, total, page: pageNum, limit: limitNum });
+            return { data: rows, total, page: pageNum, limit: limitNum };
+        });
+
+        res.json({ success: true, ...result });
     } catch (err) {
+        const pageNum = Math.max(1, parseInt(req.query.page) || 1);
+        const limitNum = Math.min(100, Math.max(1, parseInt(req.query.limit) || 20));
+        if (handleAnalyticsStorageError(res, err, { data: [], total: 0, page: pageNum, limit: limitNum })) return;
         res.status(500).json({ success: false, error: err.message });
     }
 });
@@ -3848,6 +3982,7 @@ router.get('/knowledge-assets/export', (req, res) => {
         res.setHeader('Content-Disposition', `attachment; filename="knowledge-assets-${stamp}.json"`);
         return res.json({ exported_at: shanghaiISOString(), total: rows.length, data: rows });
     } catch (err) {
+        if (sendAnalyticsStorageFailure(res, err)) return;
         res.status(500).json({ success: false, error: err.message });
     }
 });
@@ -3856,33 +3991,38 @@ router.get('/knowledge-assets/formal/summary', (req, res) => {
     try {
         const adb = getAnalyticsDb();
         if (!adb || !tableExists(adb, 'knowledge_assets')) {
-            return res.json({ success: true, data: { ready: false, total: 0, active: 0, byType: [], top: [] } });
+            return res.json({ success: true, data: emptyFormalKnowledgeAssetSummary() });
         }
 
-        const total = adb.prepare('SELECT COUNT(*) AS c FROM knowledge_assets').get()?.c || 0;
-        const active = adb.prepare("SELECT COUNT(*) AS c FROM knowledge_assets WHERE status = 'active'").get()?.c || 0;
-        const byType = adb.prepare(`
-            SELECT asset_type, COUNT(*) AS count, ROUND(AVG(asset_value_score), 1) AS avg_value, ROUND(AVG(quality_score), 1) AS avg_quality
-            FROM knowledge_assets
-            GROUP BY asset_type
-            ORDER BY count DESC
-        `).all();
-        const bySector = adb.prepare(`
-            SELECT business_sector, collection_region, COUNT(*) AS count, ROUND(AVG(asset_value_score), 1) AS avg_value
-            FROM knowledge_assets
-            GROUP BY business_sector, collection_region
-            ORDER BY count DESC
-            LIMIT 20
-        `).all();
-        const top = adb.prepare(`
-            SELECT *
-            FROM knowledge_assets
-            ORDER BY asset_value_score DESC, quality_score DESC, last_seen_at DESC
-            LIMIT 12
-        `).all().map(mapFormalKnowledgeAsset);
+        const data = cachedPerfValue('formal-knowledge-assets-summary', 'all', () => {
+            const total = adb.prepare('SELECT COUNT(*) AS c FROM knowledge_assets').get()?.c || 0;
+            const active = adb.prepare("SELECT COUNT(*) AS c FROM knowledge_assets WHERE status = 'active'").get()?.c || 0;
+            const byType = adb.prepare(`
+                SELECT asset_type, COUNT(*) AS count, ROUND(AVG(asset_value_score), 1) AS avg_value, ROUND(AVG(quality_score), 1) AS avg_quality
+                FROM knowledge_assets
+                GROUP BY asset_type
+                ORDER BY count DESC
+            `).all();
+            const bySector = adb.prepare(`
+                SELECT business_sector, collection_region, COUNT(*) AS count, ROUND(AVG(asset_value_score), 1) AS avg_value
+                FROM knowledge_assets
+                GROUP BY business_sector, collection_region
+                ORDER BY count DESC
+                LIMIT 20
+            `).all();
+            const top = adb.prepare(`
+                SELECT *
+                FROM knowledge_assets
+                ORDER BY asset_value_score DESC, quality_score DESC, last_seen_at DESC
+                LIMIT 12
+            `).all().map(mapFormalKnowledgeAsset);
 
-        res.json({ success: true, data: { ready: true, total, active, byType, bySector, top } });
+            return { ready: true, total, active, byType, bySector, top };
+        });
+
+        res.json({ success: true, data });
     } catch (err) {
+        if (handleAnalyticsStorageError(res, err, { data: emptyFormalKnowledgeAssetSummary() })) return;
         res.status(500).json({ success: false, error: err.message });
     }
 });
@@ -3912,24 +4052,33 @@ router.get('/knowledge-assets/formal', (req, res) => {
         if (status) { where.push('status = ?'); params.push(status); }
         if (groupName) { where.push('group_name = ?'); params.push(groupName); }
 
-        const whereSql = where.join(' AND ');
-        const total = adb.prepare(`SELECT COUNT(*) AS c FROM knowledge_assets WHERE ${whereSql}`).get(...params)?.c || 0;
-        const orderMap = {
-            value: 'asset_value_score DESC, quality_score DESC, last_seen_at DESC',
-            quality: 'quality_score DESC, asset_value_score DESC, last_seen_at DESC',
-            recent: 'last_seen_at DESC, asset_value_score DESC',
-            usage: 'usage_count DESC, asset_value_score DESC',
-        };
-        const rows = adb.prepare(`
-            SELECT *
-            FROM knowledge_assets
-            WHERE ${whereSql}
-            ORDER BY ${orderMap[sort] || orderMap.value}
-            LIMIT ? OFFSET ?
-        `).all(...params, limitNum, offset).map(mapFormalKnowledgeAsset);
+        const result = cachedPerfValue('formal-knowledge-assets-list', {
+            keyword, type, sector, region, status, groupName, page: pageNum, limit: limitNum, sort: sort || 'value',
+        }, () => {
+            const whereSql = where.join(' AND ');
+            const total = adb.prepare(`SELECT COUNT(*) AS c FROM knowledge_assets WHERE ${whereSql}`).get(...params)?.c || 0;
+            const orderMap = {
+                value: 'asset_value_score DESC, quality_score DESC, last_seen_at DESC',
+                quality: 'quality_score DESC, asset_value_score DESC, last_seen_at DESC',
+                recent: 'last_seen_at DESC, asset_value_score DESC',
+                usage: 'usage_count DESC, asset_value_score DESC',
+            };
+            const rows = adb.prepare(`
+                SELECT *
+                FROM knowledge_assets
+                WHERE ${whereSql}
+                ORDER BY ${orderMap[sort] || orderMap.value}
+                LIMIT ? OFFSET ?
+            `).all(...params, limitNum, offset).map(mapFormalKnowledgeAsset);
 
-        res.json({ success: true, data: rows, total, page: pageNum, limit: limitNum });
+            return { data: rows, total, page: pageNum, limit: limitNum };
+        });
+
+        res.json({ success: true, ...result });
     } catch (err) {
+        const pageNum = Math.max(1, parseInt(req.query.page) || 1);
+        const limitNum = Math.min(100, Math.max(1, parseInt(req.query.limit) || 20));
+        if (handleAnalyticsStorageError(res, err, { data: [], total: 0, page: pageNum, limit: limitNum })) return;
         res.status(500).json({ success: false, error: err.message });
     }
 });
@@ -3980,6 +4129,13 @@ router.get('/knowledge-assets/formal/library/:library', (req, res) => {
             data: filtered.slice(0, limitNum),
         });
     } catch (err) {
+        if (handleAnalyticsStorageError(res, err, {
+            library: req.params.library,
+            label: LIBRARY_LABELS[req.params.library] || req.params.library,
+            total: 0,
+            byType: [],
+            data: [],
+        })) return;
         res.status(500).json({ success: false, error: err.message });
     }
 });
@@ -3997,6 +4153,7 @@ router.get('/knowledge-assets/formal/:assetUid', (req, res) => {
             : [];
         res.json({ success: true, data: { ...mapFormalKnowledgeAsset(row), links } });
     } catch (err) {
+        if (handleAnalyticsStorageError(res, err, { data: null })) return;
         res.status(500).json({ success: false, error: err.message });
     }
 });
@@ -4031,6 +4188,7 @@ router.post('/knowledge-assets/formal/:assetUid/usage', (req, res) => {
         clearAnalyticsPerfCache();
         res.json({ success: true, data: mapFormalKnowledgeAsset(updated) });
     } catch (err) {
+        if (sendAnalyticsStorageFailure(res, err)) return;
         res.status(500).json({ success: false, error: err.message });
     } finally {
         if (db) {
@@ -4053,6 +4211,7 @@ router.post('/knowledge-assets/:dedupeKey/promote', (req, res) => {
         clearAnalyticsPerfCache();
         res.json({ success: true, data: result.asset, action: result.action });
     } catch (err) {
+        if (sendAnalyticsStorageFailure(res, err)) return;
         res.status(500).json({ success: false, error: err.message });
     } finally {
         if (db) {
@@ -4086,6 +4245,7 @@ router.get('/knowledge-assets/:dedupeKey/sources', (req, res) => {
         }));
         res.json({ success: true, data: messages });
     } catch (err) {
+        if (handleAnalyticsStorageError(res, err, { data: [] })) return;
         res.status(500).json({ success: false, error: err.message });
     }
 });
@@ -4179,6 +4339,7 @@ router.patch('/knowledge-assets/:dedupeKey/contact-side', (req, res) => {
             staff: staffConfig,
         });
     } catch (err) {
+        if (sendAnalyticsStorageFailure(res, err)) return;
         res.status(500).json({ success: false, error: err.message });
     } finally {
         if (db) {
@@ -4239,6 +4400,7 @@ router.patch('/knowledge-assets/review-batch', (req, res) => {
         clearAnalyticsPerfCache();
         res.json({ success: true, updated: changed, promoted, promotedAssets });
     } catch (err) {
+        if (sendAnalyticsStorageFailure(res, err)) return;
         res.status(500).json({ success: false, error: err.message });
     } finally {
         if (db) {
@@ -4257,6 +4419,7 @@ router.get('/knowledge-assets/:dedupeKey', (req, res) => {
         if (!row) return res.status(404).json({ success: false, error: '资产不存在' });
         res.json({ success: true, data: mapKnowledgeAsset(row) });
     } catch (err) {
+        if (handleAnalyticsStorageError(res, err, { data: null })) return;
         res.status(500).json({ success: false, error: err.message });
     }
 });
@@ -4293,6 +4456,7 @@ router.patch('/knowledge-assets/:dedupeKey/review', (req, res) => {
         clearAnalyticsPerfCache();
         res.json({ success: true, data: mapKnowledgeAsset(row), linkedAsset, promoteAction });
     } catch (err) {
+        if (sendAnalyticsStorageFailure(res, err)) return;
         res.status(500).json({ success: false, error: err.message });
     } finally {
         if (db) {

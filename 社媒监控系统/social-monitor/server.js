@@ -17,6 +17,7 @@ const createTgUserRouter = require('./routes/tg-user');
 const createTeamsRouter = require('./routes/teams');
 const { getAnalyticsDb } = require('./routes/analytics');
 const { shanghaiISOString } = require('./lib/time');
+const { checkStorageWatermark: readStorageWatermark } = require('./lib/storage-health');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -54,35 +55,7 @@ function checkDataDir() {
 
 function checkStorageWatermark() {
     const dataDir = process.env.DATA_DIR || __dirname;
-    const minFreeMb = Number(process.env.STORAGE_MIN_FREE_MB || 512);
-    const minFreePercent = Number(process.env.STORAGE_MIN_FREE_PERCENT || 5);
-
-    try {
-        const stats = fs.statfsSync(dataDir);
-        const blockSize = Number(stats.bsize || stats.frsize || 0);
-        const totalBytes = Number(stats.blocks || 0) * blockSize;
-        const freeBytes = Number(stats.bavail || 0) * blockSize;
-        const usedBytes = Math.max(0, totalBytes - freeBytes);
-        const freeMb = Math.round(freeBytes / 1024 / 1024);
-        const totalMb = Math.round(totalBytes / 1024 / 1024);
-        const usedMb = Math.round(usedBytes / 1024 / 1024);
-        const freePercent = totalBytes > 0 ? Number(((freeBytes / totalBytes) * 100).toFixed(2)) : 0;
-        const ok = freeMb >= minFreeMb && freePercent >= minFreePercent;
-
-        return {
-            ok,
-            path: dataDir,
-            totalMb,
-            usedMb,
-            freeMb,
-            freePercent,
-            minFreeMb,
-            minFreePercent,
-            warning: ok ? null : 'Persistent storage is below the configured free-space watermark'
-        };
-    } catch (err) {
-        return { ok: false, path: dataDir, error: err.message };
-    }
+    return readStorageWatermark({ path: dataDir });
 }
 
 function buildHealthReport() {

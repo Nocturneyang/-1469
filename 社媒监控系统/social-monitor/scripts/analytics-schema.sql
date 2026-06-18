@@ -338,6 +338,22 @@ CREATE INDEX IF NOT EXISTS idx_kac_status ON knowledge_asset_candidates(review_s
 CREATE INDEX IF NOT EXISTS idx_kac_sector_region ON knowledge_asset_candidates(business_sector, collection_region);
 CREATE INDEX IF NOT EXISTS idx_kac_value ON knowledge_asset_candidates(asset_value_score DESC, confidence DESC);
 CREATE INDEX IF NOT EXISTS idx_kac_seen ON knowledge_asset_candidates(last_seen_at DESC);
+CREATE INDEX IF NOT EXISTS idx_kac_seen_value
+  ON knowledge_asset_candidates(last_seen_at DESC, asset_value_score DESC, confidence DESC);
+CREATE INDEX IF NOT EXISTS idx_kac_status_value_seen
+  ON knowledge_asset_candidates(review_status, asset_value_score DESC, confidence DESC, last_seen_at DESC);
+CREATE INDEX IF NOT EXISTS idx_kac_region_sector_seen
+  ON knowledge_asset_candidates(collection_region, business_sector, last_seen_at DESC);
+CREATE INDEX IF NOT EXISTS idx_kac_type_seen
+  ON knowledge_asset_candidates(asset_type, last_seen_at DESC);
+CREATE INDEX IF NOT EXISTS idx_kac_value_level
+  ON knowledge_asset_candidates(value_level);
+CREATE INDEX IF NOT EXISTS idx_kac_effective_seen_value
+  ON knowledge_asset_candidates(COALESCE(last_seen_at, first_seen_at, 0) DESC, asset_value_score DESC, confidence DESC);
+CREATE INDEX IF NOT EXISTS idx_kac_review_manual_value
+  ON knowledge_asset_candidates(review_status, json_extract(metrics, '$.machine_assessment.manual_review_required'), asset_value_score DESC, confidence DESC, last_seen_at DESC);
+CREATE INDEX IF NOT EXISTS idx_kac_machine_decision
+  ON knowledge_asset_candidates(json_extract(metrics, '$.machine_assessment.decision'), asset_value_score DESC);
 
 -- ⑮ 正式知识资产库（由已确认候选沉淀而来，供业务页面调用）
 CREATE TABLE IF NOT EXISTS knowledge_assets (
@@ -386,6 +402,14 @@ CREATE INDEX IF NOT EXISTS idx_ka_status ON knowledge_assets(status);
 CREATE INDEX IF NOT EXISTS idx_ka_sector_region ON knowledge_assets(business_sector, collection_region);
 CREATE INDEX IF NOT EXISTS idx_ka_group ON knowledge_assets(group_name);
 CREATE INDEX IF NOT EXISTS idx_ka_value ON knowledge_assets(asset_value_score DESC, quality_score DESC);
+CREATE INDEX IF NOT EXISTS idx_ka_seen_value
+  ON knowledge_assets(last_seen_at DESC, asset_value_score DESC, quality_score DESC);
+CREATE INDEX IF NOT EXISTS idx_ka_status_value_seen
+  ON knowledge_assets(status, asset_value_score DESC, quality_score DESC, last_seen_at DESC);
+CREATE INDEX IF NOT EXISTS idx_ka_status_region_sector
+  ON knowledge_assets(status, collection_region, business_sector, last_seen_at DESC);
+CREATE INDEX IF NOT EXISTS idx_ka_effective_seen_value
+  ON knowledge_assets(COALESCE(last_seen_at, first_seen_at, 0) DESC, asset_value_score DESC, quality_score DESC);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_ka_dedupe ON knowledge_assets(asset_type, asset_key, collection_region, business_sector, group_name);
 
 -- ⑯ 候选资产与正式资产关系

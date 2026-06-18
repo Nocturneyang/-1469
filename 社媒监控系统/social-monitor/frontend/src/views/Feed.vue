@@ -44,8 +44,8 @@
               <span class="m-time">{{ formatTime(msg.timestamp) }}</span>
             </div>
             <div class="m-text">{{ msg.content || msg.text }}</div>
-            <div v-if="msg.media_path || msg.media_url" class="m-media">
-              <a :href="msg.media_path || msg.media_url" target="_blank">📎 查看附件</a>
+            <div v-if="hasMediaLink(msg)" class="m-media">
+              <a :href="mediaHref(msg)" target="_blank">📎 查看附件</a>
             </div>
           </div>
         </div>
@@ -191,6 +191,14 @@ const formatTime = (timestamp) => {
     hour: '2-digit',
     minute: '2-digit'
   })
+}
+
+const hasMediaLink = (msg) => {
+  return Boolean(msg?.media_available && mediaHref(msg))
+}
+
+const mediaHref = (msg) => {
+  return msg?.media_path || msg?.media_url || ''
 }
 
 watch(selectedPlatform, () => {

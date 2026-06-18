@@ -9,11 +9,22 @@ const {
     upsertCollectorHeartbeat,
     recordRuntimeEvent
 } = require('../db/database');
+const {
+    checkStorageWatermark,
+    isDiskFullError,
+    numberFromEnv,
+} = require('../lib/storage-health');
+const {
+    isMediaUploadDisabled,
+    stripMediaFields,
+} = require('../lib/media-policy');
 
 const router = express.Router();
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '..');
 const MEDIA_DIR = path.join(DATA_DIR, 'media');
 const FALLBACK_COLLECTOR_TOKEN_SHA256 = '2e51b53cf6e7da87425363b6d9ada8ed5d07532f1b862b02057700a13640caa6';
+const MEDIA_STORAGE_MIN_FREE_MB = numberFromEnv('MEDIA_STORAGE_MIN_FREE_MB', numberFromEnv('STORAGE_MIN_FREE_MB', 512));
+const MEDIA_STORAGE_MIN_FREE_PERCENT = numberFromEnv('MEDIA_STORAGE_MIN_FREE_PERCENT', numberFromEnv('STORAGE_MIN_FREE_PERCENT', 5));
 
 function sanitizeSegment(value, fallback = 'file') {
     const safe = String(value || '')
@@ -69,6 +80,36 @@ function requireCollectorToken(req, res, next) {
     }
 
     next();
+}
+
+function mediaStoragePayload(storage) {
+    return {
+        path: storage.path,
+        freeMb: storage.freeMb,
+        freePercent: storage.freePercent,
+        minFreeMb: storage.minFreeMb,
+        minFreePercent: storage.minFreePercent,
+    };
+}
+
+function checkMediaStorage(bytesToWrite) {
+    return checkStorageWatermark({
+        path: DATA_DIR,
+        minFreeMb: MEDIA_STORAGE_MIN_FREE_MB,
+        minFreePercent: MEDIA_STORAGE_MIN_FREE_PERCENT,
+        reserveBytes: bytesToWrite,
+    });
+}
+
+function mediaDisabledResponse() {
+    return {
+        success: true,
+        media_path: null,
+        bytes: 0,
+        skipped: true,
+        media_disabled: true,
+        reason: 'DISABLE_MEDIA_UPLOAD is enabled'
+    };
 }
 
 router.use(requireCollectorToken);
@@ -132,7 +173,7 @@ router.post('/messages', (req, res) => {
             return res.status(400).json({ success: false, error: 'platform, receiver_account and message_id are required' });
         }
 
-        const result = saveMessage(body);
+        const result = saveMessage(stripMediaFields(body));
         res.json({ success: true, changes: result?.changes || 0 });
     } catch (err) {
         console.error('[Collector API] message failed:', err.message);
@@ -155,7 +196,7 @@ router.post('/messages/batch', (req, res) => {
                     skipped += 1;
                     continue;
                 }
-                const result = saveMessage(body);
+                const result = saveMessage(stripMediaFields(body));
                 inserted += result?.changes || 0;
             }
         });
@@ -181,9 +222,23 @@ router.post('/media', (req, res) => {
             return res.status(400).json({ success: false, error: 'accountId, messageId and data are required' });
         }
 
+        if (isMediaUploadDisabled()) {
+            return res.json(mediaDisabledResponse());
+        }
+
         const buffer = Buffer.from(String(body.data), 'base64');
         if (!buffer.length) {
             return res.status(400).json({ success: false, error: 'media data is empty' });
+        }
+
+        const storage = checkMediaStorage(buffer.length);
+        if (!storage.ok) {
+            console.warn('[Collector API] media skipped: persistent storage below watermark', mediaStoragePayload(storage));
+            return res.status(507).json({
+                success: false,
+                error: 'Persistent storage is below the free-space watermark; media upload skipped',
+                storage: mediaStoragePayload(storage)
+            });
         }
 
         fs.mkdirSync(MEDIA_DIR, { recursive: true });
@@ -201,7 +256,8 @@ router.post('/media', (req, res) => {
         });
     } catch (err) {
         console.error('[Collector API] media failed:', err.message);
-        res.status(500).json({ success: false, error: err.message });
+        const status = isDiskFullError(err) ? 507 : 500;
+        res.status(status).json({ success: false, error: err.message });
     }
 });
 
