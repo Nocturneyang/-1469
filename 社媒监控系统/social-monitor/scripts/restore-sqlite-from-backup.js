@@ -3,7 +3,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const Database = require('better-sqlite3');
+const { spawnSync } = require('child_process');
 const { listBackups } = require('./db-backup');
 const { shanghaiFilenameTimestamp } = require('../lib/time');
 
@@ -14,6 +14,8 @@ const DATABASES = [
     { name: 'database.sqlite', required: true, envName: 'DB_MAINTENANCE_MODE' },
     { name: 'analytics.sqlite', required: false, envName: 'ANALYTICS_MAINTENANCE_MODE' }
 ];
+const CHECK_TIMEOUT_MS = Number(process.env.SQLITE_RECOVERY_CHECK_TIMEOUT_MS || 5000);
+const MAX_BACKUPS_TO_CHECK = Math.max(1, Number(process.env.SQLITE_RECOVERY_MAX_BACKUPS || 5));
 
 function parseArgs(argv) {
     const args = {};
@@ -39,28 +41,57 @@ function checkSqlite(filePath) {
         return result;
     }
 
-    let db = null;
+    const checkScript = `
+const Database = require('better-sqlite3');
+const filePath = process.argv[1];
+let db = null;
+try {
+  db = new Database(filePath, { readonly: true, fileMustExist: true });
+  db.pragma('busy_timeout = 3000');
+  const quickCheck = db.prepare('PRAGMA quick_check(20)').all();
+  const values = quickCheck.flatMap(row => Object.values(row)).map(value => String(value || '').toLowerCase());
+  const ok = values.length > 0 && values.every(value => value === 'ok');
+  process.stdout.write(JSON.stringify({ ok, quickCheck, error: ok ? null : JSON.stringify(quickCheck) }));
+} catch (err) {
+  process.stdout.write(JSON.stringify({ ok: false, quickCheck: [], error: err.message }));
+} finally {
+  if (db) {
+    try { db.close(); } catch (_) {}
+  }
+}
+`;
+
+    const child = spawnSync(process.execPath, ['-e', checkScript, filePath], {
+        cwd: path.resolve(__dirname, '..'),
+        encoding: 'utf8',
+        timeout: CHECK_TIMEOUT_MS,
+        maxBuffer: 1024 * 1024
+    });
+
+    if (child.error) {
+        result.error = child.error.code === 'ETIMEDOUT'
+            ? `quick_check timed out after ${CHECK_TIMEOUT_MS}ms`
+            : child.error.message;
+        return result;
+    }
+    if (child.status !== 0) {
+        result.error = (child.stderr || child.stdout || `quick_check exited with status ${child.status}`).trim();
+        return result;
+    }
+
     try {
-        db = new Database(filePath, { readonly: true, fileMustExist: true });
-        db.pragma('busy_timeout = 5000');
-        result.quickCheck = db.prepare('PRAGMA quick_check(20)').all();
-        const values = result.quickCheck
-            .flatMap(row => Object.values(row))
-            .map(value => String(value || '').toLowerCase());
-        result.ok = values.length > 0 && values.every(value => value === 'ok');
-        if (!result.ok) result.error = JSON.stringify(result.quickCheck);
+        const parsed = JSON.parse(String(child.stdout || '{}'));
+        result.ok = parsed.ok === true;
+        result.quickCheck = Array.isArray(parsed.quickCheck) ? parsed.quickCheck : [];
+        result.error = parsed.error || null;
     } catch (err) {
-        result.error = err.message;
-    } finally {
-        if (db) {
-            try { db.close(); } catch (_) {}
-        }
+        result.error = `invalid quick_check output: ${err.message}`;
     }
     return result;
 }
 
 function findValidBackup(dbName) {
-    const backups = listBackups();
+    const backups = listBackups().slice(0, MAX_BACKUPS_TO_CHECK);
     for (const backup of backups) {
         const candidate = path.join(backup.path, dbName);
         const health = checkSqlite(candidate);
