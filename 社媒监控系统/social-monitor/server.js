@@ -1,7 +1,7 @@
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
-const { db } = require('./db/database');
+const { db, isDbRuntimeDegraded, getDbRuntimeDegradedReason } = require('./db/database');
 const fs = require('fs');
 const envConfig = require('./lib/env-config');
 const { authenticateToken, requireAdmin, resolveAuthenticatedUser, isSsoEnabled } = require('./middleware/auth');
@@ -24,8 +24,12 @@ const PORT = process.env.PORT || 3000;
 const STARTED_AT = new Date();
 
 function checkSqlite() {
-    if (process.env.DB_DEGRADED_BOOT) {
-        return { ok: true, degraded: true, warning: 'DB_DEGRADED_BOOT is enabled' };
+    if (process.env.DB_DEGRADED_BOOT || isDbRuntimeDegraded()) {
+        return {
+            ok: true,
+            degraded: true,
+            warning: getDbRuntimeDegradedReason() || 'DB_DEGRADED_BOOT is enabled'
+        };
     }
     try {
         db.prepare('SELECT 1 AS ok').get();

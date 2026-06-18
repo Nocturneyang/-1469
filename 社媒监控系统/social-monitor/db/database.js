@@ -8,15 +8,17 @@ const dbPath = path.join(DATA_DIR, 'db', 'database.sqlite');
 const mediaDir = path.join(DATA_DIR, 'media');
 const REGION_CONFIG_PATH = path.join(DATA_DIR, 'config', 'account-regions.json');
 const DB_DEGRADED_BOOT = ['1', 'true', 'yes', 'on'].includes(String(process.env.DB_DEGRADED_BOOT || '').trim().toLowerCase());
+let dbRuntimeDegraded = DB_DEGRADED_BOOT;
+let dbRuntimeDegradedReason = DB_DEGRADED_BOOT ? 'DB_DEGRADED_BOOT is enabled' : '';
 
 // Ensure media directory exists
 if (!fs.existsSync(mediaDir)) {
     fs.mkdirSync(mediaDir, { recursive: true });
 }
 
-function createUnavailableDb() {
+function createUnavailableDb(reason = 'database unavailable: DB_DEGRADED_BOOT is enabled') {
     const unavailable = () => {
-        throw new Error('database unavailable: DB_DEGRADED_BOOT is enabled');
+        throw new Error(reason);
     };
     return {
         prepare: unavailable,
@@ -27,7 +29,17 @@ function createUnavailableDb() {
     };
 }
 
-const db = DB_DEGRADED_BOOT ? createUnavailableDb() : new Database(dbPath);
+let db = createUnavailableDb(dbRuntimeDegradedReason || 'database unavailable');
+if (!DB_DEGRADED_BOOT) {
+    try {
+        db = new Database(dbPath);
+    } catch (err) {
+        dbRuntimeDegraded = true;
+        dbRuntimeDegradedReason = `failed to open database.sqlite: ${err.message}`;
+        db = createUnavailableDb(`database unavailable: ${dbRuntimeDegradedReason}`);
+        console.error(`[DB] ${dbRuntimeDegradedReason}`);
+    }
+}
 
 function safePragma(database, statement, label) {
     try {
@@ -41,8 +53,8 @@ function safePragma(database, statement, label) {
 // Enable WAL mode for better concurrency performance. If the persisted DB is
 // already in a bad I/O state, do not crash the UI server before health routes
 // can report the problem.
-if (DB_DEGRADED_BOOT) {
-    console.warn('[DB] DB_DEGRADED_BOOT enabled; SQLite access is disabled for this process');
+if (dbRuntimeDegraded) {
+    console.warn(`[DB] SQLite access is disabled for this process: ${dbRuntimeDegradedReason}`);
 } else {
     safePragma(db, 'journal_mode = WAL', 'enable WAL');
     safePragma(db, 'busy_timeout = 5000', 'set busy timeout');
@@ -355,8 +367,25 @@ function initSchema() {
     }
 }
 
-if (!DB_DEGRADED_BOOT) {
-    initSchema();
+if (!dbRuntimeDegraded) {
+    try {
+        initSchema();
+    } catch (err) {
+        const previousDb = db;
+        dbRuntimeDegraded = true;
+        dbRuntimeDegradedReason = `failed to initialize database.sqlite: ${err.message}`;
+        db = createUnavailableDb(`database unavailable: ${dbRuntimeDegradedReason}`);
+        try { previousDb.close(); } catch (_) {}
+        console.error(`[DB] ${dbRuntimeDegradedReason}`);
+    }
+}
+
+function isDbRuntimeDegraded() {
+    return dbRuntimeDegraded;
+}
+
+function getDbRuntimeDegradedReason() {
+    return dbRuntimeDegradedReason;
 }
 
 // Insert message with duplicate handling
@@ -482,6 +511,8 @@ function recordRuntimeEvent(data) {
 
 module.exports = {
     db,
+    isDbRuntimeDegraded,
+    getDbRuntimeDegradedReason,
     saveMessage,
     updateAccountStatus,
     upsertCollectorHeartbeat,
