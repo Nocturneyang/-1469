@@ -108,7 +108,7 @@ spec:
             - name: COLLECTOR_WRITE_DISABLED
               value: "1"
             - name: ANALYTICS_MAINTENANCE_MODE
-              value: "1"
+              value: "0"
             - name: SQLITE_RECOVERY_ON_START
               value: "0"
             - name: SKIP_CHROME_INSTALL
