@@ -74,6 +74,46 @@ npx pm2 save
 node scripts/init-analytics-db.js
 ```
 
+## 流程管理规范
+
+本仓库采用 `spec-config` / `.specify` 的流程管理思想，但不继承其中的通用企业技术栈模板。当前项目的实际技术栈仍以本文档和 `社媒监控系统/social-monitor/.specify/memory/constitution.md` 为准：Node.js/Express、Vue 3、Element Plus、SQLite、PM2、Docker/Deploy Hub。
+
+- `spec-config/` 是流程模板参考，用于理解需求、计划、任务、测试、报告和归档方式。
+- `社媒监控系统/social-monitor/.specify/` 是主应用的功能规格目录，用于沉淀长期有效的功能级规格。
+- 如果 `.specify/README.md`、`.specify/templates/` 或 `.specify/scaffold/` 中出现 FastAPI、React、Ant Design、Nacos、MySQL、Redis、SSO 等模板内容，不得直接套用于当前项目；需要先按当前 Node/Vue/SQLite/PM2 架构改写后再使用。
+- `.specify/memory/constitution.md` 已针对本项目定制，若与通用模板冲突，优先遵循本项目 constitution 和本 AGENTS.md。
+
+新功能或大改动应补齐功能级规格：
+
+```text
+社媒监控系统/social-monitor/.specify/specs/{NNN-feature-name}/
+├── spec.md                 # 功能规格、范围、用户故事、验收标准
+├── plan.md                 # 技术方案、数据流、影响范围
+├── tasks.md                # 可执行任务清单
+├── contracts/              # API 或数据契约，接口变化时必须补充
+└── checklists/             # 评审清单，涉及高风险变更时补充
+```
+
+文档归档按阶段放入主应用 `docs/`：
+
+- `docs/demand/`：需求规格、可行性分析
+- `docs/product/`：产品设计、页面或业务流程方案
+- `docs/architecture/`：架构设计、重大技术方案
+- `docs/plan/`：开发计划和任务拆分
+- `docs/development/`：开发笔记、调研记录、实现细节
+- `docs/test/`：测试用例和测试报告
+- `docs/report/`：交付报告、复盘报告
+- `docs/archive/`：历史文档、废弃原型、已归档方案
+
+执行规则：
+
+- 新增业务模块、跨模块重构、数据库结构调整、采集器/分析器核心行为变化：必须至少补充或更新 `.specify/specs/{NNN-feature}/spec.md`、`plan.md`、`tasks.md`，并同步相关 `docs/` 阶段文档。
+- API 返回结构、接口参数、鉴权方式、数据表结构发生变化：必须补充 `contracts/` 或在 `docs/architecture/`、`docs/development/` 中明确契约变更。
+- 前端页面原型或产品验证稿如需保留，统一放在 `docs/prototypes/{迭代}/`；原型是离线评审材料，不应替代正式 Vue 页面实现。
+- 小修复、紧急 hotfix、配置修正可以不完整走 10 步流程，但需要在最终说明中写清影响范围、验证结果；若影响生产行为，事后应补充 `docs/development/` 或 `docs/report/` 记录。
+- 需求发生变化时，优先做增量更新：小变更更新任务或开发笔记，中变更更新计划和测试，大变更更新需求、产品、架构、计划、任务和测试。
+- 迭代完成后，应把临时方案、旧原型和交付记录归入 `docs/archive/` 或 `docs/report/`，保持活跃目录可读。
+
 ## 架构说明
 
 系统采用采集库和分析库分离的设计。
