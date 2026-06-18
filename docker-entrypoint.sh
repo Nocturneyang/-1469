@@ -52,6 +52,10 @@ ln -s "$DATA_DIR/.env" "$APP_DIR/.env"
 ln -s "$DATA_DIR/ecosystem.config.js" "$APP_DIR/ecosystem.config.js"
 
 cd "$APP_DIR"
-node scripts/init-analytics-db.js
+if [ ! -f "$DATA_DIR/db/analytics.sqlite" ]; then
+  node scripts/init-analytics-db.js
+else
+  echo "analytics.sqlite exists, skip startup schema init; run scripts/init-analytics-db.js manually after DB health is restored"
+fi
 
 exec pm2-runtime start ecosystem.config.js
