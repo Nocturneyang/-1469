@@ -3,7 +3,7 @@ set -e
 
 export DATA_DIR="${DATA_DIR:-/data}"
 APP_DIR="/app/social-monitor"
-CLOUD_ECOSYSTEM_VERSION="${CLOUD_ECOSYSTEM_VERSION:-8}"
+CLOUD_ECOSYSTEM_VERSION="${CLOUD_ECOSYSTEM_VERSION:-9}"
 
 mkdir -p "$DATA_DIR/db" "$DATA_DIR/media" "$DATA_DIR/config"
 
@@ -58,8 +58,27 @@ ln -s "$DATA_DIR/.env" "$APP_DIR/.env"
 ln -s "$DATA_DIR/ecosystem.config.js" "$APP_DIR/ecosystem.config.js"
 
 cd "$APP_DIR"
+if [ "${SQLITE_RECOVERY_ON_START:-}" = "1" ] || [ "${SQLITE_RECOVERY_ON_START:-}" = "true" ]; then
+  RECOVERY_ENV="/tmp/social-monitor-recovery.env"
+  rm -f "$RECOVERY_ENV"
+  echo "SQLITE_RECOVERY_ON_START enabled; checking SQLite health and latest valid backups"
+  if ! node scripts/restore-sqlite-from-backup.js --env-file "$RECOVERY_ENV"; then
+    echo "SQLite recovery did not fully complete; maintenance mode will remain enabled where needed"
+    export DB_MAINTENANCE_MODE=1
+    export ANALYTICS_MAINTENANCE_MODE=1
+  fi
+  if [ -f "$RECOVERY_ENV" ]; then
+    # shellcheck disable=SC1090
+    . "$RECOVERY_ENV"
+  fi
+fi
+
 if [ ! -f "$DATA_DIR/db/analytics.sqlite" ]; then
-  node scripts/init-analytics-db.js
+  if [ "${ANALYTICS_MAINTENANCE_MODE:-}" = "1" ] || [ "${ANALYTICS_MAINTENANCE_MODE:-}" = "true" ]; then
+    echo "analytics.sqlite missing but analytics maintenance mode is enabled; skip startup schema init"
+  else
+    node scripts/init-analytics-db.js
+  fi
 else
   echo "analytics.sqlite exists, skip startup schema init; run scripts/init-analytics-db.js manually after DB health is restored"
 fi

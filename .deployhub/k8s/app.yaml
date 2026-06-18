@@ -101,8 +101,10 @@ spec:
             - name: DB_DEGRADED_BOOT
               value: "0"
             - name: DB_MAINTENANCE_MODE
-              value: "1"
+              value: "0"
             - name: ANALYTICS_MAINTENANCE_MODE
+              value: "0"
+            - name: SQLITE_RECOVERY_ON_START
               value: "1"
             - name: MEDIA_BASE_URL
               value: https://social-monitor.tyhark.com

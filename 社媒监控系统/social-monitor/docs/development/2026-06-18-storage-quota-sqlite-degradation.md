@@ -21,6 +21,9 @@ Linux `-122` 通常对应磁盘配额耗尽。SQLite 在持久卷空间不足时
 - `scripts/analytics-schema.sql`：补充知识资产候选池和正式资产库常用筛选/排序索引。
 - `scripts/sqlite-health-check.js`：新增只读健康检查脚本。
 - `scripts/clear-media-references.js`：新增媒体引用清理脚本，默认 dry-run，带 `--execute` 才会写库。
+- `scripts/restore-sqlite-from-backup.js`：启动期恢复脚本，使用 `PRAGMA quick_check` 校验当前库和备份；仅从校验通过的最近备份恢复，恢复前把原库及 WAL/SHM 移入 `db/recovery-*` 目录保留。
+- `DB_MAINTENANCE_MODE=1` / `ANALYTICS_MAINTENANCE_MODE=1`：数据库损坏时让 Web/API 保持可用，采集写入和分析接口快速降级，避免前端持续显示 SQLite 底层错误。
+- `SQLITE_RECOVERY_ON_START=1`：容器启动时先尝试从 `/data/backups` 恢复损坏的 SQLite；恢复成功后自动关闭对应维护模式，恢复失败则继续维护模式。
 
 ## 生产应急步骤
 
@@ -55,6 +58,16 @@ Linux `-122` 通常对应磁盘配额耗尽。SQLite 在持久卷空间不足时
    ```
 
 5. 若 `database.sqlite` 损坏，需要优先从最近备份恢复；该库是原始采集库，不应由分析脚本写入或重建覆盖。
+
+6. 生产容器可启用自动恢复：
+
+   ```bash
+   SQLITE_RECOVERY_ON_START=1
+   DB_MAINTENANCE_MODE=0
+   ANALYTICS_MAINTENANCE_MODE=0
+   ```
+
+   启动脚本会先执行 `scripts/restore-sqlite-from-backup.js`。如果 `database.sqlite` 没有可用备份，会自动保持 `DB_MAINTENANCE_MODE=1`，页面维持可访问但数据接口返回降级空态；如果 `analytics.sqlite` 无可用备份，会归档坏库并允许重新初始化分析库。
 
 ## 后续建议
 

@@ -28,6 +28,7 @@
     "media:clear-refs": "node scripts/clear-media-references.js",
     "db:health": "node scripts/sqlite-health-check.js",
     "db:backup": "node scripts/db-backup.js",
+    "db:restore": "node scripts/restore-sqlite-from-backup.js",
     "db:archive": "node scripts/archive-messages.js",
     "db:backup:list": "node scripts/db-backup.js --list",
     "db:backup:prune": "node scripts/db-backup.js --prune",
