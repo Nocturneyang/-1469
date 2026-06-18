@@ -28,15 +28,20 @@ function envFlag(name) {
 }
 
 function analyticsMaintenanceMode() {
-    return envFlag('DB_DEGRADED_BOOT') || envFlag('ANALYTICS_MAINTENANCE_MODE');
+    return envFlag('DB_MAINTENANCE_MODE') || envFlag('DB_DEGRADED_BOOT') || envFlag('ANALYTICS_MAINTENANCE_MODE');
+}
+
+function databaseMaintenanceMode() {
+    return envFlag('DB_MAINTENANCE_MODE') || envFlag('DB_DEGRADED_BOOT');
 }
 
 function checkSqlite() {
-    if (envFlag('DB_DEGRADED_BOOT') || isDbRuntimeDegraded()) {
+    if (databaseMaintenanceMode() || isDbRuntimeDegraded()) {
         return {
             ok: true,
             degraded: true,
-            warning: getDbRuntimeDegradedReason() || 'DB_DEGRADED_BOOT is enabled'
+            warning: getDbRuntimeDegradedReason() ||
+                (envFlag('DB_MAINTENANCE_MODE') ? 'DB_MAINTENANCE_MODE is enabled' : 'DB_DEGRADED_BOOT is enabled')
         };
     }
     try {

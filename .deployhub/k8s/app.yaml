@@ -100,6 +100,8 @@ spec:
               value: "1"
             - name: DB_DEGRADED_BOOT
               value: "0"
+            - name: DB_MAINTENANCE_MODE
+              value: "1"
             - name: ANALYTICS_MAINTENANCE_MODE
               value: "1"
             - name: MEDIA_BASE_URL

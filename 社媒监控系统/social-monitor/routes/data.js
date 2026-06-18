@@ -30,7 +30,11 @@ function envFlag(name) {
 }
 
 function analyticsMaintenanceMode() {
-    return envFlag('DB_DEGRADED_BOOT') || envFlag('ANALYTICS_MAINTENANCE_MODE');
+    return envFlag('DB_MAINTENANCE_MODE') || envFlag('DB_DEGRADED_BOOT') || envFlag('ANALYTICS_MAINTENANCE_MODE');
+}
+
+function databaseMaintenanceMode() {
+    return envFlag('DB_MAINTENANCE_MODE') || envFlag('DB_DEGRADED_BOOT');
 }
 
 function getAnalyticsDb() {
@@ -97,6 +101,16 @@ function getAccountRegions() {
 
 router.get('/stats', (req, res) => {
     try {
+        if (databaseMaintenanceMode()) {
+            return res.json({
+                success: true,
+                total: 0,
+                platforms: { whatsapp: 0, telegram: 0 },
+                withMedia: 0,
+                degraded: true,
+                warning: 'DB_MAINTENANCE_MODE is enabled'
+            });
+        }
         const now = Date.now();
         if (statsCache.data && now < statsCache.expiresAt) {
             return res.json(statsCache.data);
@@ -129,6 +143,17 @@ router.get('/messages', (req, res) => {
         const page = parseInt(req.query.page) || 1;
         const limit = parseInt(req.query.limit) || 50;
         const offset = (page - 1) * limit;
+        if (databaseMaintenanceMode()) {
+            return res.json({
+                success: true,
+                total: 0,
+                page,
+                pages: 0,
+                data: [],
+                degraded: true,
+                warning: 'DB_MAINTENANCE_MODE is enabled'
+            });
+        }
         
         const platformFilter = req.query.platform;
         
@@ -181,6 +206,14 @@ router.get('/messages', (req, res) => {
 
 router.get('/groups', (req, res) => {
     try {
+        if (databaseMaintenanceMode()) {
+            return res.json({
+                success: true,
+                data: [],
+                degraded: true,
+                warning: 'DB_MAINTENANCE_MODE is enabled'
+            });
+        }
         const accountFilter = req.query.account;
         let query = 'SELECT DISTINCT group_name, group_id, receiver_account FROM messages WHERE group_name IS NOT NULL AND group_name != \'\'';
         const params = [];

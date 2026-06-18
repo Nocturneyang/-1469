@@ -26,6 +26,23 @@ const FALLBACK_COLLECTOR_TOKEN_SHA256 = '2e51b53cf6e7da87425363b6d9ada8ed5d07532
 const MEDIA_STORAGE_MIN_FREE_MB = numberFromEnv('MEDIA_STORAGE_MIN_FREE_MB', numberFromEnv('STORAGE_MIN_FREE_MB', 512));
 const MEDIA_STORAGE_MIN_FREE_PERCENT = numberFromEnv('MEDIA_STORAGE_MIN_FREE_PERCENT', numberFromEnv('STORAGE_MIN_FREE_PERCENT', 5));
 
+function envFlag(name) {
+    return ['1', 'true', 'yes', 'on'].includes(String(process.env[name] || '').trim().toLowerCase());
+}
+
+function databaseMaintenanceMode() {
+    return envFlag('DB_MAINTENANCE_MODE') || envFlag('DB_DEGRADED_BOOT');
+}
+
+function databaseMaintenanceResponse(kind) {
+    return {
+        success: true,
+        skipped: true,
+        kind,
+        reason: 'DB_MAINTENANCE_MODE is enabled'
+    };
+}
+
 function sanitizeSegment(value, fallback = 'file') {
     const safe = String(value || '')
         .replace(/[^a-zA-Z0-9_.-]+/g, '_')
@@ -121,6 +138,10 @@ router.post('/heartbeat', (req, res) => {
             return res.status(400).json({ success: false, error: 'accountId and collectorId are required' });
         }
 
+        if (databaseMaintenanceMode()) {
+            return res.json(databaseMaintenanceResponse('heartbeat'));
+        }
+
         upsertCollectorHeartbeat(body);
         res.json({ success: true });
     } catch (err) {
@@ -136,6 +157,10 @@ router.post('/events', (req, res) => {
             return res.status(400).json({ success: false, error: 'accountId and eventType are required' });
         }
 
+        if (databaseMaintenanceMode()) {
+            return res.json(databaseMaintenanceResponse('event'));
+        }
+
         recordRuntimeEvent(body);
         res.json({ success: true });
     } catch (err) {
@@ -149,6 +174,10 @@ router.post('/account-status', (req, res) => {
         const body = req.body || {};
         if (!body.id || !body.platform || !body.status) {
             return res.status(400).json({ success: false, error: 'id, platform and status are required' });
+        }
+
+        if (databaseMaintenanceMode()) {
+            return res.json(databaseMaintenanceResponse('account-status'));
         }
 
         updateAccountStatus(body.id, body.platform, body.status, body.pushname || null, body.qrCode || null);
@@ -173,6 +202,10 @@ router.post('/messages', (req, res) => {
             return res.status(400).json({ success: false, error: 'platform, receiver_account and message_id are required' });
         }
 
+        if (databaseMaintenanceMode()) {
+            return res.json(databaseMaintenanceResponse('message'));
+        }
+
         const result = saveMessage(stripMediaFields(body));
         res.json({ success: true, changes: result?.changes || 0 });
     } catch (err) {
@@ -186,6 +219,16 @@ router.post('/messages/batch', (req, res) => {
         const messages = Array.isArray(req.body?.messages) ? req.body.messages : [];
         if (!messages.length) {
             return res.status(400).json({ success: false, error: 'messages array is required' });
+        }
+
+        if (databaseMaintenanceMode()) {
+            return res.json({
+                ...databaseMaintenanceResponse('message-batch'),
+                received: messages.length,
+                inserted: 0,
+                duplicates: 0,
+                skipped: messages.length
+            });
         }
 
         let inserted = 0;

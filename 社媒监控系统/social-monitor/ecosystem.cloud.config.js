@@ -2,7 +2,9 @@ function envFlag(name) {
   return ['1', 'true', 'yes', 'on'].includes(String(process.env[name] || '').trim().toLowerCase());
 }
 
-const analyticsMaintenanceMode = envFlag('ANALYTICS_MAINTENANCE_MODE') || envFlag('DB_DEGRADED_BOOT');
+const analyticsMaintenanceMode = envFlag('ANALYTICS_MAINTENANCE_MODE') ||
+  envFlag('DB_MAINTENANCE_MODE') ||
+  envFlag('DB_DEGRADED_BOOT');
 
 const apps = [
     // Production baseline: Web/API, database consumers, collector receiver, and analyzers only.
@@ -19,6 +21,7 @@ const apps = [
         NODE_ENV: "production",
         DATA_DIR: process.env.DATA_DIR || "/data",
         DB_DEGRADED_BOOT: process.env.DB_DEGRADED_BOOT || "0",
+        DB_MAINTENANCE_MODE: process.env.DB_MAINTENANCE_MODE || "",
         ANALYTICS_MAINTENANCE_MODE: process.env.ANALYTICS_MAINTENANCE_MODE || "",
         LOCAL_WA_RUNTIME_ENABLED: "false",
         LOCAL_TG_RUNTIME_ENABLED: "false",

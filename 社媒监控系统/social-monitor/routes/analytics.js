@@ -34,7 +34,11 @@ function envFlag(name) {
 }
 
 function analyticsMaintenanceMode() {
-    return envFlag('DB_DEGRADED_BOOT') || envFlag('ANALYTICS_MAINTENANCE_MODE');
+    return envFlag('DB_MAINTENANCE_MODE') || envFlag('DB_DEGRADED_BOOT') || envFlag('ANALYTICS_MAINTENANCE_MODE');
+}
+
+function databaseMaintenanceMode() {
+    return envFlag('DB_MAINTENANCE_MODE') || envFlag('DB_DEGRADED_BOOT');
 }
 
 function stableKey(value) {
@@ -81,7 +85,7 @@ function getAnalyticsDb() {
 }
 
 function getSourceDb() {
-    if (envFlag('DB_DEGRADED_BOOT')) return null;
+    if (databaseMaintenanceMode()) return null;
     if (_sourceDb) return _sourceDb;
     if (!fs.existsSync(SOURCE_DB_PATH)) return null;
     try {

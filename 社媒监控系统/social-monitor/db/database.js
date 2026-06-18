@@ -7,9 +7,16 @@ const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '..');
 const dbPath = path.join(DATA_DIR, 'db', 'database.sqlite');
 const mediaDir = path.join(DATA_DIR, 'media');
 const REGION_CONFIG_PATH = path.join(DATA_DIR, 'config', 'account-regions.json');
-const DB_DEGRADED_BOOT = ['1', 'true', 'yes', 'on'].includes(String(process.env.DB_DEGRADED_BOOT || '').trim().toLowerCase());
+function envFlagValue(value) {
+    return ['1', 'true', 'yes', 'on'].includes(String(value || '').trim().toLowerCase());
+}
+
+const DB_MAINTENANCE_MODE = envFlagValue(process.env.DB_MAINTENANCE_MODE);
+const DB_DEGRADED_BOOT = envFlagValue(process.env.DB_DEGRADED_BOOT) || DB_MAINTENANCE_MODE;
 let dbRuntimeDegraded = DB_DEGRADED_BOOT;
-let dbRuntimeDegradedReason = DB_DEGRADED_BOOT ? 'DB_DEGRADED_BOOT is enabled' : '';
+let dbRuntimeDegradedReason = DB_DEGRADED_BOOT
+    ? (DB_MAINTENANCE_MODE ? 'DB_MAINTENANCE_MODE is enabled' : 'DB_DEGRADED_BOOT is enabled')
+    : '';
 
 // Ensure media directory exists
 if (!fs.existsSync(mediaDir)) {
