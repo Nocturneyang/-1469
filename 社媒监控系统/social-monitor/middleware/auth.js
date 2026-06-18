@@ -1,10 +1,19 @@
 const jwt = require('jsonwebtoken');
+const crypto = require('crypto');
 
-const JWT_SECRET = process.env.JWT_SECRET;
+const allowEphemeralJwtSecret = truthy(process.env.SSO_ENABLED || process.env.SKYLINE_SSO_ENABLED) ||
+    truthy(process.env.DB_DEGRADED_BOOT);
+let JWT_SECRET = process.env.JWT_SECRET;
 if (!JWT_SECRET || JWT_SECRET.length < 32) {
-    console.error('[FATAL] JWT_SECRET 未配置或长度不足 32 位，拒绝启动。请设置强随机密钥：');
-    console.error('  node -e "console.log(require(\'crypto\').randomBytes(48).toString(\'base64url\'))"');
-    process.exit(1);
+    if (allowEphemeralJwtSecret) {
+        JWT_SECRET = crypto.randomBytes(48).toString('base64url');
+        console.warn('[auth] JWT_SECRET 未配置或长度不足 32 位，已为 SSO/降级启动生成临时内存密钥。');
+        console.warn('[auth] 请尽快在生产 Secret 中设置稳定的 JWT_SECRET，以免本地登录 Token 在重启后失效。');
+    } else {
+        console.error('[FATAL] JWT_SECRET 未配置或长度不足 32 位，拒绝启动。请设置强随机密钥：');
+        console.error('  node -e "console.log(require(\'crypto\').randomBytes(48).toString(\'base64url\'))"');
+        process.exit(1);
+    }
 }
 const SSO_USER_CACHE_TTL_MS = positiveNumber('SSO_USER_CACHE_TTL_MS', 30 * 60 * 1000);
 const SSO_USER_CACHE_MAX = positiveNumber('SSO_USER_CACHE_MAX', 1000);
