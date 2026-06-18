@@ -15,8 +15,20 @@ if (!fs.existsSync(mediaDir)) {
 
 const db = new Database(dbPath);
 
-// Enable WAL mode for better concurrency performance
-db.pragma('journal_mode = WAL');
+function safePragma(database, statement, label) {
+    try {
+        return database.pragma(statement);
+    } catch (err) {
+        console.warn(`[DB] ${label || statement} failed, continuing in degraded mode: ${err.message}`);
+        return null;
+    }
+}
+
+// Enable WAL mode for better concurrency performance. If the persisted DB is
+// already in a bad I/O state, do not crash the UI server before health routes
+// can report the problem.
+safePragma(db, 'journal_mode = WAL', 'enable WAL');
+safePragma(db, 'busy_timeout = 5000', 'set busy timeout');
 
 // ... [schema setup] ...
 

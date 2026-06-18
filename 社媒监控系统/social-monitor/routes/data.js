@@ -16,7 +16,7 @@ function shanghaiHourMinute(value) {
 // Analytics database connection
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '..');
 const analyticsDbPath = path.join(DATA_DIR, 'db', 'analytics.sqlite');
-const analyticsDb = new Database(analyticsDbPath);
+let analyticsDb = null;
 
 // Account regions mapping file path
 const ACCOUNT_REGIONS_PATH = path.join(process.env.DATA_DIR || path.join(__dirname, '..'), 'config', 'account-regions.json');
@@ -24,6 +24,20 @@ const STATS_CACHE_TTL_MS = Number(process.env.STATS_CACHE_TTL_MS || 5000);
 const REGION_CACHE_TTL_MS = Number(process.env.REGION_CACHE_TTL_MS || 60000);
 let statsCache = { expiresAt: 0, data: null };
 let regionCache = { expiresAt: 0, data: {} };
+
+function getAnalyticsDb() {
+    if (analyticsDb) return analyticsDb;
+    if (!fs.existsSync(analyticsDbPath)) return null;
+    try {
+        analyticsDb = new Database(analyticsDbPath, { fileMustExist: true });
+        try { analyticsDb.pragma('busy_timeout = 5000'); } catch (_) {}
+        return analyticsDb;
+    } catch (err) {
+        console.error('Analytics DB open error:', err.message);
+        analyticsDb = null;
+        return null;
+    }
+}
 
 function normalizeMediaPath(value) {
     const raw = String(value || '').trim();
@@ -176,7 +190,9 @@ router.get('/groups', (req, res) => {
 // Get real-time alerts
 router.get('/alerts', (req, res) => {
     try {
-        const alerts = analyticsDb.prepare(`
+        const adb = getAnalyticsDb();
+        if (!adb) return res.json({ success: true, data: [] });
+        const alerts = adb.prepare(`
             SELECT id, alert_level as lvl, receiver_account as account, ai_title as text, 
                    created_at, business_sector
             FROM alert_records
@@ -205,7 +221,9 @@ router.get('/alerts', (req, res) => {
 // Get recent closed issues
 router.get('/closed-recent', (req, res) => {
     try {
-        const closedIssues = analyticsDb.prepare(`
+        const adb = getAnalyticsDb();
+        if (!adb) return res.json({ success: true, data: [] });
+        const closedIssues = adb.prepare(`
             SELECT id, group_name, issue_type as text,
                    closed_at, business_sector as supplier,
                    duration_mins
