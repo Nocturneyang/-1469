@@ -27,6 +27,10 @@ function envFlag(name) {
     return ['1', 'true', 'yes', 'on'].includes(String(process.env[name] || '').trim().toLowerCase());
 }
 
+function analyticsMaintenanceMode() {
+    return envFlag('DB_DEGRADED_BOOT') || envFlag('ANALYTICS_MAINTENANCE_MODE');
+}
+
 function checkSqlite() {
     if (envFlag('DB_DEGRADED_BOOT') || isDbRuntimeDegraded()) {
         return {
@@ -44,8 +48,11 @@ function checkSqlite() {
 }
 
 function checkAnalyticsSqlite() {
-    if (envFlag('DB_DEGRADED_BOOT')) {
-        return { ok: true, optional: true, degraded: true, warning: 'DB_DEGRADED_BOOT is enabled' };
+    if (analyticsMaintenanceMode()) {
+        const warning = envFlag('ANALYTICS_MAINTENANCE_MODE')
+            ? 'ANALYTICS_MAINTENANCE_MODE is enabled'
+            : 'DB_DEGRADED_BOOT is enabled';
+        return { ok: true, optional: true, degraded: true, warning };
     }
     try {
         const adb = getAnalyticsDb();

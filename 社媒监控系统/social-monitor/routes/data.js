@@ -29,8 +29,12 @@ function envFlag(name) {
     return ['1', 'true', 'yes', 'on'].includes(String(process.env[name] || '').trim().toLowerCase());
 }
 
+function analyticsMaintenanceMode() {
+    return envFlag('DB_DEGRADED_BOOT') || envFlag('ANALYTICS_MAINTENANCE_MODE');
+}
+
 function getAnalyticsDb() {
-    if (envFlag('DB_DEGRADED_BOOT')) return null;
+    if (analyticsMaintenanceMode()) return null;
     if (analyticsDb) return analyticsDb;
     if (!fs.existsSync(analyticsDbPath)) return null;
     try {

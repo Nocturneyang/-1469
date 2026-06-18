@@ -1,5 +1,10 @@
-module.exports = {
-  apps: [
+function envFlag(name) {
+  return ['1', 'true', 'yes', 'on'].includes(String(process.env[name] || '').trim().toLowerCase());
+}
+
+const analyticsMaintenanceMode = envFlag('ANALYTICS_MAINTENANCE_MODE') || envFlag('DB_DEGRADED_BOOT');
+
+const apps = [
     // Production baseline: Web/API, database consumers, collector receiver, and analyzers only.
     // WhatsApp Chrome collectors run on local machines and report through /api/collector/*.
     {
@@ -13,6 +18,8 @@ module.exports = {
       env: {
         NODE_ENV: "production",
         DATA_DIR: process.env.DATA_DIR || "/data",
+        DB_DEGRADED_BOOT: process.env.DB_DEGRADED_BOOT || "0",
+        ANALYTICS_MAINTENANCE_MODE: process.env.ANALYTICS_MAINTENANCE_MODE || "",
         LOCAL_WA_RUNTIME_ENABLED: "false",
         LOCAL_TG_RUNTIME_ENABLED: "false",
         COLLECTOR_TOKEN: process.env.COLLECTOR_TOKEN || "",
@@ -144,5 +151,10 @@ module.exports = {
         DATA_DIR: process.env.DATA_DIR || "/data"
       }
     }
-  ]
+  ];
+
+module.exports = {
+  apps: analyticsMaintenanceMode
+    ? apps.filter((app) => app.name === "ui-server")
+    : apps
 };

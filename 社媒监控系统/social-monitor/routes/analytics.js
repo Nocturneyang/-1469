@@ -33,6 +33,10 @@ function envFlag(name) {
     return ['1', 'true', 'yes', 'on'].includes(String(process.env[name] || '').trim().toLowerCase());
 }
 
+function analyticsMaintenanceMode() {
+    return envFlag('DB_DEGRADED_BOOT') || envFlag('ANALYTICS_MAINTENANCE_MODE');
+}
+
 function stableKey(value) {
     if (!value || typeof value !== 'object') return String(value || '');
     return JSON.stringify(Object.keys(value).sort().reduce((out, key) => {
@@ -61,7 +65,7 @@ function clearAnalyticsPerfCache() {
 }
 
 function getAnalyticsDb() {
-    if (envFlag('DB_DEGRADED_BOOT')) return null;
+    if (analyticsMaintenanceMode()) return null;
     if (_analyticsDb) return _analyticsDb;
     if (!fs.existsSync(ANALYTICS_PATH)) return null;
     try {
@@ -93,7 +97,7 @@ function getSourceDb() {
 }
 
 function openWritableAnalyticsDb() {
-    if (envFlag('DB_DEGRADED_BOOT')) return null;
+    if (analyticsMaintenanceMode()) return null;
     if (!fs.existsSync(ANALYTICS_PATH)) return null;
     const Database = require('better-sqlite3');
     const db = new Database(ANALYTICS_PATH);
