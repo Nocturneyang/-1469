@@ -97,6 +97,10 @@ spec:
               value: "3000"
             - name: DISABLE_MEDIA_UPLOAD
               value: "1"
+            - name: PURGE_MEDIA_ON_START
+              value: "1"
+            - name: DB_DEGRADED_BOOT
+              value: "1"
             - name: SKIP_CHROME_INSTALL
               value: "true"
             - name: PUPPETEER_SKIP_DOWNLOAD

@@ -7,6 +7,12 @@ CLOUD_ECOSYSTEM_VERSION="${CLOUD_ECOSYSTEM_VERSION:-7}"
 
 mkdir -p "$DATA_DIR/db" "$DATA_DIR/media" "$DATA_DIR/config"
 
+if [ "${PURGE_MEDIA_ON_START:-}" = "1" ] || [ "${PURGE_MEDIA_ON_START:-}" = "true" ]; then
+  echo "PURGE_MEDIA_ON_START enabled; deleting files under $DATA_DIR/media"
+  find "$DATA_DIR/media" -type f -delete || true
+  find "$DATA_DIR/media" -mindepth 1 -type d -empty -delete || true
+fi
+
 for file in account-regions.json webhooks.json internal-staff.json; do
   if [ -f "$APP_DIR/config/$file" ] && [ ! -f "$DATA_DIR/config/$file" ]; then
     cp "$APP_DIR/config/$file" "$DATA_DIR/config/$file"

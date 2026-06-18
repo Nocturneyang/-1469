@@ -26,6 +26,7 @@ let statsCache = { expiresAt: 0, data: null };
 let regionCache = { expiresAt: 0, data: {} };
 
 function getAnalyticsDb() {
+    if (process.env.DB_DEGRADED_BOOT) return null;
     if (analyticsDb) return analyticsDb;
     if (!fs.existsSync(analyticsDbPath)) return null;
     try {

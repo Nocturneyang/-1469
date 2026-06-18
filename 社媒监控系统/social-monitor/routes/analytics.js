@@ -57,6 +57,7 @@ function clearAnalyticsPerfCache() {
 }
 
 function getAnalyticsDb() {
+    if (process.env.DB_DEGRADED_BOOT) return null;
     if (_analyticsDb) return _analyticsDb;
     if (!fs.existsSync(ANALYTICS_PATH)) return null;
     try {
@@ -72,6 +73,7 @@ function getAnalyticsDb() {
 }
 
 function getSourceDb() {
+    if (process.env.DB_DEGRADED_BOOT) return null;
     if (_sourceDb) return _sourceDb;
     if (!fs.existsSync(SOURCE_DB_PATH)) return null;
     try {
@@ -87,6 +89,7 @@ function getSourceDb() {
 }
 
 function openWritableAnalyticsDb() {
+    if (process.env.DB_DEGRADED_BOOT) return null;
     if (!fs.existsSync(ANALYTICS_PATH)) return null;
     const Database = require('better-sqlite3');
     const db = new Database(ANALYTICS_PATH);

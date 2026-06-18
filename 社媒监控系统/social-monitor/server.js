@@ -24,6 +24,9 @@ const PORT = process.env.PORT || 3000;
 const STARTED_AT = new Date();
 
 function checkSqlite() {
+    if (process.env.DB_DEGRADED_BOOT) {
+        return { ok: true, degraded: true, warning: 'DB_DEGRADED_BOOT is enabled' };
+    }
     try {
         db.prepare('SELECT 1 AS ok').get();
         return { ok: true };
@@ -33,6 +36,9 @@ function checkSqlite() {
 }
 
 function checkAnalyticsSqlite() {
+    if (process.env.DB_DEGRADED_BOOT) {
+        return { ok: true, optional: true, degraded: true, warning: 'DB_DEGRADED_BOOT is enabled' };
+    }
     try {
         const adb = getAnalyticsDb();
         if (!adb) return { ok: true, optional: true, status: 'not_configured' };

@@ -7,13 +7,27 @@ const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '..');
 const dbPath = path.join(DATA_DIR, 'db', 'database.sqlite');
 const mediaDir = path.join(DATA_DIR, 'media');
 const REGION_CONFIG_PATH = path.join(DATA_DIR, 'config', 'account-regions.json');
+const DB_DEGRADED_BOOT = ['1', 'true', 'yes', 'on'].includes(String(process.env.DB_DEGRADED_BOOT || '').trim().toLowerCase());
 
 // Ensure media directory exists
 if (!fs.existsSync(mediaDir)) {
     fs.mkdirSync(mediaDir, { recursive: true });
 }
 
-const db = new Database(dbPath);
+function createUnavailableDb() {
+    const unavailable = () => {
+        throw new Error('database unavailable: DB_DEGRADED_BOOT is enabled');
+    };
+    return {
+        prepare: unavailable,
+        exec: unavailable,
+        pragma: unavailable,
+        transaction: () => unavailable,
+        close: () => {},
+    };
+}
+
+const db = DB_DEGRADED_BOOT ? createUnavailableDb() : new Database(dbPath);
 
 function safePragma(database, statement, label) {
     try {
@@ -27,8 +41,12 @@ function safePragma(database, statement, label) {
 // Enable WAL mode for better concurrency performance. If the persisted DB is
 // already in a bad I/O state, do not crash the UI server before health routes
 // can report the problem.
-safePragma(db, 'journal_mode = WAL', 'enable WAL');
-safePragma(db, 'busy_timeout = 5000', 'set busy timeout');
+if (DB_DEGRADED_BOOT) {
+    console.warn('[DB] DB_DEGRADED_BOOT enabled; SQLite access is disabled for this process');
+} else {
+    safePragma(db, 'journal_mode = WAL', 'enable WAL');
+    safePragma(db, 'busy_timeout = 5000', 'set busy timeout');
+}
 
 // ... [schema setup] ...
 
@@ -337,7 +355,9 @@ function initSchema() {
     }
 }
 
-initSchema();
+if (!DB_DEGRADED_BOOT) {
+    initSchema();
+}
 
 // Insert message with duplicate handling
 function saveMessage(data) {
