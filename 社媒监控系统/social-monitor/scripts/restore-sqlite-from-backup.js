@@ -16,6 +16,7 @@ const DATABASES = [
 ];
 const CHECK_TIMEOUT_MS = Number(process.env.SQLITE_RECOVERY_CHECK_TIMEOUT_MS || 5000);
 const MAX_BACKUPS_TO_CHECK = Math.max(1, Number(process.env.SQLITE_RECOVERY_MAX_BACKUPS || 5));
+const REBUILD_TIMEOUT_MS = Number(process.env.SQLITE_RECOVERY_REBUILD_TIMEOUT_MS || 120000);
 
 function parseArgs(argv) {
     const args = {};
@@ -139,6 +140,77 @@ function restoreFromBackup(dbName, backupPath) {
     return { livePath, archiveDir, archived, restored };
 }
 
+function recoverWithSqliteCli(dbName) {
+    const livePath = path.join(DB_DIR, dbName);
+    if (!fs.existsSync(livePath)) return null;
+
+    const archiveDir = recoveryDir();
+    const sqlPath = path.join(archiveDir, `${dbName}.recover.sql`);
+    const recoveredPath = path.join(archiveDir, `${dbName}.recovered.sqlite`);
+
+    let sqlFd = null;
+    try {
+        sqlFd = fs.openSync(sqlPath, 'w');
+        const dump = spawnSync('sqlite3', [livePath, '.recover'], {
+            stdio: ['ignore', sqlFd, 'pipe'],
+            encoding: 'utf8',
+            timeout: REBUILD_TIMEOUT_MS
+        });
+        fs.closeSync(sqlFd);
+        sqlFd = null;
+
+        if (dump.error) {
+            throw new Error(dump.error.code === 'ETIMEDOUT'
+                ? `.recover timed out after ${REBUILD_TIMEOUT_MS}ms`
+                : dump.error.message);
+        }
+        if (dump.status !== 0) {
+            throw new Error((dump.stderr || `.recover exited with status ${dump.status}`).trim());
+        }
+
+        const sqlStat = fs.statSync(sqlPath);
+        if (!sqlStat.size) {
+            throw new Error('.recover produced empty SQL');
+        }
+
+        const inputFd = fs.openSync(sqlPath, 'r');
+        const imported = spawnSync('sqlite3', [recoveredPath], {
+            stdio: [inputFd, 'pipe', 'pipe'],
+            encoding: 'utf8',
+            timeout: REBUILD_TIMEOUT_MS
+        });
+        fs.closeSync(inputFd);
+
+        if (imported.error) {
+            throw new Error(imported.error.code === 'ETIMEDOUT'
+                ? `import recovered SQL timed out after ${REBUILD_TIMEOUT_MS}ms`
+                : imported.error.message);
+        }
+        if (imported.status !== 0) {
+            throw new Error((imported.stderr || `import recovered SQL exited with status ${imported.status}`).trim());
+        }
+
+        const recovered = checkSqlite(recoveredPath);
+        if (!recovered.ok) {
+            throw new Error(`recovered ${dbName} failed quick_check: ${recovered.error || 'unknown error'}`);
+        }
+
+        const archived = archiveLiveFiles(dbName, archiveDir);
+        fs.copyFileSync(recoveredPath, livePath);
+        const restored = checkSqlite(livePath);
+        if (!restored.ok) {
+            throw new Error(`installed recovered ${dbName} failed quick_check: ${restored.error || 'unknown error'}`);
+        }
+
+        console.log(`[sqlite-restore] Recovered ${dbName} with sqlite3 .recover`);
+        return { livePath, archiveDir, archived, sqlPath, recoveredPath, restored };
+    } finally {
+        if (sqlFd !== null) {
+            try { fs.closeSync(sqlFd); } catch (_) {}
+        }
+    }
+}
+
 function archiveBadOptionalDb(dbName) {
     const livePath = path.join(DB_DIR, dbName);
     if (!fs.existsSync(livePath)) return null;
@@ -174,6 +246,20 @@ function recoverDatabase(item) {
             backupName: validBackup.backup.name,
             ...restored
         };
+    }
+
+    try {
+        const recovered = recoverWithSqliteCli(item.name);
+        if (recovered) {
+            return {
+                name: item.name,
+                ok: true,
+                action: 'recovered-with-sqlite-cli',
+                ...recovered
+            };
+        }
+    } catch (err) {
+        console.warn(`[sqlite-restore] sqlite3 .recover failed for ${item.name}: ${err.message}`);
     }
 
     if (!item.required) {
