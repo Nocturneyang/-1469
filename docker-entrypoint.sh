@@ -62,7 +62,7 @@ if [ "${SQLITE_RECOVERY_ON_START:-}" = "1" ] || [ "${SQLITE_RECOVERY_ON_START:-}
   RECOVERY_ENV="/tmp/social-monitor-recovery.env"
   rm -f "$RECOVERY_ENV"
   echo "SQLITE_RECOVERY_ON_START enabled; checking SQLite health and latest valid backups"
-  if ! node scripts/restore-sqlite-from-backup.js --env-file "$RECOVERY_ENV"; then
+  if ! node scripts/restore-sqlite-from-backup.js --recovery-env-file "$RECOVERY_ENV"; then
     echo "SQLite recovery did not fully complete; maintenance mode will remain enabled where needed"
     export DB_MAINTENANCE_MODE=1
     export ANALYTICS_MAINTENANCE_MODE=1

@@ -157,7 +157,7 @@ function recoverDatabase(item) {
 
 function main() {
     const args = parseArgs(process.argv);
-    const envFile = args['env-file'] || DEFAULT_ENV_FILE;
+    const envFile = args['recovery-env-file'] || DEFAULT_ENV_FILE;
     const results = DATABASES.map(recoverDatabase);
     const databaseOk = results.find(item => item.name === 'database.sqlite')?.ok === true;
     const analyticsOk = results.find(item => item.name === 'analytics.sqlite')?.ok === true;
