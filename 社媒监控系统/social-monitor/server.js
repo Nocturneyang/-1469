@@ -23,8 +23,12 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 const STARTED_AT = new Date();
 
+function envFlag(name) {
+    return ['1', 'true', 'yes', 'on'].includes(String(process.env[name] || '').trim().toLowerCase());
+}
+
 function checkSqlite() {
-    if (process.env.DB_DEGRADED_BOOT || isDbRuntimeDegraded()) {
+    if (envFlag('DB_DEGRADED_BOOT') || isDbRuntimeDegraded()) {
         return {
             ok: true,
             degraded: true,
@@ -40,7 +44,7 @@ function checkSqlite() {
 }
 
 function checkAnalyticsSqlite() {
-    if (process.env.DB_DEGRADED_BOOT) {
+    if (envFlag('DB_DEGRADED_BOOT')) {
         return { ok: true, optional: true, degraded: true, warning: 'DB_DEGRADED_BOOT is enabled' };
     }
     try {

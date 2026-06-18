@@ -98,6 +98,8 @@ spec:
               value: "1"
             - name: PURGE_MEDIA_ON_START
               value: "1"
+            - name: DB_DEGRADED_BOOT
+              value: "0"
             - name: MEDIA_BASE_URL
               value: https://social-monitor.tyhark.com
             - name: SKIP_CHROME_INSTALL

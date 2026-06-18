@@ -29,6 +29,10 @@ function positiveNumber(name, fallback) {
     return Number.isFinite(value) && value > 0 ? value : fallback;
 }
 
+function envFlag(name) {
+    return ['1', 'true', 'yes', 'on'].includes(String(process.env[name] || '').trim().toLowerCase());
+}
+
 function stableKey(value) {
     if (!value || typeof value !== 'object') return String(value || '');
     return JSON.stringify(Object.keys(value).sort().reduce((out, key) => {
@@ -57,7 +61,7 @@ function clearAnalyticsPerfCache() {
 }
 
 function getAnalyticsDb() {
-    if (process.env.DB_DEGRADED_BOOT) return null;
+    if (envFlag('DB_DEGRADED_BOOT')) return null;
     if (_analyticsDb) return _analyticsDb;
     if (!fs.existsSync(ANALYTICS_PATH)) return null;
     try {
@@ -73,7 +77,7 @@ function getAnalyticsDb() {
 }
 
 function getSourceDb() {
-    if (process.env.DB_DEGRADED_BOOT) return null;
+    if (envFlag('DB_DEGRADED_BOOT')) return null;
     if (_sourceDb) return _sourceDb;
     if (!fs.existsSync(SOURCE_DB_PATH)) return null;
     try {
@@ -89,7 +93,7 @@ function getSourceDb() {
 }
 
 function openWritableAnalyticsDb() {
-    if (process.env.DB_DEGRADED_BOOT) return null;
+    if (envFlag('DB_DEGRADED_BOOT')) return null;
     if (!fs.existsSync(ANALYTICS_PATH)) return null;
     const Database = require('better-sqlite3');
     const db = new Database(ANALYTICS_PATH);

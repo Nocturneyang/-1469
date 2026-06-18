@@ -25,8 +25,12 @@ const REGION_CACHE_TTL_MS = Number(process.env.REGION_CACHE_TTL_MS || 60000);
 let statsCache = { expiresAt: 0, data: null };
 let regionCache = { expiresAt: 0, data: {} };
 
+function envFlag(name) {
+    return ['1', 'true', 'yes', 'on'].includes(String(process.env[name] || '').trim().toLowerCase());
+}
+
 function getAnalyticsDb() {
-    if (process.env.DB_DEGRADED_BOOT) return null;
+    if (envFlag('DB_DEGRADED_BOOT')) return null;
     if (analyticsDb) return analyticsDb;
     if (!fs.existsSync(analyticsDbPath)) return null;
     try {
