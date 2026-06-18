@@ -23,6 +23,7 @@ Linux `-122` 通常对应磁盘配额耗尽。SQLite 在持久卷空间不足时
 - `scripts/clear-media-references.js`：新增媒体引用清理脚本，默认 dry-run，带 `--execute` 才会写库。
 - `scripts/restore-sqlite-from-backup.js`：启动期恢复脚本，使用带超时的 `PRAGMA quick_check` 校验当前库和备份；优先从校验通过的最近备份恢复。无备份时尝试 `sqlite3 .recover` 抢救可读数据；恢复前把原库及 WAL/SHM 移入 `db/recovery-*` 目录保留。
 - `DB_MAINTENANCE_MODE=1` / `ANALYTICS_MAINTENANCE_MODE=1`：数据库损坏时让 Web/API 保持可用，采集写入和分析接口快速降级，避免前端持续显示 SQLite 底层错误。
+- `DB_READONLY_MODE=1` / `COLLECTOR_WRITE_DISABLED=1`：采集库疑似损坏但仍可读时，跳过 schema migration 和采集写入，只允许页面/API 尝试读取现有消息。
 - `SQLITE_RECOVERY_ON_START=1`：容器启动时先尝试从 `/data/backups` 恢复损坏的 SQLite；恢复成功后自动关闭对应维护模式，恢复失败则继续维护模式。
 
 ## 生产应急步骤

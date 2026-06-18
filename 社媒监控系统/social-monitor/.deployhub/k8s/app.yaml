@@ -103,10 +103,14 @@ spec:
               value: "0"
             - name: DB_MAINTENANCE_MODE
               value: "0"
-            - name: ANALYTICS_MAINTENANCE_MODE
-              value: "0"
-            - name: SQLITE_RECOVERY_ON_START
+            - name: DB_READONLY_MODE
               value: "1"
+            - name: COLLECTOR_WRITE_DISABLED
+              value: "1"
+            - name: ANALYTICS_MAINTENANCE_MODE
+              value: "1"
+            - name: SQLITE_RECOVERY_ON_START
+              value: "0"
             - name: SKIP_CHROME_INSTALL
               value: "true"
             - name: PUPPETEER_SKIP_DOWNLOAD

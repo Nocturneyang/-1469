@@ -22,6 +22,8 @@ const apps = [
         DATA_DIR: process.env.DATA_DIR || "/data",
         DB_DEGRADED_BOOT: process.env.DB_DEGRADED_BOOT || "0",
         DB_MAINTENANCE_MODE: process.env.DB_MAINTENANCE_MODE || "",
+        DB_READONLY_MODE: process.env.DB_READONLY_MODE || "",
+        COLLECTOR_WRITE_DISABLED: process.env.COLLECTOR_WRITE_DISABLED || "",
         ANALYTICS_MAINTENANCE_MODE: process.env.ANALYTICS_MAINTENANCE_MODE || "",
         LOCAL_WA_RUNTIME_ENABLED: "false",
         LOCAL_TG_RUNTIME_ENABLED: "false",

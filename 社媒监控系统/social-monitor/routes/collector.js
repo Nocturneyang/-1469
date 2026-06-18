@@ -31,7 +31,10 @@ function envFlag(name) {
 }
 
 function databaseMaintenanceMode() {
-    return envFlag('DB_MAINTENANCE_MODE') || envFlag('DB_DEGRADED_BOOT');
+    return envFlag('DB_MAINTENANCE_MODE') ||
+        envFlag('DB_DEGRADED_BOOT') ||
+        envFlag('DB_READONLY_MODE') ||
+        envFlag('COLLECTOR_WRITE_DISABLED');
 }
 
 function databaseMaintenanceResponse(kind) {

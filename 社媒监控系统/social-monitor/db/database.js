@@ -12,6 +12,7 @@ function envFlagValue(value) {
 }
 
 const DB_MAINTENANCE_MODE = envFlagValue(process.env.DB_MAINTENANCE_MODE);
+const DB_READONLY_MODE = envFlagValue(process.env.DB_READONLY_MODE);
 const DB_DEGRADED_BOOT = envFlagValue(process.env.DB_DEGRADED_BOOT) || DB_MAINTENANCE_MODE;
 let dbRuntimeDegraded = DB_DEGRADED_BOOT;
 let dbRuntimeDegradedReason = DB_DEGRADED_BOOT
@@ -39,7 +40,7 @@ function createUnavailableDb(reason = 'database unavailable: DB_DEGRADED_BOOT is
 let db = createUnavailableDb(dbRuntimeDegradedReason || 'database unavailable');
 if (!DB_DEGRADED_BOOT) {
     try {
-        db = new Database(dbPath);
+        db = new Database(dbPath, DB_READONLY_MODE ? { readonly: true, fileMustExist: true } : undefined);
     } catch (err) {
         dbRuntimeDegraded = true;
         dbRuntimeDegradedReason = `failed to open database.sqlite: ${err.message}`;
@@ -62,6 +63,9 @@ function safePragma(database, statement, label) {
 // can report the problem.
 if (dbRuntimeDegraded) {
     console.warn(`[DB] SQLite access is disabled for this process: ${dbRuntimeDegradedReason}`);
+} else if (DB_READONLY_MODE) {
+    console.warn('[DB] DB_READONLY_MODE enabled; database.sqlite opened read-only and schema migrations are skipped');
+    safePragma(db, 'busy_timeout = 5000', 'set busy timeout');
 } else {
     safePragma(db, 'journal_mode = WAL', 'enable WAL');
     safePragma(db, 'busy_timeout = 5000', 'set busy timeout');
@@ -374,7 +378,7 @@ function initSchema() {
     }
 }
 
-if (!dbRuntimeDegraded) {
+if (!dbRuntimeDegraded && !DB_READONLY_MODE) {
     try {
         initSchema();
     } catch (err) {

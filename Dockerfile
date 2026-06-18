@@ -24,7 +24,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     fonts-noto-cjk \
     procps \
     python3 \
-    sqlite3 \
     && rm -rf /var/lib/apt/lists/*
 
 COPY 社媒监控系统/social-monitor/package*.json ./
