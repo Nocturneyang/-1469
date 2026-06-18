@@ -1,5 +1,8 @@
+const path = require('path');
+require('dotenv').config({ path: path.join(process.env.DATA_DIR || path.join(__dirname, '..'), '.env') });
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
+
 
 const allowEphemeralJwtSecret = truthy(process.env.SSO_ENABLED || process.env.SKYLINE_SSO_ENABLED) ||
     truthy(process.env.DB_DEGRADED_BOOT);

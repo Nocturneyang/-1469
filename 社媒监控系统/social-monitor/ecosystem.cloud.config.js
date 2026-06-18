@@ -20,6 +20,7 @@ const apps = [
       env: {
         NODE_ENV: "production",
         DATA_DIR: process.env.DATA_DIR || "/data",
+        JWT_SECRET: process.env.JWT_SECRET || "",
         DB_DEGRADED_BOOT: process.env.DB_DEGRADED_BOOT || "0",
         DB_MAINTENANCE_MODE: process.env.DB_MAINTENANCE_MODE || "",
         DB_READONLY_MODE: process.env.DB_READONLY_MODE || "",
@@ -28,6 +29,8 @@ const apps = [
         LOCAL_WA_RUNTIME_ENABLED: "false",
         LOCAL_TG_RUNTIME_ENABLED: "false",
         COLLECTOR_TOKEN: process.env.COLLECTOR_TOKEN || "",
+        SSO_ENABLED: process.env.SSO_ENABLED || "",
+        SSO_LOGIN_URL: process.env.SSO_LOGIN_URL || "",
         SSO_ADMIN_USERS: process.env.SSO_ADMIN_USERS || "",
         SSO_REDIRECT_PARAM: process.env.SSO_REDIRECT_PARAM || "",
         SSO_USERINFO_URL: process.env.SSO_USERINFO_URL || ""
