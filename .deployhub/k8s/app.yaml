@@ -40,7 +40,7 @@ spec:
   storageClassName: nas
   resources:
     requests:
-      storage: 10Gi
+      storage: 30Gi
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -103,9 +103,9 @@ spec:
             - name: DB_MAINTENANCE_MODE
               value: "0"
             - name: DB_READONLY_MODE
-              value: "1"
+              value: "0"
             - name: COLLECTOR_WRITE_DISABLED
-              value: "1"
+              value: "0"
             - name: ANALYTICS_MAINTENANCE_MODE
               value: "0"
             - name: SQLITE_RECOVERY_ON_START
