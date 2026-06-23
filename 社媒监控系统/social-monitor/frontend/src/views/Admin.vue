@@ -24,6 +24,7 @@
           @delete="deleteAccount"
           @restart="handleRestart"
           @relogin="handleRelogin"
+          @runtime-action="handleRuntimeAction"
           @teams-backfill="handleTeamsBackfill"
           @teams-relogin="handleTeamsRelogin"
           @tgu-ratelimit="openRateLimitModal"
@@ -197,6 +198,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   getAccounts,
   getWaSupervisorStatus,
+  accountRuntimeAction,
   createWaAccount as createWaAccountApi,
   createTeamsAccount,
   createTgUserAccount,
@@ -374,6 +376,20 @@ const handleRelogin = async (acc, actionType) => {
     const res = isLogout ? await logoutAccount({ id: acc.id }) : await reloginAccount({ id: acc.id })
     if (res.success) {
       ElMessage.success('指令已发送')
+      fetchAccounts()
+    } else {
+      ElMessage.error(res.error)
+    }
+  } catch (e) {}
+}
+
+const handleRuntimeAction = async (acc, action) => {
+  const labels = { start: '启动', stop: '停止', restart: '滚动重启', relogin: '重新登录' }
+  try {
+    await ElMessageBox.confirm(`确定要${labels[action] || action}账号 ${acc.id} 的云端采集 Pod 吗？`, '云端运行时', { type: 'warning' })
+    const res = await accountRuntimeAction(acc.id, action)
+    if (res.success) {
+      ElMessage.success('云端运行时指令已发送')
       fetchAccounts()
     } else {
       ElMessage.error(res.error)

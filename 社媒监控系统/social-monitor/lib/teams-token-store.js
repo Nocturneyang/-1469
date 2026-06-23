@@ -15,11 +15,12 @@ const fs = require('fs');
 const path = require('path');
 const { db } = require('../db/database');
 const graphClient = require('./microsoft-graph-client');
+const { sessionDir } = require('./account-session-store');
 
 const ROOT = process.env.DATA_DIR || path.join(__dirname, '..');
 
-// 加密密钥（从环境变量读取，实际应该使用更安全的密钥管理）
-const ENCRYPTION_KEY = process.env.TEAMS_TOKEN_ENCRYPTION_KEY || crypto.randomBytes(32).toString('hex');
+// 加密密钥必须固定配置；随机兜底会导致重启后历史 token 无法解密。
+const ENCRYPTION_KEY = process.env.ACCOUNT_SESSION_ENCRYPTION_KEY || process.env.TEAMS_TOKEN_ENCRYPTION_KEY || '';
 const ALGORITHM = 'aes-256-gcm';
 const IV_LENGTH = 16;
 const SALT_LENGTH = 32;
@@ -29,6 +30,9 @@ const TAG_LENGTH = 16;
  * 加密数据
  */
 function encrypt(text) {
+    if (!ENCRYPTION_KEY || ENCRYPTION_KEY === 'your_encryption_key_here') {
+        throw new Error('ACCOUNT_SESSION_ENCRYPTION_KEY is required for Teams token storage');
+    }
     const iv = crypto.randomBytes(IV_LENGTH);
     const salt = crypto.randomBytes(SALT_LENGTH);
     const key = crypto.pbkdf2Sync(ENCRYPTION_KEY, salt, 100000, 32, 'sha256');
@@ -46,6 +50,9 @@ function encrypt(text) {
  * 解密数据
  */
 function decrypt(encryptedData) {
+    if (!ENCRYPTION_KEY || ENCRYPTION_KEY === 'your_encryption_key_here') {
+        throw new Error('ACCOUNT_SESSION_ENCRYPTION_KEY is required for Teams token storage');
+    }
     const buffer = Buffer.from(encryptedData, 'base64');
     const salt = buffer.slice(0, SALT_LENGTH);
     const iv = buffer.slice(SALT_LENGTH, SALT_LENGTH + IV_LENGTH);
@@ -65,6 +72,10 @@ function decrypt(encryptedData) {
  * 获取账号的 token 存储路径
  */
 function getTokenFilePath(accountName) {
+    return path.join(sessionDir('teams', accountName), 'tokens.json');
+}
+
+function getLegacyTokenFilePath(accountName) {
     return path.join(ROOT, `teams-profile-${accountName}`, 'tokens.json');
 }
 
@@ -72,7 +83,7 @@ function getTokenFilePath(accountName) {
  * 保存 token 和用户信息
  */
 function saveTokens(accountName, tokenData, userInfo = null) {
-    const profileDir = path.join(ROOT, `teams-profile-${accountName}`);
+    const profileDir = sessionDir('teams', accountName);
     if (!fs.existsSync(profileDir)) fs.mkdirSync(profileDir, { recursive: true });
     
     const data = {
@@ -90,7 +101,9 @@ function saveTokens(accountName, tokenData, userInfo = null) {
  * 读取 token
  */
 function loadTokens(accountName) {
-    const filePath = getTokenFilePath(accountName);
+    const primaryPath = getTokenFilePath(accountName);
+    const legacyPath = getLegacyTokenFilePath(accountName);
+    const filePath = fs.existsSync(primaryPath) ? primaryPath : legacyPath;
     if (!fs.existsSync(filePath)) return null;
     
     try {
@@ -167,10 +180,11 @@ function updateUserInfo(accountName, userInfo) {
  * 清除 token（强制重新授权）
  */
 function clearTokens(accountName) {
-    const filePath = getTokenFilePath(accountName);
-    if (fs.existsSync(filePath)) {
-        fs.unlinkSync(filePath);
-        console.log(`[TeamsTokenStore:${accountName}] Token 已清除`);
+    for (const filePath of [getTokenFilePath(accountName), getLegacyTokenFilePath(accountName)]) {
+        if (fs.existsSync(filePath)) {
+            fs.unlinkSync(filePath);
+            console.log(`[TeamsTokenStore:${accountName}] Token 已清除: ${filePath}`);
+        }
     }
 }
 
@@ -178,7 +192,7 @@ function clearTokens(accountName) {
  * 检查账号是否有已保存的 token
  */
 function hasTokens(accountName) {
-    return fs.existsSync(getTokenFilePath(accountName));
+    return fs.existsSync(getTokenFilePath(accountName)) || fs.existsSync(getLegacyTokenFilePath(accountName));
 }
 
 /**

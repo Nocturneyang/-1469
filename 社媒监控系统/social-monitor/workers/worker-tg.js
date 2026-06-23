@@ -13,11 +13,12 @@ const { shanghaiISOString } = require('../lib/time');
 const { isMediaUploadDisabled } = require('../lib/media-policy');
 
 const accountName = process.env.TG_ACCOUNT_NAME || 'default';
+const accountKey = accountName.toUpperCase().replace(/-/g, '_');
 const accountId = `tg-${accountName}`;
 const collectorId = process.env.COLLECTOR_ID || `pm2:tg:${accountName}`;
 const runId = process.env.TG_RUN_ID || `${accountName}-${Date.now()}-${process.pid}`;
 const runStartedAt = shanghaiISOString();
-const token = process.env.TG_BOT_TOKEN;
+const token = process.env[`TG_BOT_TOKEN_${accountKey}`] || process.env.TG_BOT_TOKEN;
 const collectorClient = createCollectorClient({
     baseUrl: process.env.COLLECTOR_API_URL,
     token: process.env.COLLECTOR_TOKEN,

@@ -7,6 +7,10 @@ const { TelegramClient } = require('telegram');
 const { StringSession } = require('telegram/sessions');
 const { getSession, saveSession, revokeSession, getSessionStatus, getRateLimit, saveRateLimit } = require('../lib/tg-session-store');
 const { getTasks, pauseTasks, resumeTasks, resetTask } = require('../lib/tg-backfill-queue');
+const {
+    CloudCollectorOrchestrator,
+    isCloudCollectorEnabled
+} = require('../lib/cloud-collector-orchestrator');
 
 function createTgUserRouter({ safeWriteEcosystem }) {
     const router = express.Router();
@@ -399,7 +403,7 @@ function createTgUserRouter({ safeWriteEcosystem }) {
     });
 
     // create-tg-user 挂在 /api/accounts 前缀下，由 server.js 挂载
-    router.post('/create', (req, res) => {
+    router.post('/create', async (req, res) => {
         const { id, api_id, api_hash, warmup_seconds, daily_limit, batch_size,
                 sleep_min_ms, sleep_max_ms, backfill_days, enable_backfill } = req.body;
 
@@ -429,6 +433,25 @@ function createTgUserRouter({ safeWriteEcosystem }) {
                 [`TG_API_HASH_${accountKey}`]: api_hash
             });
             saveRateLimit(id, cfg);
+
+            if (isCloudCollectorEnabled()) {
+                const accountId = `tgu-${id}`;
+                db.prepare(`
+                    INSERT INTO accounts (id, platform, status, health_status, runtime_provider, runtime_desired_state, updated_at)
+                    VALUES (?, 'telegram', 'idle', 'waiting_login', 'k8s', 'running', datetime('now', '+8 hours'))
+                    ON CONFLICT(id) DO UPDATE SET
+                        status = excluded.status,
+                        health_status = excluded.health_status,
+                        runtime_provider = excluded.runtime_provider,
+                        runtime_desired_state = excluded.runtime_desired_state,
+                        updated_at = datetime('now', '+8 hours')
+                `).run(accountId);
+                await new CloudCollectorOrchestrator({ logger: console }).ensureRuntime(accountId, { migrationSource: 'web-create' });
+                return res.json({
+                    success: true,
+                    message: `TG 用户账号 ${accountId} 云端采集 Pod 已创建，请继续完成网页登录验证码流程。`
+                });
+            }
 
             if (!LOCAL_TG_RUNTIME_ENABLED) {
                 db.prepare(`

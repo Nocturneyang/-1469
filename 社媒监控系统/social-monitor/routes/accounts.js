@@ -10,6 +10,12 @@ const {
 } = require('../lib/wa-chrome-runtime');
 const { readEnvFile, writeEnvKeys } = require('../lib/env-config');
 const { parseShanghaiDate } = require('../lib/time');
+const {
+    CloudCollectorOrchestrator,
+    isCloudCollectorEnabled
+} = require('../lib/cloud-collector-orchestrator');
+const { getSessionStatus: getTgUserSessionStatus } = require('../lib/tg-session-store');
+const teamsTokenStore = require('../lib/teams-token-store');
 const puppeteer = require('puppeteer');
 
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '..');
@@ -369,6 +375,42 @@ function clearTgUserRuntimeConfig(accountName) {
     });
 }
 
+function accountEnvKey(accountName) {
+    return String(accountName || '').toUpperCase().replace(/-/g, '_');
+}
+
+function getRuntimeSpec(accountId) {
+    try {
+        return db.prepare('SELECT * FROM collector_runtime_specs WHERE account_id = ?').get(accountId) || null;
+    } catch (_) {
+        return null;
+    }
+}
+
+function shouldUseCloudRuntime(accountId) {
+    if (isCloudCollectorEnabled()) return true;
+    const spec = getRuntimeSpec(accountId);
+    return spec?.runtime_provider === 'k8s';
+}
+
+function createCloudOrchestrator() {
+    return new CloudCollectorOrchestrator({ logger: console });
+}
+
+function inferSessionStatus(acc) {
+    try {
+        if (acc.id.startsWith('tgu-')) return getTgUserSessionStatus(acc.id.replace('tgu-', ''));
+        if (acc.id.startsWith('teams-')) return teamsTokenStore.hasTokens(acc.id.replace('teams-', '')) ? 'configured' : 'not_configured';
+        if (acc.id.startsWith('wa-')) {
+            const name = acc.id.replace('wa-', '');
+            const cloudSession = path.join(DATA_DIR, 'collector-sessions', 'wa', `session-${name}`);
+            const localSession = path.join(DATA_DIR, '.wwebjs_auth', `session-${name}`);
+            return fs.existsSync(cloudSession) || fs.existsSync(localSession) ? 'configured' : 'not_configured';
+        }
+    } catch (_) {}
+    return acc.session_status || null;
+}
+
 let mutationChain = Promise.resolve();
 
 function serializeMutation(taskFn) {
@@ -399,6 +441,12 @@ function createAccountsRouter({ safeWriteEcosystem }) {
                 FROM collector_heartbeats
                 ORDER BY datetime(updated_at) DESC
             `).all();
+            const runtimeSpecs = db.prepare(`
+                SELECT *
+                FROM collector_runtime_specs
+                ORDER BY datetime(updated_at) DESC
+            `).all();
+            const runtimeSpecByAccount = new Map(runtimeSpecs.map(item => [item.account_id, item]));
             const heartbeatByAccount = new Map();
             for (const row of heartbeats) {
                 if (!heartbeatByAccount.has(row.account_id)) heartbeatByAccount.set(row.account_id, row);
@@ -406,6 +454,21 @@ function createAccountsRouter({ safeWriteEcosystem }) {
             
             // Add running status assessment for each account
             accounts.forEach(acc => {
+                const runtimeSpec = runtimeSpecByAccount.get(acc.id);
+                if (runtimeSpec) {
+                    acc.runtime_provider = runtimeSpec.runtime_provider || acc.runtime_provider || 'k8s';
+                    acc.runtime_desired_state = runtimeSpec.desired_state;
+                    acc.deployment_name = runtimeSpec.deployment_name;
+                    acc.runtime_spec = {
+                        desired_state: runtimeSpec.desired_state,
+                        deployment_name: runtimeSpec.deployment_name,
+                        namespace: runtimeSpec.namespace,
+                        session_dir: runtimeSpec.session_dir,
+                        last_applied_at: runtimeSpec.last_applied_at,
+                        last_error: runtimeSpec.last_error
+                    };
+                }
+                acc.session_status = inferSessionStatus(acc);
                 const chromeStats = waChromeById.get(acc.id);
                 const heartbeat = heartbeatByAccount.get(acc.id);
                 const heartbeatAge = heartbeat ? secondsSince(heartbeat.updated_at) : null;
@@ -618,6 +681,15 @@ function createAccountsRouter({ safeWriteEcosystem }) {
         if (!/^(wa|tg|tgu)-[a-zA-Z0-9_-]+$/.test(id)) return res.status(400).json({ success: false, error: 'Invalid account id format' });
         
         try {
+            if (shouldUseCloudRuntime(id)) {
+                const orchestrator = createCloudOrchestrator();
+                if (!getRuntimeSpec(id)) await orchestrator.ensureRuntime(id, { migrationSource: 'api-logout' });
+                if (id.startsWith('wa-')) orchestrator.clearSession(id);
+                await orchestrator.restart(id);
+                db.prepare(`UPDATE accounts SET status = 'disconnected', qr_code = NULL, runtime_provider = 'k8s', updated_at = datetime('now', '+8 hours') WHERE id = ?`).run(id);
+                return res.json({ success: true, message: 'Cloud collector session cleared and restarted.' });
+            }
+
             if (id.startsWith('wa-')) {
                 if (!LOCAL_WA_RUNTIME_ENABLED) {
                     return res.status(409).json({ success: false, error: '生产端已禁用本地 WA 运行时，请在本地 collector 机器执行重登/重启。' });
@@ -646,6 +718,14 @@ function createAccountsRouter({ safeWriteEcosystem }) {
         try {
             let workerName = '';
             let accName = '';
+            if (shouldUseCloudRuntime(id)) {
+                const orchestrator = createCloudOrchestrator();
+                if (!getRuntimeSpec(id)) await orchestrator.ensureRuntime(id, { migrationSource: 'api-restart' });
+                await orchestrator.restart(id);
+                db.prepare(`UPDATE accounts SET runtime_provider = 'k8s', runtime_desired_state = 'running', orchestrator_state = 'restarting', updated_at = datetime('now', '+8 hours') WHERE id = ?`).run(id);
+                return res.json({ success: true, message: 'Cloud collector restart command sent.' });
+            }
+
             if (id.startsWith('wa-')) {
                 if (!LOCAL_WA_RUNTIME_ENABLED) {
                     return res.status(409).json({ success: false, error: '生产端已禁用本地 WA 运行时，请在本地 collector 机器重启对应 PM2 进程。' });
@@ -700,6 +780,15 @@ function createAccountsRouter({ safeWriteEcosystem }) {
         try {
             let workerName = '';
             let accName = '';
+            if (shouldUseCloudRuntime(id)) {
+                const orchestrator = createCloudOrchestrator();
+                if (!getRuntimeSpec(id)) await orchestrator.ensureRuntime(id, { migrationSource: 'api-relogin' });
+                if (id.startsWith('wa-')) orchestrator.clearSession(id);
+                db.prepare(`UPDATE accounts SET status = 'initializing', qr_code = NULL, runtime_provider = 'k8s', runtime_desired_state = 'running', updated_at = datetime('now', '+8 hours') WHERE id = ?`).run(id);
+                await orchestrator.restart(id);
+                return res.json({ success: true, message: 'Cloud collector relogin command sent.' });
+            }
+
             if (id.startsWith('wa-')) {
                 if (!LOCAL_WA_RUNTIME_ENABLED) {
                     return res.status(409).json({ success: false, error: '生产端已禁用本地 WA 运行时，请在本地 collector 机器清理 session 并重启。' });
@@ -743,6 +832,47 @@ function createAccountsRouter({ safeWriteEcosystem }) {
         }
     }));
 
+    router.get('/:id/runtime', async (req, res) => {
+        const { id } = req.params;
+        if (!/^(wa|tg|tgu|teams)-[a-zA-Z0-9_-]+$/.test(id)) {
+            return res.status(400).json({ success: false, error: 'Invalid account id format' });
+        }
+        try {
+            const orchestrator = createCloudOrchestrator();
+            const data = await orchestrator.runtimeStatus(id);
+            if (!data) return res.status(404).json({ success: false, error: 'Runtime spec not found' });
+            res.json({ success: true, data });
+        } catch (err) {
+            res.status(500).json({ success: false, error: err.message });
+        }
+    });
+
+    router.post('/:id/runtime/:action', (req, res) => runSerializedMutation('Runtime Action', req, res, async () => {
+        const { id, action } = req.params;
+        if (!/^(wa|tg|tgu|teams)-[a-zA-Z0-9_-]+$/.test(id)) {
+            return res.status(400).json({ success: false, error: 'Invalid account id format' });
+        }
+        if (!['start', 'stop', 'restart', 'relogin'].includes(action)) {
+            return res.status(400).json({ success: false, error: 'Invalid runtime action' });
+        }
+
+        const orchestrator = createCloudOrchestrator();
+        if (action === 'start') {
+            if (!getRuntimeSpec(id)) await orchestrator.ensureRuntime(id, { migrationSource: 'api-runtime-start' });
+            await orchestrator.start(id);
+        } else if (action === 'stop') {
+            await orchestrator.stop(id);
+        } else if (action === 'restart') {
+            await orchestrator.restart(id);
+        } else if (action === 'relogin') {
+            if (id.startsWith('wa-')) orchestrator.clearSession(id);
+            await orchestrator.restart(id);
+            db.prepare(`UPDATE accounts SET status = 'initializing', qr_code = NULL, updated_at = datetime('now', '+8 hours') WHERE id = ?`).run(id);
+        }
+
+        res.json({ success: true, message: `Runtime ${action} command sent.` });
+    }));
+
     router.delete('/:id', (req, res) => runSerializedMutation('Delete Account', req, res, async () => {
         const { id } = req.params;
         console.log('[DELETE ACCOUNT] Request to delete:', id);
@@ -766,6 +896,14 @@ function createAccountsRouter({ safeWriteEcosystem }) {
                 workerName = `worker-teams-${accName}`;
             } else {
                 return res.status(400).json({ success: false, error: 'Invalid account id prefix' });
+            }
+
+            if (shouldUseCloudRuntime(id) || getRuntimeSpec(id)) {
+                try {
+                    await createCloudOrchestrator().delete(id);
+                } catch (err) {
+                    console.warn(`[DELETE ACCOUNT] Failed to delete cloud runtime for ${id}: ${err.message}`);
+                }
             }
 
             db.prepare('DELETE FROM accounts WHERE id = ?').run(id);
@@ -824,6 +962,42 @@ function createAccountsRouter({ safeWriteEcosystem }) {
         if (token && !/^[a-zA-Z0-9_:.-]+$/.test(token)) return res.status(400).json({ success: false, error: 'Invalid token format' });
 
         try {
+            if (isCloudCollectorEnabled()) {
+                const orchestrator = createCloudOrchestrator();
+                if (platform === 'whatsapp') {
+                    const accountId = `wa-${trimmedId}`;
+                    db.prepare(`
+                        INSERT INTO accounts (id, platform, status, health_status, runtime_provider, runtime_desired_state, updated_at)
+                        VALUES (?, 'whatsapp', 'initializing', 'starting', 'k8s', 'running', datetime('now', '+8 hours'))
+                        ON CONFLICT(id) DO UPDATE SET
+                            status = 'initializing',
+                            health_status = 'starting',
+                            runtime_provider = 'k8s',
+                            runtime_desired_state = 'running',
+                            updated_at = datetime('now', '+8 hours')
+                    `).run(accountId);
+                    await orchestrator.ensureRuntime(accountId, { migrationSource: 'web-create' });
+                    return res.json({ success: true, message: 'WhatsApp 云端采集 Pod 已创建，请稍后在列表中扫描二维码。' });
+                }
+
+                if (platform === 'telegram') {
+                    const accountId = `tg-${trimmedId}`;
+                    writeEnvKeys({ [`TG_BOT_TOKEN_${accountEnvKey(trimmedId)}`]: token });
+                    db.prepare(`
+                        INSERT INTO accounts (id, platform, status, health_status, runtime_provider, runtime_desired_state, updated_at)
+                        VALUES (?, 'telegram', 'initializing', 'starting', 'k8s', 'running', datetime('now', '+8 hours'))
+                        ON CONFLICT(id) DO UPDATE SET
+                            status = 'initializing',
+                            health_status = 'starting',
+                            runtime_provider = 'k8s',
+                            runtime_desired_state = 'running',
+                            updated_at = datetime('now', '+8 hours')
+                    `).run(accountId);
+                    await orchestrator.ensureRuntime(accountId, { migrationSource: 'web-create' });
+                    return res.json({ success: true, message: 'TG Bot 云端采集 Pod 已创建。' });
+                }
+            }
+
             let workerName, scriptPath;
             if (platform === 'whatsapp') {
                 workerName = `worker-wa-${trimmedId}`;

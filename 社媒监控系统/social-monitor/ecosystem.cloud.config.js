@@ -28,6 +28,12 @@ const apps = [
         ANALYTICS_MAINTENANCE_MODE: process.env.ANALYTICS_MAINTENANCE_MODE || "",
         LOCAL_WA_RUNTIME_ENABLED: "false",
         LOCAL_TG_RUNTIME_ENABLED: "false",
+        CLOUD_COLLECTOR_ENABLED: process.env.CLOUD_COLLECTOR_ENABLED || "",
+        CLOUD_COLLECTOR_IMAGE: process.env.CLOUD_COLLECTOR_IMAGE || "",
+        CLOUD_COLLECTOR_API_URL: process.env.CLOUD_COLLECTOR_API_URL || "http://social-monitor/api/collector",
+        CLOUD_COLLECTOR_SECRET_NAME: process.env.CLOUD_COLLECTOR_SECRET_NAME || "social-monitor-secrets",
+        CLOUD_COLLECTOR_PVC: process.env.CLOUD_COLLECTOR_PVC || "social-monitor-sqlite-pvc",
+        ACCOUNT_SESSION_ENCRYPTION_KEY: process.env.ACCOUNT_SESSION_ENCRYPTION_KEY || "",
         COLLECTOR_TOKEN: process.env.COLLECTOR_TOKEN || "",
         SSO_ENABLED: process.env.SSO_ENABLED || "",
         SSO_LOGIN_URL: process.env.SSO_LOGIN_URL || "",
@@ -47,6 +53,25 @@ const apps = [
       env: {
         NODE_ENV: "production",
         DATA_DIR: process.env.DATA_DIR || "/data"
+      }
+    },
+    {
+      name: "cloud-collector-supervisor",
+      script: "./workers/cloud-collector-supervisor.js",
+      instances: 1,
+      exec_mode: "fork",
+      autorestart: true,
+      watch: false,
+      max_memory_restart: "256M",
+      env: {
+        NODE_ENV: "production",
+        DATA_DIR: process.env.DATA_DIR || "/data",
+        CLOUD_COLLECTOR_ENABLED: process.env.CLOUD_COLLECTOR_ENABLED || "",
+        CLOUD_COLLECTOR_IMAGE: process.env.CLOUD_COLLECTOR_IMAGE || "",
+        CLOUD_COLLECTOR_API_URL: process.env.CLOUD_COLLECTOR_API_URL || "http://social-monitor/api/collector",
+        CLOUD_COLLECTOR_SECRET_NAME: process.env.CLOUD_COLLECTOR_SECRET_NAME || "social-monitor-secrets",
+        CLOUD_COLLECTOR_PVC: process.env.CLOUD_COLLECTOR_PVC || "social-monitor-sqlite-pvc",
+        ACCOUNT_SESSION_ENCRYPTION_KEY: process.env.ACCOUNT_SESSION_ENCRYPTION_KEY || ""
       }
     },
     {

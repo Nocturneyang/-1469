@@ -6,6 +6,10 @@ const { db } = require('../db/database');
 const { writeEnvKeys } = require('../lib/env-config');
 const graphClient = require('../lib/microsoft-graph-client');
 const tokenStore = require('../lib/teams-token-store');
+const {
+    CloudCollectorOrchestrator,
+    isCloudCollectorEnabled
+} = require('../lib/cloud-collector-orchestrator');
 
 function createTeamsRouter({ safeWriteEcosystem }) {
     const router = express.Router();
@@ -161,7 +165,7 @@ function createTeamsRouter({ safeWriteEcosystem }) {
         }
     });
 
-    router.post('/create', (req, res) => {
+    router.post('/create', async (req, res) => {
         const { id } = req.body;
         if (!id) return res.status(400).json({ success: false, error: '缺少账号 ID' });
         if (!/^[a-zA-Z0-9_-]+$/.test(id)) return res.status(400).json({ success: false, error: 'ID 只能包含字母、数字、下划线和横线（支持驼峰命名）' });
@@ -170,6 +174,21 @@ function createTeamsRouter({ safeWriteEcosystem }) {
         const accountKey = `teams-${id}`;
 
         try {
+            if (isCloudCollectorEnabled()) {
+                db.prepare(`
+                    INSERT INTO accounts (id, platform, status, health_status, runtime_provider, runtime_desired_state, updated_at)
+                    VALUES (?, 'teams', 'qr', 'waiting_oauth', 'k8s', 'running', datetime('now', '+8 hours'))
+                    ON CONFLICT(id) DO UPDATE SET
+                        status = excluded.status,
+                        health_status = excluded.health_status,
+                        runtime_provider = excluded.runtime_provider,
+                        runtime_desired_state = excluded.runtime_desired_state,
+                        updated_at = datetime('now', '+8 hours')
+                `).run(accountKey);
+                await new CloudCollectorOrchestrator({ logger: console }).ensureRuntime(accountKey, { migrationSource: 'web-create' });
+                return res.json({ success: true, message: `账号 ${accountKey} 云端采集 Pod 已创建，请前往账号管理完成 OAuth 授权` });
+            }
+
             db.prepare(`INSERT OR REPLACE INTO accounts (id, platform, status) VALUES (?, 'teams', 'initializing')`).run(accountKey);
 
             const ecoPath = path.join(process.env.DATA_DIR || path.join(__dirname, '..'), 'ecosystem.config.js');
@@ -269,8 +288,18 @@ function createTeamsRouter({ safeWriteEcosystem }) {
             const sessionStore = require('../lib/teams-session-store');
             sessionStore.clearSession(name);
             
-            // 重启 worker
-            exec(`npx pm2 restart worker-teams-${name}`, { cwd: path.join(__dirname, '..') }, () => {});
+            if (isCloudCollectorEnabled()) {
+                const accountKey = `teams-${name}`;
+                const orchestrator = new CloudCollectorOrchestrator({ logger: console });
+                if (!db.prepare('SELECT account_id FROM collector_runtime_specs WHERE account_id = ?').get(accountKey)) {
+                    await orchestrator.ensureRuntime(accountKey, { migrationSource: 'teams-relogin' });
+                } else {
+                    await orchestrator.restart(accountKey);
+                }
+            } else {
+                // 重启 worker
+                exec(`npx pm2 restart worker-teams-${name}`, { cwd: path.join(__dirname, '..') }, () => {});
+            }
             
             res.json({ success: true, message: 'Token 已清除，请重新授权' });
         } catch (e) {

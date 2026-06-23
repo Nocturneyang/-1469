@@ -14,6 +14,7 @@ function envFlagValue(value) {
 const DB_MAINTENANCE_MODE = envFlagValue(process.env.DB_MAINTENANCE_MODE);
 const DB_READONLY_MODE = envFlagValue(process.env.DB_READONLY_MODE);
 const DB_DEGRADED_BOOT = envFlagValue(process.env.DB_DEGRADED_BOOT) || DB_MAINTENANCE_MODE;
+const COLLECTOR_REMOTE_ONLY = envFlagValue(process.env.COLLECTOR_REMOTE_ONLY);
 let dbRuntimeDegraded = DB_DEGRADED_BOOT;
 let dbRuntimeDegradedReason = DB_DEGRADED_BOOT
     ? (DB_MAINTENANCE_MODE ? 'DB_MAINTENANCE_MODE is enabled' : 'DB_DEGRADED_BOOT is enabled')
@@ -38,7 +39,11 @@ function createUnavailableDb(reason = 'database unavailable: DB_DEGRADED_BOOT is
 }
 
 let db = createUnavailableDb(dbRuntimeDegradedReason || 'database unavailable');
-if (!DB_DEGRADED_BOOT) {
+if (COLLECTOR_REMOTE_ONLY) {
+    dbRuntimeDegraded = true;
+    dbRuntimeDegradedReason = 'COLLECTOR_REMOTE_ONLY is enabled';
+    db = createUnavailableDb(`database unavailable: ${dbRuntimeDegradedReason}`);
+} else if (!DB_DEGRADED_BOOT) {
     try {
         db = new Database(dbPath, DB_READONLY_MODE ? { readonly: true, fileMustExist: true } : undefined);
     } catch (err) {
@@ -61,7 +66,9 @@ function safePragma(database, statement, label) {
 // Enable WAL mode for better concurrency performance. If the persisted DB is
 // already in a bad I/O state, do not crash the UI server before health routes
 // can report the problem.
-if (dbRuntimeDegraded) {
+if (COLLECTOR_REMOTE_ONLY) {
+    console.warn('[DB] COLLECTOR_REMOTE_ONLY enabled; local SQLite writes are disabled in this collector process');
+} else if (dbRuntimeDegraded) {
     console.warn(`[DB] SQLite access is disabled for this process: ${dbRuntimeDegradedReason}`);
 } else if (DB_READONLY_MODE) {
     console.warn('[DB] DB_READONLY_MODE enabled; database.sqlite opened read-only and schema migrations are skipped');
@@ -139,6 +146,9 @@ function initSchema() {
             collector_phase TEXT,
             collector_run_id TEXT,
             collector_heartbeat_age_seconds INTEGER,
+            runtime_desired_state TEXT,
+            deployment_name TEXT,
+            session_status TEXT,
             last_runtime_event_at DATETIME,
             last_restart_reason TEXT,
             last_supervisor_check_at DATETIME,
@@ -188,8 +198,27 @@ function initSchema() {
             updated_at DATETIME DEFAULT (datetime('now', '+8 hours'))
         );
 
+        CREATE TABLE IF NOT EXISTS collector_runtime_specs (
+            account_id TEXT PRIMARY KEY,
+            platform TEXT NOT NULL,
+            account_name TEXT NOT NULL,
+            runtime_provider TEXT NOT NULL DEFAULT 'k8s',
+            desired_state TEXT NOT NULL DEFAULT 'running',
+            deployment_name TEXT,
+            namespace TEXT,
+            image TEXT,
+            resource_json TEXT,
+            session_dir TEXT,
+            migration_source TEXT,
+            last_applied_at DATETIME,
+            last_error TEXT,
+            created_at DATETIME DEFAULT (datetime('now', '+8 hours')),
+            updated_at DATETIME DEFAULT (datetime('now', '+8 hours'))
+        );
+
         CREATE INDEX IF NOT EXISTS idx_collector_heartbeats_platform ON collector_heartbeats(platform, updated_at);
         CREATE INDEX IF NOT EXISTS idx_wa_runtime_events_account_time ON wa_runtime_events(account_id, created_at);
+        CREATE INDEX IF NOT EXISTS idx_collector_runtime_specs_platform ON collector_runtime_specs(platform, desired_state);
 
         CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -293,6 +322,9 @@ function initSchema() {
             collector_phase: 'TEXT',
             collector_run_id: 'TEXT',
             collector_heartbeat_age_seconds: 'INTEGER',
+            runtime_desired_state: 'TEXT',
+            deployment_name: 'TEXT',
+            session_status: 'TEXT',
             last_runtime_event_at: 'DATETIME',
             last_restart_reason: 'TEXT',
             last_supervisor_check_at: 'DATETIME'
@@ -345,6 +377,26 @@ function initSchema() {
 
             CREATE INDEX IF NOT EXISTS idx_collector_heartbeats_platform ON collector_heartbeats(platform, updated_at);
             CREATE INDEX IF NOT EXISTS idx_wa_runtime_events_account_time ON wa_runtime_events(account_id, created_at);
+
+            CREATE TABLE IF NOT EXISTS collector_runtime_specs (
+                account_id TEXT PRIMARY KEY,
+                platform TEXT NOT NULL,
+                account_name TEXT NOT NULL,
+                runtime_provider TEXT NOT NULL DEFAULT 'k8s',
+                desired_state TEXT NOT NULL DEFAULT 'running',
+                deployment_name TEXT,
+                namespace TEXT,
+                image TEXT,
+                resource_json TEXT,
+                session_dir TEXT,
+                migration_source TEXT,
+                last_applied_at DATETIME,
+                last_error TEXT,
+                created_at DATETIME DEFAULT (datetime('now', '+8 hours')),
+                updated_at DATETIME DEFAULT (datetime('now', '+8 hours'))
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_collector_runtime_specs_platform ON collector_runtime_specs(platform, desired_state);
 
             CREATE TABLE IF NOT EXISTS sso_admins (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -401,6 +453,7 @@ function getDbRuntimeDegradedReason() {
 
 // Insert message with duplicate handling
 function saveMessage(data) {
+    if (COLLECTOR_REMOTE_ONLY) return { changes: 0, remoteOnly: true };
     try {
         const stmt = db.prepare(`
             INSERT INTO messages (
@@ -424,6 +477,7 @@ function saveMessage(data) {
 }
 
 function updateAccountStatus(id, platform, status, pushname = null, qrCode = null) {
+    if (COLLECTOR_REMOTE_ONLY) return;
     try {
         const stmt = db.prepare(`
             INSERT INTO accounts (id, platform, status, pushname, qr_code, updated_at)
@@ -448,6 +502,7 @@ function toDateTime(value) {
 }
 
 function upsertCollectorHeartbeat(data) {
+    if (COLLECTOR_REMOTE_ONLY) return;
     try {
         const stmt = db.prepare(`
             INSERT INTO collector_heartbeats (
@@ -498,6 +553,7 @@ function upsertCollectorHeartbeat(data) {
 }
 
 function recordRuntimeEvent(data) {
+    if (COLLECTOR_REMOTE_ONLY) return;
     try {
         db.prepare(`
             INSERT INTO wa_runtime_events (
@@ -520,6 +576,140 @@ function recordRuntimeEvent(data) {
     }
 }
 
+function parseJsonSafe(value, fallback = null) {
+    if (!value) return fallback;
+    try {
+        return JSON.parse(value);
+    } catch (_) {
+        return fallback;
+    }
+}
+
+function normalizeRuntimeSpec(spec) {
+    return {
+        account_id: spec.accountId,
+        platform: spec.platform,
+        account_name: spec.accountName,
+        runtime_provider: spec.runtimeProvider || 'k8s',
+        desired_state: spec.desiredState || 'running',
+        deployment_name: spec.deploymentName || null,
+        namespace: spec.namespace || null,
+        image: spec.image || null,
+        resource_json: spec.resources ? JSON.stringify(spec.resources) : null,
+        session_dir: spec.sessionDir || null,
+        migration_source: spec.migrationSource || null,
+        last_error: spec.lastError || null
+    };
+}
+
+function hydrateRuntimeSpec(row) {
+    if (!row) return null;
+    return {
+        ...row,
+        resources: parseJsonSafe(row.resource_json, null)
+    };
+}
+
+function upsertCollectorRuntimeSpec(spec) {
+    if (COLLECTOR_REMOTE_ONLY) return null;
+    const row = normalizeRuntimeSpec(spec);
+    db.prepare(`
+        INSERT INTO collector_runtime_specs (
+            account_id, platform, account_name, runtime_provider, desired_state,
+            deployment_name, namespace, image, resource_json, session_dir,
+            migration_source, last_applied_at, last_error, updated_at
+        ) VALUES (
+            @account_id, @platform, @account_name, @runtime_provider, @desired_state,
+            @deployment_name, @namespace, @image, @resource_json, @session_dir,
+            @migration_source, datetime('now', '+8 hours'), @last_error, datetime('now', '+8 hours')
+        )
+        ON CONFLICT(account_id) DO UPDATE SET
+            platform = excluded.platform,
+            account_name = excluded.account_name,
+            runtime_provider = excluded.runtime_provider,
+            desired_state = excluded.desired_state,
+            deployment_name = excluded.deployment_name,
+            namespace = excluded.namespace,
+            image = excluded.image,
+            resource_json = excluded.resource_json,
+            session_dir = excluded.session_dir,
+            migration_source = COALESCE(excluded.migration_source, migration_source),
+            last_applied_at = excluded.last_applied_at,
+            last_error = excluded.last_error,
+            updated_at = datetime('now', '+8 hours')
+    `).run(row);
+
+    db.prepare(`
+        UPDATE accounts
+        SET runtime_provider = @runtime_provider,
+            runtime_desired_state = @desired_state,
+            deployment_name = @deployment_name,
+            updated_at = datetime('now', '+8 hours')
+        WHERE id = @account_id
+    `).run(row);
+
+    return getCollectorRuntimeSpec(row.account_id);
+}
+
+function getCollectorRuntimeSpec(accountId) {
+    if (COLLECTOR_REMOTE_ONLY) return null;
+    return hydrateRuntimeSpec(db.prepare('SELECT * FROM collector_runtime_specs WHERE account_id = ?').get(accountId));
+}
+
+function listCollectorRuntimeSpecs(filters = {}) {
+    if (COLLECTOR_REMOTE_ONLY) return [];
+    const clauses = [];
+    const params = [];
+    if (filters.platform) {
+        clauses.push('platform = ?');
+        params.push(filters.platform);
+    }
+    if (filters.desiredState) {
+        clauses.push('desired_state = ?');
+        params.push(filters.desiredState);
+    }
+    const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
+    return db.prepare(`
+        SELECT *
+        FROM collector_runtime_specs
+        ${where}
+        ORDER BY datetime(updated_at) DESC
+    `).all(...params).map(hydrateRuntimeSpec);
+}
+
+function updateCollectorRuntimeDesiredState(accountId, desiredState, patch = {}) {
+    if (COLLECTOR_REMOTE_ONLY) return null;
+    db.prepare(`
+        UPDATE collector_runtime_specs
+        SET desired_state = ?,
+            last_error = ?,
+            updated_at = datetime('now', '+8 hours')
+        WHERE account_id = ?
+    `).run(desiredState, patch.lastError || null, accountId);
+    db.prepare(`
+        UPDATE accounts
+        SET runtime_desired_state = ?,
+            orchestrator_state = COALESCE(?, orchestrator_state),
+            health_status = COALESCE(?, health_status),
+            last_supervisor_check_at = datetime('now', '+8 hours'),
+            updated_at = datetime('now', '+8 hours')
+        WHERE id = ?
+    `).run(desiredState, patch.orchestratorState || null, patch.healthStatus || null, accountId);
+    return getCollectorRuntimeSpec(accountId);
+}
+
+function deleteCollectorRuntimeSpec(accountId) {
+    if (COLLECTOR_REMOTE_ONLY) return;
+    db.prepare('DELETE FROM collector_runtime_specs WHERE account_id = ?').run(accountId);
+    db.prepare(`
+        UPDATE accounts
+        SET runtime_desired_state = NULL,
+            deployment_name = NULL,
+            updated_at = datetime('now', '+8 hours')
+        WHERE id = ?
+    `).run(accountId);
+}
+
 module.exports = {
     db,
     isDbRuntimeDegraded,
@@ -527,5 +717,10 @@ module.exports = {
     saveMessage,
     updateAccountStatus,
     upsertCollectorHeartbeat,
-    recordRuntimeEvent
+    recordRuntimeEvent,
+    upsertCollectorRuntimeSpec,
+    getCollectorRuntimeSpec,
+    listCollectorRuntimeSpecs,
+    updateCollectorRuntimeDesiredState,
+    deleteCollectorRuntimeSpec
 };

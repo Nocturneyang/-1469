@@ -3,7 +3,7 @@ set -e
 
 export DATA_DIR="${DATA_DIR:-/data}"
 APP_DIR="/app/social-monitor"
-CLOUD_ECOSYSTEM_VERSION="${CLOUD_ECOSYSTEM_VERSION:-10}"
+CLOUD_ECOSYSTEM_VERSION="${CLOUD_ECOSYSTEM_VERSION:-11}"
 
 mkdir -p "$DATA_DIR/db" "$DATA_DIR/media" "$DATA_DIR/config"
 
@@ -21,6 +21,30 @@ done
 
 if [ ! -f "$DATA_DIR/.env" ]; then
   touch "$DATA_DIR/.env"
+fi
+
+if [ -n "${COLLECTOR_PLATFORM:-}" ]; then
+  cd "$APP_DIR"
+  case "$COLLECTOR_PLATFORM" in
+    whatsapp)
+      exec node scripts/start-wa-collector.js
+      ;;
+    telegram-bot)
+      export TG_COLLECTOR_TYPE=bot
+      exec node scripts/start-tg-collector.js
+      ;;
+    telegram-user)
+      export TG_COLLECTOR_TYPE=user
+      exec node scripts/start-tg-collector.js
+      ;;
+    teams-graph)
+      exec node workers/worker-teams-graph.js
+      ;;
+    *)
+      echo "Unsupported COLLECTOR_PLATFORM: $COLLECTOR_PLATFORM" >&2
+      exit 1
+      ;;
+  esac
 fi
 
 if [ -n "${TG_ACCOUNT_NAME:-}" ]; then

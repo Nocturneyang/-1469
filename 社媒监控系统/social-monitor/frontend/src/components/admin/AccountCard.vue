@@ -112,6 +112,20 @@
       </div>
     </div>
 
+    <div v-if="isCloudRuntime" class="card-actions cloud-actions">
+      <button
+        v-if="acc.runtime_desired_state === 'stopped'"
+        class="btn-secondary"
+        @click="$emit('runtime-action', acc, 'start')"
+      >启动云端Pod</button>
+      <button
+        v-else
+        class="btn-secondary"
+        @click="$emit('runtime-action', acc, 'stop')"
+      >停止云端Pod</button>
+      <button class="btn-secondary" @click="$emit('runtime-action', acc, 'restart')">滚动重启</button>
+    </div>
+
     <div class="card-actions">
       <!-- Specific actions for Teams -->
       <template v-if="acc.platform === 'teams'">
@@ -163,7 +177,7 @@ const props = defineProps({
   acc: { type: Object, required: true }
 })
 
-defineEmits(['delete', 'restart', 'relogin', 'teams-backfill', 'teams-relogin', 'tgu-ratelimit', 'tgu-reconfig', 'tgu-backfill', 'tgu-revoke', 'tgu-relogin'])
+defineEmits(['delete', 'restart', 'relogin', 'runtime-action', 'teams-backfill', 'teams-relogin', 'tgu-ratelimit', 'tgu-reconfig', 'tgu-backfill', 'tgu-revoke', 'tgu-relogin'])
 
 const tguName = computed(() => props.acc.id.replace('tgu-', ''))
 const runtimeLabel = computed(() => {
@@ -172,6 +186,7 @@ const runtimeLabel = computed(() => {
   if (provider === 'rainbond') return 'Rainbond'
   return 'PM2'
 })
+const isCloudRuntime = computed(() => String(props.acc.runtime_provider || '').toLowerCase() === 'k8s')
 
 const qrCodeUrl = computed(() => {
   if (!props.acc.qr_code) return ''

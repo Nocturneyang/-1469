@@ -13,7 +13,7 @@ rules:
     verbs: ["get", "list", "watch"]
   - apiGroups: ["apps"]
     resources: ["deployments"]
-    verbs: ["get", "list", "watch", "patch"]
+    verbs: ["get", "list", "watch", "create", "delete", "patch", "update"]
   - apiGroups: ["apps"]
     resources: ["deployments/scale"]
     verbs: ["get", "patch", "update"]
@@ -118,6 +118,26 @@ spec:
               value: "true"
             - name: LOCAL_WA_RUNTIME_ENABLED
               value: "false"
+            - name: LOCAL_TG_RUNTIME_ENABLED
+              value: "false"
+            - name: CLOUD_COLLECTOR_ENABLED
+              value: "true"
+            - name: CLOUD_COLLECTOR_IMAGE
+              value: __IMAGE__
+            - name: CLOUD_COLLECTOR_API_URL
+              value: http://social-monitor/api/collector
+            - name: CLOUD_COLLECTOR_SECRET_NAME
+              value: social-monitor-secrets
+            - name: CLOUD_COLLECTOR_PVC
+              value: social-monitor-sqlite-pvc
+            - name: CLOUD_COLLECTOR_SUPERVISOR_INTERVAL_MS
+              value: "30000"
+            - name: ACCOUNT_SESSION_ENCRYPTION_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: social-monitor-secrets
+                  key: ACCOUNT_SESSION_ENCRYPTION_KEY
+                  optional: true
             - name: SSO_ENABLED
               value: "true"
             - name: SSO_LOGIN_URL

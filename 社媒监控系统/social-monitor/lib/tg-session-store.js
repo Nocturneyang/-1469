@@ -6,6 +6,18 @@
  * - 频控参数也从 .env 中读写（TG_WARMUP_SECONDS_{NAME} 等）
  */
 const { readEnvFile, writeEnvKeys } = require('./env-config');
+const {
+    readEncryptedFile,
+    writeEncryptedFile,
+    deleteEncryptedFile,
+    hasEncryptedFile
+} = require('./account-session-store');
+
+const SESSION_FILE = 'session.enc';
+
+function envKey(accountName) {
+    return `TG_USER_SESSION_${accountName.toUpperCase()}`;
+}
 
 // ─── Session String ──────────────────────────────────────────────────────────
 
@@ -15,7 +27,13 @@ const { readEnvFile, writeEnvKeys } = require('./env-config');
  * @returns {string|null}
  */
 function getSession(accountName) {
-    const key = `TG_USER_SESSION_${accountName.toUpperCase()}`;
+    try {
+        const encrypted = readEncryptedFile('telegram-user', accountName, SESSION_FILE);
+        if (encrypted) return encrypted;
+    } catch (err) {
+        console.warn(`[SessionStore] Failed to read encrypted TG session for ${accountName}: ${err.message}`);
+    }
+    const key = envKey(accountName);
     return process.env[key] || readEnvFile()[key] || null;
 }
 
@@ -25,9 +43,8 @@ function getSession(accountName) {
  * @param {string} sessionString
  */
 function saveSession(accountName, sessionString) {
-    const key = `TG_USER_SESSION_${accountName.toUpperCase()}`;
-    writeEnvKeys({ [key]: sessionString });
-    console.log(`[SessionStore] Session saved for account: ${accountName}`);
+    writeEncryptedFile('telegram-user', accountName, SESSION_FILE, sessionString);
+    console.log(`[SessionStore] Encrypted session saved for account: ${accountName}`);
 }
 
 /**
@@ -35,7 +52,8 @@ function saveSession(accountName, sessionString) {
  * @param {string} accountName
  */
 function revokeSession(accountName) {
-    const key = `TG_USER_SESSION_${accountName.toUpperCase()}`;
+    const key = envKey(accountName);
+    deleteEncryptedFile('telegram-user', accountName, SESSION_FILE);
     writeEnvKeys({ [key]: '' });
     console.log(`[SessionStore] Session revoked for account: ${accountName}`);
 }
@@ -46,6 +64,7 @@ function revokeSession(accountName) {
  * @returns {'configured'|'not_configured'}
  */
 function getSessionStatus(accountName) {
+    if (hasEncryptedFile('telegram-user', accountName, SESSION_FILE)) return 'configured';
     return getSession(accountName) ? 'configured' : 'not_configured';
 }
 

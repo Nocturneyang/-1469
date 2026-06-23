@@ -69,6 +69,21 @@ export const deleteAccountApi = (id) =>
 export const getWaSupervisorStatus = () =>
   api.get('/api/accounts/wa-supervisor')
 
+/**
+ * 获取账号云端运行时状态
+ * @param {string} id
+ */
+export const getAccountRuntime = (id) =>
+  api.get(`/api/accounts/${id}/runtime`)
+
+/**
+ * 执行账号云端运行时操作
+ * @param {string} id
+ * @param {'start'|'stop'|'restart'|'relogin'} action
+ */
+export const accountRuntimeAction = (id, action) =>
+  api.post(`/api/accounts/${id}/runtime/${action}`)
+
 // ─── Telegram 用户账号操作 ────────────────────────────────────────────────────
 
 /**

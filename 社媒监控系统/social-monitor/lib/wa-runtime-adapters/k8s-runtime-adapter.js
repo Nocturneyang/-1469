@@ -159,6 +159,57 @@ class K8sRuntimeAdapter {
         ]);
     }
 
+    stopCollector(accountName) {
+        const deployment = this.deploymentName(accountName);
+        return this.patchScale(deployment, { spec: { replicas: 0 } }, [
+            'scale',
+            `deployment/${deployment}`,
+            '--replicas=0',
+            '-n',
+            this.namespace
+        ]);
+    }
+
+    async applyDeployment(manifest) {
+        if (!manifest?.metadata?.name) {
+            throw new Error('Deployment manifest metadata.name is required');
+        }
+        const deployment = manifest.metadata.name;
+        const path = `/apis/apps/v1/namespaces/${encodeURIComponent(this.namespace)}/deployments/${encodeURIComponent(deployment)}`;
+        const createPath = `/apis/apps/v1/namespaces/${encodeURIComponent(this.namespace)}/deployments`;
+
+        if (!this.shouldUseApi()) {
+            throw new Error('Kubernetes API config is required to apply collector deployments');
+        }
+
+        try {
+            await this.k8sRequest('GET', path);
+            return this.k8sRequest('PATCH', path, manifest, 'application/strategic-merge-patch+json');
+        } catch (err) {
+            if (!String(err.message || '').includes('HTTP 404')) throw err;
+            return this.k8sRequest('POST', createPath, manifest, 'application/json');
+        }
+    }
+
+    async deleteDeployment(deploymentName) {
+        const deployment = deploymentName || this.deploymentName(deploymentName);
+        const path = `/apis/apps/v1/namespaces/${encodeURIComponent(this.namespace)}/deployments/${encodeURIComponent(deployment)}`;
+        if (!this.shouldUseApi()) {
+            return this.kubectl(['delete', `deployment/${deployment}`, '-n', this.namespace, '--ignore-not-found=true']);
+        }
+        try {
+            return await this.k8sRequest('DELETE', path);
+        } catch (err) {
+            if (String(err.message || '').includes('HTTP 404')) return { deleted: false };
+            throw err;
+        }
+    }
+
+    async readDeployment(deploymentName) {
+        const path = `/apis/apps/v1/namespaces/${encodeURIComponent(this.namespace)}/deployments/${encodeURIComponent(deploymentName)}`;
+        return this.readJson(path, ['get', `deployment/${deploymentName}`, '-n', this.namespace, '-o', 'json']);
+    }
+
     async readPods() {
         const path = `/api/v1/namespaces/${encodeURIComponent(this.namespace)}/pods?labelSelector=${encodeURIComponent(this.labelSelector)}`;
         return this.readJson(path, ['get', 'pods', '-n', this.namespace, '-l', this.labelSelector, '-o', 'json']);
