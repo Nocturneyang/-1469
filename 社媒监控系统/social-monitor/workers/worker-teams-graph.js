@@ -12,9 +12,9 @@
 
 'use strict';
 
-require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
+require('dotenv').config({ path: path.join(process.env.DATA_DIR || path.join(__dirname, '..'), '.env') });
 const { saveMessage, updateAccountStatus } = require('../db/database');
 const { sendAccountAlert } = require('../lib/dingtalk');
 const tokenStore = require('../lib/teams-token-store');

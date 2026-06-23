@@ -1,3 +1,6 @@
+const path = require('path');
+require('dotenv').config({ path: path.join(process.env.DATA_DIR || '/data', '.env') });
+
 function envFlag(name) {
   return ['1', 'true', 'yes', 'on'].includes(String(process.env[name] || '').trim().toLowerCase());
 }

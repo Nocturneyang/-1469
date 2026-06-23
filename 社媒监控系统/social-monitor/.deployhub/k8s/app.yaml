@@ -11,9 +11,6 @@ rules:
   - apiGroups: [""]
     resources: ["pods"]
     verbs: ["get", "list", "watch"]
-  - apiGroups: [""]
-    resources: ["secrets"]
-    verbs: ["get"]
   - apiGroups: ["apps"]
     resources: ["deployments"]
     verbs: ["create", "delete", "get", "list", "patch", "update", "watch"]
@@ -175,17 +172,10 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /data
-            - name: runtime-secrets
-              mountPath: /var/run/social-monitor-secrets
-              readOnly: true
       volumes:
         - name: data
           persistentVolumeClaim:
             claimName: social-monitor-data
-        - name: runtime-secrets
-          secret:
-            secretName: social-monitor-secrets
-            optional: true
 ---
 apiVersion: v1
 kind: Service

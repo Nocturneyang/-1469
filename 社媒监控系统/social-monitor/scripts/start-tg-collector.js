@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 const fs = require('fs');
 const path = require('path');
+require('dotenv').config({ path: path.join(process.env.DATA_DIR || '/data', '.env') });
 
 const accountName = process.env.TG_ACCOUNT_NAME || process.env.ACCOUNT_NAME;
 if (!accountName || !/^[a-zA-Z0-9_-]+$/.test(accountName)) {
