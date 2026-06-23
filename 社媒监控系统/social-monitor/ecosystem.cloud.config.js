@@ -52,7 +52,9 @@ const apps = [
       max_memory_restart: "256M",
       env: {
         NODE_ENV: "production",
-        DATA_DIR: process.env.DATA_DIR || "/data"
+        DATA_DIR: process.env.DATA_DIR || "/data",
+        SYNC_TOKEN: process.env.SYNC_TOKEN || "",
+        SYNC_URL: process.env.SYNC_URL || ""
       }
     },
     {
