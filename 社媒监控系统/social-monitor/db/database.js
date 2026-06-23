@@ -332,8 +332,14 @@ function initSchema() {
         Object.entries(columnsToAdd).forEach(([col, type]) => {
             const exists = accountsTableInfo.some(c => c.name === col);
             if (!exists) {
-                db.exec(`ALTER TABLE accounts ADD COLUMN ${col} ${type}`);
-                console.log(`Migrated database: added ${col} column to accounts table`);
+                try {
+                    db.exec(`ALTER TABLE accounts ADD COLUMN ${col} ${type}`);
+                    console.log(`Migrated database: added ${col} column to accounts table`);
+                } catch (alterErr) {
+                    if (!String(alterErr.message || '').includes('duplicate column name')) {
+                        throw alterErr;
+                    }
+                }
             }
         });
     } catch (err) {
