@@ -1,5 +1,33 @@
 const path = require('path');
-require('dotenv').config({ path: path.join(process.env.DATA_DIR || '/data', '.env') });
+const fs = require('fs');
+
+function loadDataEnv() {
+  const file = path.join(process.env.DATA_DIR || '/data', '.env');
+  let content = '';
+  try {
+    content = fs.readFileSync(file, 'utf8');
+  } catch (_) {
+    return;
+  }
+
+  for (const line of content.split(/\r?\n/)) {
+    const match = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)\s*$/);
+    if (!match || process.env[match[1]]) continue;
+    let value = match[2] || '';
+    if (
+      (value.startsWith('"') && value.endsWith('"')) ||
+      (value.startsWith("'") && value.endsWith("'"))
+    ) {
+      value = value.slice(1, -1);
+    }
+    process.env[match[1]] = value
+      .replace(/\\n/g, '\n')
+      .replace(/\\"/g, '"')
+      .replace(/\\\\/g, '\\');
+  }
+}
+
+loadDataEnv();
 
 function envFlag(name) {
   return ['1', 'true', 'yes', 'on'].includes(String(process.env[name] || '').trim().toLowerCase());
