@@ -1,6 +1,7 @@
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
+require('./lib/runtime-secret-files').hydrateRuntimeSecrets();
 require('dotenv').config({ path: path.join(process.env.DATA_DIR || __dirname, '.env') });
 
 const { db, isDbRuntimeDegraded, getDbRuntimeDegradedReason } = require('./db/database');

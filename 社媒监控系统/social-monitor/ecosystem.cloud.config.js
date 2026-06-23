@@ -35,6 +35,7 @@ const apps = [
         CLOUD_COLLECTOR_PVC: process.env.CLOUD_COLLECTOR_PVC || "social-monitor-sqlite-pvc",
         ACCOUNT_SESSION_ENCRYPTION_KEY: process.env.ACCOUNT_SESSION_ENCRYPTION_KEY || "",
         COLLECTOR_TOKEN: process.env.COLLECTOR_TOKEN || "",
+        COLLECTOR_TOKEN_SHA256: process.env.COLLECTOR_TOKEN_SHA256 || "",
         SSO_ENABLED: process.env.SSO_ENABLED || "",
         SSO_LOGIN_URL: process.env.SSO_LOGIN_URL || "",
         SSO_ADMIN_USERS: process.env.SSO_ADMIN_USERS || "",

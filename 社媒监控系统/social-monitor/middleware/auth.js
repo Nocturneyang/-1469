@@ -1,4 +1,5 @@
 const path = require('path');
+require('../lib/runtime-secret-files').hydrateRuntimeSecrets(['JWT_SECRET']);
 require('dotenv').config({ path: path.join(process.env.DATA_DIR || path.join(__dirname, '..'), '.env') });
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');

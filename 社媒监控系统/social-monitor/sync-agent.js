@@ -1,4 +1,5 @@
 const path = require('path');
+require('./lib/runtime-secret-files').hydrateRuntimeSecrets(['SYNC_TOKEN']);
 require('dotenv').config({ path: path.join(process.env.DATA_DIR || __dirname, '.env') });
 const axios = require('axios');
 const fs = require('fs');

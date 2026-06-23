@@ -172,10 +172,17 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /data
+            - name: runtime-secrets
+              mountPath: /var/run/social-monitor-secrets
+              readOnly: true
       volumes:
         - name: data
           persistentVolumeClaim:
             claimName: social-monitor-data
+        - name: runtime-secrets
+          secret:
+            secretName: social-monitor-secrets
+            optional: true
 ---
 apiVersion: v1
 kind: Service
