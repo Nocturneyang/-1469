@@ -3,7 +3,7 @@ set -e
 
 export DATA_DIR="${DATA_DIR:-/data}"
 APP_DIR="/app/social-monitor"
-CLOUD_ECOSYSTEM_VERSION="${CLOUD_ECOSYSTEM_VERSION:-14}"
+CLOUD_ECOSYSTEM_VERSION="${CLOUD_ECOSYSTEM_VERSION:-15}"
 
 mkdir -p "$DATA_DIR/db" "$DATA_DIR/media" "$DATA_DIR/config"
 
@@ -21,6 +21,10 @@ done
 
 if [ ! -f "$DATA_DIR/.env" ]; then
   touch "$DATA_DIR/.env"
+fi
+
+if [ "${HYDRATE_RUNTIME_SECRETS:-1}" != "0" ] && [ -f "$APP_DIR/scripts/hydrate-runtime-secrets.js" ]; then
+  node "$APP_DIR/scripts/hydrate-runtime-secrets.js" || true
 fi
 
 if [ -n "${COLLECTOR_PLATFORM:-}" ]; then
