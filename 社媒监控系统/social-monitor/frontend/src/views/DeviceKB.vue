@@ -3,7 +3,7 @@
     <div class="panel">
       <div class="panel-title">
         <span class="title-text"><span class="panel-icon">🔧</span> 设备知识库</span>
-        <div class="export-group">
+        <div v-if="authStore.isAdmin" class="export-group">
           <button class="btn-export" @click="toggleExportMenu" :class="{ active: showExportMenu }">
             ⬇ 下载
             <span class="export-arrow">▾</span>
@@ -83,6 +83,7 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import api from '@/utils/request'
+import { useAuthStore } from '@/store/auth'
 import { downloadAuthenticatedFile } from '@/utils/download'
 import { formatShanghaiDateTime, shanghaiDateString } from '@/utils/time'
 
@@ -94,6 +95,7 @@ const loading = ref(false)
 const page = ref(1)
 const total = ref(0)
 const limit = 20
+const authStore = useAuthStore()
 
 const totalPages = computed(() => Math.ceil(total.value / limit) || 1)
 const visiblePages = computed(() => {

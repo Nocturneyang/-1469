@@ -14,6 +14,7 @@ const {
 const aiClient = require('../lib/ai-client');
 const { shanghaiDateString, shanghaiISOString } = require('../lib/time');
 const { isSqliteStorageError } = require('../lib/storage-health');
+const { requireAdmin } = require('../middleware/auth');
 
 const ANALYTICS_PATH = path.join(process.env.DATA_DIR || path.join(__dirname, '..'), 'db', 'analytics.sqlite');
 const SOURCE_DB_PATH = path.join(process.env.DATA_DIR || path.join(__dirname, '..'), 'db', 'database.sqlite');
@@ -3976,7 +3977,7 @@ router.get('/knowledge-assets', (req, res) => {
     }
 });
 
-router.get('/knowledge-assets/export', (req, res) => {
+router.get('/knowledge-assets/export', requireAdmin, (req, res) => {
     try {
         const adb = getAnalyticsDb();
         if (!adb || !tableExists(adb, 'knowledge_asset_candidates')) {
@@ -4509,7 +4510,7 @@ router.get('/knowledge-base', (req, res) => {
 });
 
 // ─── QA 知识库导出（支持 json / jsonl / csv）────────────────────
-router.get('/knowledge-base/export', (req, res) => {
+router.get('/knowledge-base/export', requireAdmin, (req, res) => {
     try {
         const adb = getAnalyticsDb();
         if (!adb) return res.status(503).json({ success: false, error: '数据库不可用' });
@@ -5014,7 +5015,7 @@ router.get('/device-kb/categories', (req, res) => {
 });
 
 // ─── 设备知识库导出（支持 json / jsonl / csv）─────────────────────
-router.get('/device-kb/export', (req, res) => {
+router.get('/device-kb/export', requireAdmin, (req, res) => {
     try {
         const adb = getAnalyticsDb();
         if (!adb) return res.status(503).json({ success: false, error: '数据库不可用' });

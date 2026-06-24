@@ -5,7 +5,7 @@
         <span class="title-text"><span class="panel-icon">🧭</span> 知识资产发现</span>
         <div class="title-actions">
           <span class="hint">AI 先自动分流和沉淀，人工只复核少量不确定资产</span>
-          <button class="btn-secondary compact-btn" :disabled="exporting" @click="exportAssets">
+          <button v-if="authStore.isAdmin" class="btn-secondary compact-btn" :disabled="exporting" @click="exportAssets">
             {{ exporting ? '导出中...' : '导出候选' }}
           </button>
         </div>
@@ -506,6 +506,7 @@ import {
   reviewKnowledgeAsset,
   retagKnowledgeAssetContactSide
 } from '@/api/analytics'
+import { useAuthStore } from '@/store/auth'
 import { downloadAuthenticatedFile } from '@/utils/download'
 import { formatShanghaiDateTime, shanghaiDateString } from '@/utils/time'
 
@@ -545,6 +546,7 @@ const sourceMessages = ref([])
 const sourceLoading = ref(false)
 const linkedAsset = ref(null)
 const exporting = ref(false)
+const authStore = useAuthStore()
 
 const totalPages = computed(() => Math.ceil(total.value / limit) || 1)
 const selectedSet = computed(() => new Set(selectedKeys.value))
