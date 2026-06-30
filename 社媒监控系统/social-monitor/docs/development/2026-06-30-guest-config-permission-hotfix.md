@@ -30,6 +30,7 @@
 - `routes/collector.js`：删除内置 fallback Token hash，Collector 接收端必须通过 `COLLECTOR_TOKEN` 或 `COLLECTOR_TOKEN_SHA256` 配置令牌；令牌比较改为定长安全比较。
 - `routes/collector.js`：当 `COLLECTOR_TOKEN_SHA256` 已配置时优先使用 hash 校验并忽略明文 `COLLECTOR_TOKEN`，避免生产组件旧明文环境变量覆盖新 Secret 后继续放行旧 Token。
 - `.deployhub/k8s/app.yaml`：生产清单显式注入 `COLLECTOR_TOKEN_SHA256` 普通环境变量；明文 `COLLECTOR_TOKEN` 仍仅从 Secret 引用，避免把上报凭证暴露到普通组件环境。
+- `ecosystem.cloud.config.js` / `docker-entrypoint.sh`：为生产 PM2 持久化配置补入 `COLLECTOR_TOKEN_SHA256` 兜底值，并提升 `CLOUD_ECOSYSTEM_VERSION`，确保容器重启后刷新 `/data/ecosystem.config.js`。
 - `ecosystem.config.js`：移除本地 PM2 配置中的明文 `COLLECTOR_TOKEN`，改为从运行环境注入。历史中出现过的 Collector Token 必须视为已泄漏并轮换。
 - `routes/auth.js`、`db/database.js`：默认关闭游客免密登录；新库不再自动创建 `admin/admin123` 和 `view/view`，除非显式配置 `INITIAL_ADMIN_PASSWORD` 或 `ALLOW_INSECURE_DEFAULT_USERS`；旧库保留默认密码时，登录接口默认拒绝 `admin/admin123` 和 `view/view`。
 - `routes/data.js`、`server.js`：原始消息 `/api/messages`、群列表 `/api/groups` 和 `/media/*` 默认仅管理员可访问；如确需内部 viewer 访问，需要显式配置 `ALLOW_VIEWER_RAW_MESSAGES`、`ALLOW_VIEWER_RAW_DATA` 或 `ALLOW_VIEWER_MEDIA`。

@@ -37,6 +37,8 @@ const analyticsMaintenanceMode = envFlag('ANALYTICS_MAINTENANCE_MODE') ||
   envFlag('DB_MAINTENANCE_MODE') ||
   envFlag('DB_DEGRADED_BOOT');
 
+const COLLECTOR_TOKEN_SHA256_FALLBACK = 'b5d37b79bc44ba4ced5c40a16ee7e76a08bfa86730689e4abc58c768a1ef42d1';
+
 const apps = [
     // Production baseline: Web/API, database consumers, collector receiver, and analyzers only.
     // WhatsApp Chrome collectors run on local machines and report through /api/collector/*.
@@ -66,7 +68,7 @@ const apps = [
         CLOUD_COLLECTOR_PVC: process.env.CLOUD_COLLECTOR_PVC || "social-monitor-sqlite-pvc",
         ACCOUNT_SESSION_ENCRYPTION_KEY: process.env.ACCOUNT_SESSION_ENCRYPTION_KEY || "",
         COLLECTOR_TOKEN: process.env.COLLECTOR_TOKEN || "",
-        COLLECTOR_TOKEN_SHA256: process.env.COLLECTOR_TOKEN_SHA256 || "",
+        COLLECTOR_TOKEN_SHA256: process.env.COLLECTOR_TOKEN_SHA256 || COLLECTOR_TOKEN_SHA256_FALLBACK,
         SSO_ENABLED: process.env.SSO_ENABLED || "",
         SSO_LOGIN_URL: process.env.SSO_LOGIN_URL || "",
         SSO_ADMIN_USERS: process.env.SSO_ADMIN_USERS || "",
