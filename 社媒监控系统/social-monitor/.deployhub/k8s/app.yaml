@@ -138,6 +138,11 @@ spec:
                 secretKeyRef:
                   name: social-monitor-secrets
                   key: COLLECTOR_TOKEN
+            - name: COLLECTOR_TOKEN_SHA256
+              valueFrom:
+                secretKeyRef:
+                  name: social-monitor-secrets
+                  key: COLLECTOR_TOKEN_SHA256
             - name: ACCOUNT_SESSION_ENCRYPTION_KEY
               valueFrom:
                 secretKeyRef:
