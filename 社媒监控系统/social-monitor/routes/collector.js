@@ -83,28 +83,44 @@ function safeEqual(a, b) {
     return left.length === right.length && crypto.timingSafeEqual(left, right);
 }
 
-function requireCollectorToken(req, res, next) {
-    const expected = process.env.COLLECTOR_TOKEN || '';
+function verifyCollectorToken(token) {
     const expectedHash = process.env.COLLECTOR_TOKEN_SHA256 || '';
-    const token = getBearerToken(req) || req.headers['x-collector-token'] || '';
+    const expected = process.env.COLLECTOR_TOKEN || '';
+
+    if (expectedHash) {
+        const tokenHash = crypto.createHash('sha256').update(String(token || '')).digest('hex');
+        return {
+            ok: safeEqual(tokenHash, expectedHash),
+            mode: 'sha256',
+        };
+    }
 
     if (expected) {
-        if (!safeEqual(token, expected)) {
-            return res.status(401).json({ success: false, error: 'Invalid collector token' });
-        }
+        return {
+            ok: safeEqual(token, expected),
+            mode: 'plain',
+        };
+    }
+
+    return {
+        ok: false,
+        mode: 'missing',
+    };
+}
+
+function requireCollectorToken(req, res, next) {
+    const token = getBearerToken(req) || req.headers['x-collector-token'] || '';
+    const result = verifyCollectorToken(token);
+
+    if (result.ok) {
         return next();
     }
 
-    if (!expectedHash) {
-        return res.status(503).json({ success: false, error: 'COLLECTOR_TOKEN is not configured' });
+    if (result.mode === 'missing') {
+        return res.status(503).json({ success: false, error: 'COLLECTOR_TOKEN or COLLECTOR_TOKEN_SHA256 is not configured' });
     }
 
-    const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
-    if (!safeEqual(tokenHash, expectedHash)) {
-        return res.status(401).json({ success: false, error: 'Invalid collector token' });
-    }
-
-    next();
+    return res.status(401).json({ success: false, error: 'Invalid collector token' });
 }
 
 function mediaStoragePayload(storage) {
@@ -313,3 +329,4 @@ router.post('/media', (req, res) => {
 });
 
 module.exports = router;
+module.exports.verifyCollectorToken = verifyCollectorToken;
