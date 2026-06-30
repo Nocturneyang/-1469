@@ -6,6 +6,18 @@ const { JWT_SECRET, authenticateToken, requireAdmin } = require('../middleware/a
 
 const router = express.Router();
 
+function envFlag(name) {
+    return ['1', 'true', 'yes', 'on'].includes(String(process.env[name] || '').trim().toLowerCase());
+}
+
+function allowInsecureDefaultUsers() {
+    return envFlag('ALLOW_INSECURE_DEFAULT_USERS');
+}
+
+function guestLoginEnabled() {
+    return envFlag('ALLOW_GUEST_LOGIN') || envFlag('ENABLE_GUEST_LOGIN');
+}
+
 function normalizeSsoAdminInput(body = {}) {
     const identity = String(body.identity || '').trim();
     const displayName = String(body.display_name || body.displayName || identity).trim();
@@ -29,6 +41,12 @@ router.post('/login', (req, res) => {
         if (!validPassword) {
             return res.status(401).json({ success: false, error: '用户名或密码不正确' });
         }
+        if (!allowInsecureDefaultUsers() && username === 'admin' && password === 'admin123') {
+            return res.status(403).json({ success: false, error: '默认管理员密码已禁用，请使用已轮换的管理员账号' });
+        }
+        if (!guestLoginEnabled() && username === 'view' && password === 'view') {
+            return res.status(403).json({ success: false, error: '默认游客账号已停用' });
+        }
 
         const token = jwt.sign(
             { id: user.id, username: user.username, role: user.role },
@@ -50,6 +68,10 @@ router.post('/login', (req, res) => {
 });
 
 router.post('/view-login', (req, res) => {
+    if (!guestLoginEnabled()) {
+        return res.status(403).json({ success: false, error: '游客免密登录已停用' });
+    }
+
     try {
         const user = db.prepare("SELECT * FROM users WHERE username = ?").get('view');
         if (!user) {

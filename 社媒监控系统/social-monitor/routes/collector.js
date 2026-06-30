@@ -22,7 +22,6 @@ const {
 const router = express.Router();
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '..');
 const MEDIA_DIR = path.join(DATA_DIR, 'media');
-const FALLBACK_COLLECTOR_TOKEN_SHA256 = '2e51b53cf6e7da87425363b6d9ada8ed5d07532f1b862b02057700a13640caa6';
 const MEDIA_STORAGE_MIN_FREE_MB = numberFromEnv('MEDIA_STORAGE_MIN_FREE_MB', numberFromEnv('STORAGE_MIN_FREE_MB', 512));
 const MEDIA_STORAGE_MIN_FREE_PERCENT = numberFromEnv('MEDIA_STORAGE_MIN_FREE_PERCENT', numberFromEnv('STORAGE_MIN_FREE_PERCENT', 5));
 
@@ -78,13 +77,19 @@ function getBearerToken(req) {
     return match ? match[1] : '';
 }
 
+function safeEqual(a, b) {
+    const left = Buffer.from(String(a || ''), 'utf8');
+    const right = Buffer.from(String(b || ''), 'utf8');
+    return left.length === right.length && crypto.timingSafeEqual(left, right);
+}
+
 function requireCollectorToken(req, res, next) {
     const expected = process.env.COLLECTOR_TOKEN || '';
-    const expectedHash = process.env.COLLECTOR_TOKEN_SHA256 || FALLBACK_COLLECTOR_TOKEN_SHA256;
+    const expectedHash = process.env.COLLECTOR_TOKEN_SHA256 || '';
     const token = getBearerToken(req) || req.headers['x-collector-token'] || '';
 
     if (expected) {
-        if (token !== expected) {
+        if (!safeEqual(token, expected)) {
             return res.status(401).json({ success: false, error: 'Invalid collector token' });
         }
         return next();
@@ -95,7 +100,7 @@ function requireCollectorToken(req, res, next) {
     }
 
     const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
-    if (tokenHash !== expectedHash) {
+    if (!safeEqual(tokenHash, expectedHash)) {
         return res.status(401).json({ success: false, error: 'Invalid collector token' });
     }
 

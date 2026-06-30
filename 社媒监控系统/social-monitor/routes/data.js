@@ -5,6 +5,7 @@ const path = require('path');
 const fs = require('fs');
 const { getShanghaiParts } = require('../lib/time');
 const { isMediaUploadDisabled } = require('../lib/media-policy');
+const { requireAdmin } = require('../middleware/auth');
 
 const router = express.Router();
 
@@ -35,6 +36,17 @@ function analyticsMaintenanceMode() {
 
 function databaseMaintenanceMode() {
     return envFlag('DB_MAINTENANCE_MODE') || envFlag('DB_DEGRADED_BOOT');
+}
+
+function rawMessageViewerAllowed() {
+    return envFlag('ALLOW_VIEWER_RAW_MESSAGES') || envFlag('ALLOW_VIEWER_RAW_DATA');
+}
+
+function requireRawMessageAccess(req, res, next) {
+    if (req.user?.role === 'admin' || rawMessageViewerAllowed()) {
+        return next();
+    }
+    return requireAdmin(req, res, next);
 }
 
 function getAnalyticsDb() {
@@ -138,7 +150,7 @@ router.get('/stats', (req, res) => {
     }
 });
 
-router.get('/messages', (req, res) => {
+router.get('/messages', requireRawMessageAccess, (req, res) => {
     try {
         const page = parseInt(req.query.page) || 1;
         const limit = parseInt(req.query.limit) || 50;
@@ -204,7 +216,7 @@ router.get('/messages', (req, res) => {
     }
 });
 
-router.get('/groups', (req, res) => {
+router.get('/groups', requireRawMessageAccess, (req, res) => {
     try {
         if (databaseMaintenanceMode()) {
             return res.json({

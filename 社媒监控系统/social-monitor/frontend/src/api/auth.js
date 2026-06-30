@@ -13,10 +13,10 @@ export const login = (data) =>
   api.post('/api/auth/login', data)
 
 /**
- * 查看当前登录信息（SSO 模式）
+ * 游客免密登录（默认由后端关闭）
  */
-export const getViewLogin = () =>
-  api.get('/api/auth/view-login', { silentError: true })
+export const viewLogin = () =>
+  api.post('/api/auth/view-login', {}, { silentError: true })
 
 /**
  * 获取用户列表

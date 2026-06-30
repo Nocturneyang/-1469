@@ -4174,7 +4174,7 @@ router.get('/knowledge-assets/formal/:assetUid', (req, res) => {
     }
 });
 
-router.post('/knowledge-assets/formal/:assetUid/usage', (req, res) => {
+router.post('/knowledge-assets/formal/:assetUid/usage', requireAdmin, (req, res) => {
     let db = null;
     try {
         db = openWritableAnalyticsDb();
@@ -4213,7 +4213,7 @@ router.post('/knowledge-assets/formal/:assetUid/usage', (req, res) => {
     }
 });
 
-router.post('/knowledge-assets/:dedupeKey/promote', (req, res) => {
+router.post('/knowledge-assets/:dedupeKey/promote', requireAdmin, (req, res) => {
     let db = null;
     try {
         db = openWritableAnalyticsDb();
@@ -4266,7 +4266,7 @@ router.get('/knowledge-assets/:dedupeKey/sources', (req, res) => {
     }
 });
 
-router.patch('/knowledge-assets/:dedupeKey/contact-side', (req, res) => {
+router.patch('/knowledge-assets/:dedupeKey/contact-side', requireAdmin, (req, res) => {
     const side = String(req.body?.side || '').trim();
     if (!['internal', 'external'].includes(side)) {
         return res.status(400).json({ success: false, error: 'side 只能是 internal 或 external' });
@@ -4364,7 +4364,7 @@ router.patch('/knowledge-assets/:dedupeKey/contact-side', (req, res) => {
     }
 });
 
-router.patch('/knowledge-assets/review-batch', (req, res) => {
+router.patch('/knowledge-assets/review-batch', requireAdmin, (req, res) => {
     const allowed = new Set(['pending_review', 'confirmed', 'rejected', 'merged']);
     const status = String(req.body?.status || '').trim();
     const keys = Array.isArray(req.body?.dedupeKeys)
@@ -4440,7 +4440,7 @@ router.get('/knowledge-assets/:dedupeKey', (req, res) => {
     }
 });
 
-router.patch('/knowledge-assets/:dedupeKey/review', (req, res) => {
+router.patch('/knowledge-assets/:dedupeKey/review', requireAdmin, (req, res) => {
     const allowed = new Set(['pending_review', 'confirmed', 'rejected', 'merged']);
     const status = String(req.body?.status || '').trim();
     if (!allowed.has(status)) return res.status(400).json({ success: false, error: 'review_status 无效' });

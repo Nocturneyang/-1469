@@ -170,7 +170,7 @@ module.exports = {
         "WA_QR_IDLE_TIMEOUT_MS": "180000",
         "PUPPETEER_SKIP_DOWNLOAD": "true",
         "COLLECTOR_API_URL": "https://social-monitor.tyhark.com",
-        "COLLECTOR_TOKEN": "30b3aed7fa8b2595d775cb78273502baf126bd57168ae207803ebcc79912061f",
+        ...(process.env.COLLECTOR_TOKEN ? { "COLLECTOR_TOKEN": process.env.COLLECTOR_TOKEN } : {}),
         "COLLECTOR_ID": "pm2:yuyin_wa"
       }
     },
@@ -185,7 +185,7 @@ module.exports = {
       "max_memory_restart": "512M",
       "env": {
         "NODE_ENV": "production",
-        "JWT_SECRET": process.env.JWT_SECRET || ""
+        ...(process.env.JWT_SECRET ? { "JWT_SECRET": process.env.JWT_SECRET } : {})
       }
     },
     {

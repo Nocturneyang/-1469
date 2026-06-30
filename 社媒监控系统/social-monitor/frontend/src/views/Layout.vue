@@ -69,7 +69,7 @@ const navSections = computed(() => {
       title: "实时监控",
       items: [
         { path: "/", label: "全盘态势", icon: "📊" },
-        { path: "/feed", label: "原始数据流", icon: "💬" },
+        { path: "/feed", label: "原始数据流", icon: "💬", adminOnly: true },
         { path: "/analytics", label: "数据看板", icon: "📈" },
         { path: "/daily-digest", label: "日报汇总", icon: "📋" },
       ]
@@ -102,7 +102,10 @@ const navSections = computed(() => {
     })
   }
 
-  return sections
+  return sections.map(section => ({
+    ...section,
+    items: section.items.filter(item => !item.adminOnly || authStore.isAdmin)
+  }))
 })
 
 const isActive = (path) => {

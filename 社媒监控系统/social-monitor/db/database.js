@@ -244,27 +244,38 @@ function initSchema() {
     // Setup initial admin and view users if users table is empty
     try {
         const count = db.prepare("SELECT COUNT(*) as count FROM users").get().count;
+        const allowInsecureDefaults = envFlagValue(process.env.ALLOW_INSECURE_DEFAULT_USERS);
+        const guestLoginEnabled = envFlagValue(process.env.ALLOW_GUEST_LOGIN) || envFlagValue(process.env.ENABLE_GUEST_LOGIN);
+        const initialAdminPassword = String(process.env.INITIAL_ADMIN_PASSWORD || process.env.ADMIN_INITIAL_PASSWORD || '');
         if (count === 0) {
             const bcrypt = require('bcryptjs');
-            // 'admin123' as default password for admin
             const salt = bcrypt.genSaltSync(10);
-            const adminHash = bcrypt.hashSync('admin123', salt);
-            db.prepare("INSERT INTO users (username, password_hash, role) VALUES (?, ?, ?)").run('admin', adminHash, 'admin');
-            
-            // 'view' as default password for view user
-            const viewHash = bcrypt.hashSync('view', salt);
-            db.prepare("INSERT INTO users (username, password_hash, role) VALUES (?, ?, ?)").run('view', viewHash, 'view');
-            
-            console.log('Migrated database: created default admin user (admin / admin123) and view user (view / view)');
+            if (initialAdminPassword && initialAdminPassword.length >= 12) {
+                const adminHash = bcrypt.hashSync(initialAdminPassword, salt);
+                db.prepare("INSERT INTO users (username, password_hash, role) VALUES (?, ?, ?)").run('admin', adminHash, 'admin');
+                console.log('Migrated database: created initial admin user from INITIAL_ADMIN_PASSWORD');
+            } else if (allowInsecureDefaults) {
+                const adminHash = bcrypt.hashSync('admin123', salt);
+                db.prepare("INSERT INTO users (username, password_hash, role) VALUES (?, ?, ?)").run('admin', adminHash, 'admin');
+                console.warn('Migrated database: created insecure default admin user because ALLOW_INSECURE_DEFAULT_USERS is enabled');
+            } else {
+                console.warn('Users table is empty and INITIAL_ADMIN_PASSWORD is not configured; skipped insecure default admin creation');
+            }
+
+            if (guestLoginEnabled || allowInsecureDefaults) {
+                const viewHash = bcrypt.hashSync('view', salt);
+                db.prepare("INSERT INTO users (username, password_hash, role) VALUES (?, ?, ?)").run('view', viewHash, 'view');
+                console.warn('Migrated database: created default view user only because guest login/default users are explicitly enabled');
+            }
         } else {
             // Check if view user exists, if not create it
             const viewUser = db.prepare("SELECT id FROM users WHERE username = ?").get('view');
-            if (!viewUser) {
+            if (!viewUser && (guestLoginEnabled || allowInsecureDefaults)) {
                 const bcrypt = require('bcryptjs');
                 const salt = bcrypt.genSaltSync(10);
                 const viewHash = bcrypt.hashSync('view', salt);
                 db.prepare("INSERT INTO users (username, password_hash, role) VALUES (?, ?, ?)").run('view', viewHash, 'view');
-                console.log('Migrated database: created default view user (view / view)');
+                console.warn('Migrated database: created default view user only because guest login/default users are explicitly enabled');
             }
         }
     } catch (err) {

@@ -22,6 +22,63 @@ function writeWebhooksFile(data) {
     fs.writeFileSync(WEBHOOKS_PATH, JSON.stringify(data, null, 2), 'utf8');
 }
 
+function redactWebhookUrl(value) {
+    const raw = String(value || '').trim();
+    if (!raw) return '';
+    if (/[?&]access_token=/i.test(raw)) {
+        return raw.replace(/([?&]access_token=)[^&]+/i, '$1[redacted]');
+    }
+    try {
+        const parsed = new URL(raw);
+        return `${parsed.origin}${parsed.pathname}${parsed.search ? '?[redacted]' : ''}`;
+    } catch (_) {
+        return raw.length > 24 ? `${raw.slice(0, 16)}****${raw.slice(-4)}` : '****';
+    }
+}
+
+function looksLikeWebhookRouteKey(key) {
+    return /^(SYSTEM_OPS|ALERT|DIGEST|WEEKLY)(_|$)/.test(String(key || ''));
+}
+
+function redactWebhookValue(key, value) {
+    if (typeof value === 'string' && looksLikeWebhookRouteKey(key)) {
+        return {
+            url: '',
+            url_preview: redactWebhookUrl(value),
+            url_set: Boolean(value.trim()),
+            secret: '',
+            secret_set: false
+        };
+    }
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
+    if (!Object.prototype.hasOwnProperty.call(value, 'url') && !Object.prototype.hasOwnProperty.call(value, 'secret')) {
+        return value;
+    }
+    const url = String(value.url || '').trim();
+    const secret = String(value.secret || '').trim();
+    return {
+        ...value,
+        url: '',
+        url_preview: redactWebhookUrl(url),
+        url_set: Boolean(url),
+        secret: '',
+        secret_set: Boolean(secret)
+    };
+}
+
+function redactWebhooks(data) {
+    return Object.fromEntries(
+        Object.entries(data || {}).map(([key, value]) => [key, redactWebhookValue(key, value)])
+    );
+}
+
+function isMaskedWebhookInput(value) {
+    const raw = String(value || '').trim();
+    return /\[redacted\]|%5Bredacted%5D|\*{4,}/i.test(raw);
+}
+
+router.use(requireAdmin);
+
 const ENV_KEYS = ['DINGTALK_ALERT', 'DINGTALK_DIGEST', 'DINGTALK_WEEKLY',
                   'DINGTALK_ALERT_WA', 'DINGTALK_DIGEST_WA', 'DINGTALK_WEEKLY_WA',
                   'DINGTALK_ALERT_TG', 'DINGTALK_DIGEST_TG', 'DINGTALK_WEEKLY_TG',
@@ -45,7 +102,7 @@ const ENV_KEYS = ['DINGTALK_ALERT', 'DINGTALK_DIGEST', 'DINGTALK_WEEKLY',
 router.get('/config/webhooks', (req, res) => {
     try {
         const hooks = readWebhooksFile();
-        res.json({ success: true, data: hooks });
+        res.json({ success: true, data: redactWebhooks(hooks) });
     } catch(err) {
         res.status(500).json({ success: false, error: err.message });
     }
@@ -55,6 +112,9 @@ router.post('/config/webhooks', requireAdmin, (req, res) => {
     const { type, platform, regions, sectors, url, secret } = req.body;
     if (!type || !platform || !regions || !Array.isArray(regions) || regions.length === 0 || !url) {
         return res.status(400).json({ success: false, error: '缺少必填参数或区域列表为空' });
+    }
+    if (isMaskedWebhookInput(url) || isMaskedWebhookInput(secret)) {
+        return res.status(400).json({ success: false, error: 'Webhook URL 或 Secret 不能使用脱敏占位符，请重新填写完整配置' });
     }
     const cleanType = String(type).toUpperCase().trim();
     const cleanPlatform = String(platform).toLowerCase().trim();

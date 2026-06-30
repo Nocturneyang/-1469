@@ -11,6 +11,11 @@ export function isSsoEnabled() {
   return boolValue(config.ssoEnabled ?? import.meta.env.VITE_SSO_ENABLED)
 }
 
+export function isGuestLoginEnabled() {
+  const config = getRuntimeConfig()
+  return boolValue(config.guestLoginEnabled ?? import.meta.env.VITE_ALLOW_GUEST_LOGIN)
+}
+
 export function getSsoLoginUrl() {
   const config = getRuntimeConfig()
   return config.ssoLoginUrl || import.meta.env.VITE_SSO_LOGIN_URL || ''

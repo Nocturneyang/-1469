@@ -38,6 +38,31 @@ function databaseMaintenanceMode() {
     return envFlag('DB_MAINTENANCE_MODE') || envFlag('DB_DEGRADED_BOOT');
 }
 
+function guestLoginEnabled() {
+    return envFlag('ALLOW_GUEST_LOGIN') || envFlag('ENABLE_GUEST_LOGIN');
+}
+
+function viewerRawDataAllowed() {
+    return envFlag('ALLOW_VIEWER_RAW_MESSAGES') ||
+        envFlag('ALLOW_VIEWER_RAW_DATA') ||
+        envFlag('ALLOW_VIEWER_MEDIA');
+}
+
+function requireRawDataAccess(req, res, next) {
+    if (req.user?.role === 'admin' || viewerRawDataAllowed()) {
+        return next();
+    }
+    return res.status(403).json({ success: false, error: 'Forbidden (Admin access required)' });
+}
+
+function authenticateMediaRequest(req, res, next) {
+    const queryToken = typeof req.query?.token === 'string' ? req.query.token.trim() : '';
+    if (queryToken && !req.headers.authorization) {
+        req.headers.authorization = `Bearer ${queryToken}`;
+    }
+    return authenticateToken(req, res, next);
+}
+
 function checkSqlite() {
     if (databaseMaintenanceMode() || isDbRuntimeDegraded()) {
         return {
@@ -137,7 +162,8 @@ function sendRuntimeConfig(req, res) {
     const config = {
         ssoEnabled: isSsoEnabled(),
         ssoLoginUrl,
-        ssoRedirectParam
+        ssoRedirectParam,
+        guestLoginEnabled: guestLoginEnabled()
     };
     const body = `window.__SOCIAL_MONITOR_CONFIG__ = ${JSON.stringify(config).replace(/</g, '\\u003c')};\n`;
     res.type('application/javascript').send(body);
@@ -162,64 +188,8 @@ app.get(['/token/userinfo', '/api/token/userinfo'], async (req, res) => {
     sendUserInfo(res, result.user, result.source);
 });
 
-// ─── Teams OAuth 授权路由（公开访问，必须在 authenticateToken 之前）────
-app.get('/api/teams/auth/:name', async (req, res) => {
-    const { name } = req.params;
-    if (!/^[a-zA-Z0-9_-]+$/.test(name)) {
-        return res.status(400).json({ success: false, error: 'ID 格式无效' });
-    }
-    try {
-        const graphClient = require('./lib/microsoft-graph-client');
-        const authInfo = await graphClient.getAuthInfo(name);
-        res.json({ success: true, ...authInfo });
-    } catch (e) {
-        console.error('[Teams] 获取授权信息失败:', e.message);
-        res.status(500).json({ success: false, error: e.message });
-    }
-});
-
-app.get('/api/teams/poll/:name', async (req, res) => {
-    const { name } = req.params;
-    try {
-        const graphClient = require('./lib/microsoft-graph-client');
-        const tokenStore = require('./lib/teams-token-store');
-        const result = await graphClient.pollDeviceCode(name);
-        
-        if (result.pending) {
-            res.json({ success: true, pending: true });
-        } else {
-            // 授权成功，保存 token
-            const { accountName, access_token, refresh_token, expires_at } = result;
-            
-            // 获取用户信息
-            const userInfo = await graphClient.getUserInfo(access_token);
-            
-            // 保存 token 和用户信息
-            tokenStore.saveTokens(accountName, {
-                access_token,
-                refresh_token,
-                expires_at
-            }, userInfo);
-
-            // 更新数据库
-            const accountKey = `teams-${accountName}`;
-            tokenStore.updateAccountInDatabase(accountKey, userInfo);
-
-            res.json({ 
-                success: true, 
-                pending: false,
-                authorized: true,
-                userInfo 
-            });
-        }
-    } catch (e) {
-        console.error('[Teams] 轮询设备代码失败:', e.message);
-        res.status(500).json({ success: false, error: e.message });
-    }
-});
-
 // ─── 统一 API 鉴权 ────────────────────────────────────────────────
-// 所有 /api 请求（除 /api/auth 和 /api/teams/auth/* 已在上面处理）都需要 JWT 认证
+// 所有 /api 请求（除 /api/auth 已在上面处理）都需要 JWT/SSO 认证
 app.use('/api', authenticateToken);
 
 // ─── 路由挂载（按权限分层）─────────────────────────────────────────
@@ -275,7 +245,7 @@ function normalizeSupplierProfile(row) {
     };
 }
 
-app.get('/api/config/value-labels', (req, res) => {
+app.get('/api/config/value-labels', requireAdmin, (req, res) => {
     try {
         const config = readRegionConfig();
         res.json({
@@ -491,7 +461,7 @@ app.get(/^(?!\/api|\/media).*$/, (req, res) => {
 });
 
 // Serve media files route
-app.use('/media', express.static(path.join(process.env.DATA_DIR || __dirname, 'media')));
+app.use('/media', authenticateMediaRequest, requireRawDataAccess, express.static(path.join(process.env.DATA_DIR || __dirname, 'media')));
 
 // ─── 安全写入 ecosystem.config.js（备份 + 验证 + 回滚）─────────────
 const ECO_PATH = path.join(process.env.DATA_DIR || __dirname, 'ecosystem.config.js');
@@ -532,10 +502,9 @@ app.use('/api/accounts/create-tg-user', requireAdmin, (req, res, next) => {
     req.url = '/create';
     createTgUserRouter({ safeWriteEcosystem })(req, res, next);
 });
-// Teams 路由（部分公开，部分需要认证）
+// Teams 管理路由（需要管理员认证）
 const teamsRouter = createTeamsRouter({ safeWriteEcosystem });
 
-// Teams 管理路由（需要管理员认证）
 app.use('/api/teams', requireAdmin, teamsRouter);
 app.use('/api/accounts/create-teams', requireAdmin, (req, res, next) => {
     req.url = '/create';

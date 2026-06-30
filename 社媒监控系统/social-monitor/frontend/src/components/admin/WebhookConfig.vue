@@ -166,8 +166,10 @@
       <div class="modal">
         <h3>查看 Webhook 详情</h3>
         <div style="background:var(--bg-tint);padding:16px;border-radius:12px;font-family:monospace;font-size:13px;word-break:break-all;line-height:1.8">
-          <div v-if="viewData.url"><strong>URL:</strong> {{ viewData.url }}</div>
+          <div v-if="viewData.url_preview || viewData.url"><strong>URL:</strong> {{ viewData.url_preview || viewData.url }}</div>
+          <div v-else-if="viewData.url_set"><strong>URL:</strong> 已配置（已隐藏）</div>
           <div v-if="viewData.secret"><strong>Secret:</strong> {{ viewData.secret }}</div>
+          <div v-else-if="viewData.secret_set"><strong>Secret:</strong> 已配置（已隐藏）</div>
           <div v-if="viewData._comment"><strong>备注:</strong> {{ viewData._comment }}</div>
         </div>
         <div class="modal-actions">
@@ -400,9 +402,14 @@ const routeLabel = (val) => {
 }
 
 const getUrlPreview = (val) => {
-  const url = typeof val === 'object' ? (val.url || '') : String(val)
+  const url = typeof val === 'object' ? (val.url_preview || val.url || '') : String(val)
   if (!url) return ''
   return url.length > 50 ? url.slice(0, 45) + '...' : url
+}
+
+const isMaskedWebhookField = (value) => {
+  const raw = String(value || '').trim()
+  return !raw || raw.includes('[redacted]') || /^\*+$/.test(raw)
 }
 
 const knownPlatforms = new Set(['wa', 'tg', 'tgu', 'teams'])
@@ -515,8 +522,8 @@ const openEditRegionWebhook = (type, platform, routeKey, val) => {
   regionForm.platform = platform
   regionForm.regions = [data.region || routeKey]
   regionForm.sectors = data.sector ? [data.sector] : []
-  regionForm.url = data.url || ''
-  regionForm.secret = data.secret || ''
+  regionForm.url = isMaskedWebhookField(data.url) ? '' : (data.url || '')
+  regionForm.secret = isMaskedWebhookField(data.secret) ? '' : (data.secret || '')
   regionForm.pushMode = type === 'DIGEST' ? getRegionDigestMode(platform, data.region || routeKey) : 'body'
   regionModalTitle.value = '编辑 ' + (typeLabels[type] || type) + ' 区域/板块 Webhook'
   regionModalVisible.value = true

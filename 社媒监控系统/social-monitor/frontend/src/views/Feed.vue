@@ -81,6 +81,7 @@
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import api from '@/utils/request'
 import { formatShanghaiDateTime } from '@/utils/time'
+import { useAuthStore } from '@/store/auth'
 
 const platforms = [
   { label: '全部', value: 'all' },
@@ -95,6 +96,7 @@ const loading = ref(false)
 const messages = ref([])
 const currentPage = ref(1)
 const pageSize = 20
+const authStore = useAuthStore()
 let refreshTimer = null
 
 const filteredMessages = computed(() => {
@@ -198,7 +200,13 @@ const hasMediaLink = (msg) => {
 }
 
 const mediaHref = (msg) => {
-  return msg?.media_path || msg?.media_url || ''
+  const raw = msg?.media_path || msg?.media_url || ''
+  if (!raw || /^https?:\/\//i.test(raw)) return raw
+  const url = new URL(raw.startsWith('/') ? raw : `/${raw}`, window.location.origin)
+  if (authStore.token && authStore.token !== '__sso__') {
+    url.searchParams.set('token', authStore.token)
+  }
+  return `${url.pathname}${url.search}`
 }
 
 watch(selectedPlatform, () => {

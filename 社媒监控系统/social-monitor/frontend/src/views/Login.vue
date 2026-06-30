@@ -8,7 +8,7 @@
       <div class="login-tabs">
         <div class="tab-buttons">
           <button :class="{ active: activeTab === 'admin' }" @click="activeTab = 'admin'">管理员登录</button>
-          <button :class="{ active: activeTab === 'view' }" @click="activeTab = 'view'">游客登录</button>
+          <button v-if="guestLoginEnabled" :class="{ active: activeTab === 'view' }" @click="activeTab = 'view'">游客登录</button>
         </div>
 
         <div v-if="activeTab === 'admin'" class="tab-content">
@@ -43,9 +43,9 @@
           </div>
         </div>
 
-        <div v-if="activeTab === 'view'" class="tab-content">
+        <div v-if="guestLoginEnabled && activeTab === 'view'" class="tab-content">
           <div class="view-login-container">
-            <p class="view-login-desc">游客模式：只读权限，可访问数据查看页面</p>
+            <p class="view-login-desc">游客模式：只读权限，不包含原始消息和附件</p>
             <button class="btn-primary" @click="handleViewLogin" :disabled="loading">
               {{ loading ? '登录中...' : '游客登录' }}
             </button>
@@ -62,11 +62,13 @@ import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/store/auth'
 import { ElMessage } from 'element-plus'
 import api from '@/utils/request'
+import { isGuestLoginEnabled } from '@/utils/runtime-config'
 
 const router = useRouter()
 const authStore = useAuthStore()
 const loading = ref(false)
 const activeTab = ref('admin')
+const guestLoginEnabled = isGuestLoginEnabled()
 
 const adminForm = reactive({
   username: '',

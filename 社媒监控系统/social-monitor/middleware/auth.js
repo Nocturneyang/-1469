@@ -47,6 +47,10 @@ function isSsoEnabled() {
     return truthy(process.env.SSO_ENABLED || process.env.SKYLINE_SSO_ENABLED);
 }
 
+function trustSsoProxyHeaders() {
+    return truthy(process.env.SSO_TRUST_PROXY_HEADERS);
+}
+
 function parseList(value) {
     return String(value || '')
         .split(',')
@@ -86,8 +90,9 @@ function normalizeRole(role) {
 function applyAdminPolicy(user) {
     const admins = parseList(process.env.SSO_ADMIN_USERS);
     const identity = getUserIdentities(user);
+    const trustClaimedAdminRole = truthy(process.env.SSO_TRUST_ADMIN_ROLE);
     if (
-        user.role === 'admin' ||
+        (trustClaimedAdminRole && user.role === 'admin') ||
         admins.includes('*') ||
         identity.some((item) => admins.includes(item)) ||
         isSsoAdminIdentity(identity)
@@ -147,7 +152,7 @@ function parseSsoUserHeader(req) {
 }
 
 function getSsoUserFromHeaders(req) {
-    if (!isSsoEnabled()) return null;
+    if (!isSsoEnabled() || !trustSsoProxyHeaders()) return null;
 
     const encodedUser = parseSsoUserHeader(req);
     if (encodedUser) return encodedUser;

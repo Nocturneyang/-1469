@@ -34,7 +34,8 @@ const routes = [
       {
         path: 'feed',
         name: 'Feed',
-        component: () => import('@/views/Feed.vue')
+        component: () => import('@/views/Feed.vue'),
+        meta: { requiresAdmin: true }
       },
       {
         path: 'admin/accounts',
