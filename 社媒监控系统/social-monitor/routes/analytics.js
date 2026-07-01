@@ -26,6 +26,9 @@ const PERF_CACHE_TTL_MS = positiveNumber('ANALYTICS_PERF_CACHE_TTL_MS', 60 * 100
 const INTELLIGENCE_CACHE_TTL_MS = positiveNumber('ANALYTICS_INTELLIGENCE_CACHE_TTL_MS', 2 * 60 * 1000);
 const FORMAL_LIBRARY_CACHE_TTL_MS = positiveNumber('FORMAL_LIBRARY_CACHE_TTL_MS', 5 * 60 * 1000);
 const SUPPLIER_COVERAGE_CACHE_TTL_MS = positiveNumber('SUPPLIER_COVERAGE_CACHE_TTL_MS', 2 * 60 * 1000);
+const DOMAIN_DASHBOARD_CACHE_TTL_MS = positiveNumber('DOMAIN_DASHBOARD_CACHE_TTL_MS', 2 * 60 * 1000);
+const DOMAIN_INTELLIGENCE_MESSAGE_SCAN_LIMIT = positiveNumber('DOMAIN_INTELLIGENCE_MESSAGE_SCAN_LIMIT', 6000);
+const DOMAIN_INTELLIGENCE_ASSET_SCAN_LIMIT = positiveNumber('DOMAIN_INTELLIGENCE_ASSET_SCAN_LIMIT', 2500);
 const analyticsPerfCache = new Map();
 
 function positiveNumber(name, fallback) {
@@ -66,6 +69,21 @@ function cachedPerfValue(namespace, key, producer, ttlMs = PERF_CACHE_TTL_MS) {
         if (firstKey) analyticsPerfCache.delete(firstKey);
     }
     return value;
+}
+
+function boundedLimit(value, fallback, max) {
+    const n = Math.round(Number(value || fallback));
+    if (!Number.isFinite(n) || n <= 0) return fallback;
+    return Math.min(max, Math.max(100, n));
+}
+
+function normalizeFilterSet(value, normalizer = item => String(item || '').trim()) {
+    const items = Array.isArray(value) ? value : (value == null || value === '' ? [] : [value]);
+    return new Set(items.map(normalizer).filter(Boolean));
+}
+
+function cloneJson(value) {
+    return JSON.parse(JSON.stringify(value || null));
 }
 
 function clearAnalyticsPerfCache() {
@@ -927,12 +945,20 @@ function loadKnowledgeAssetPool(db, options = {}) {
     if (!db) return [];
     const days = Math.min(365, Math.max(1, parseInt(options.days) || 30));
     const scope = options.scope == null ? 'all' : normalizeIntelligenceScope(options.scope);
+    const regionSet = normalizeFilterSet(options.regions);
+    const sectorSet = normalizeFilterSet(options.sectors, normalizeSector);
+    const candidateLimit = boundedLimit(options.candidateLimit || options.limit, 6000, 6000);
+    const formalLimit = boundedLimit(options.formalLimit || Math.ceil(candidateLimit * 0.67), 4000, 4000);
     const cacheOptions = {
         days,
         scope,
         region: options.region || '',
         sector: options.sector || '',
         type: options.type || '',
+        regions: Array.from(regionSet).sort(),
+        sectors: Array.from(sectorSet).sort(),
+        candidateLimit,
+        formalLimit,
     };
     return cachedPerfValue('asset-pool', cacheOptions, () => {
         const since = Date.now() - days * 24 * 3600 * 1000;
@@ -944,8 +970,8 @@ function loadKnowledgeAssetPool(db, options = {}) {
                 FROM knowledge_asset_candidates
                 WHERE COALESCE(last_seen_at, first_seen_at, 0) >= ?
                 ORDER BY asset_value_score DESC, confidence DESC, last_seen_at DESC
-                LIMIT 6000
-            `).all(since).map(row => ({
+                LIMIT ?
+            `).all(since, candidateLimit).map(row => ({
                 ...mapKnowledgeAsset(row),
                 pool_source: 'candidate',
                 pool_id: row.dedupe_key,
@@ -960,8 +986,8 @@ function loadKnowledgeAssetPool(db, options = {}) {
                 WHERE status = 'active'
                   AND COALESCE(last_seen_at, first_seen_at, 0) >= ?
                 ORDER BY asset_value_score DESC, quality_score DESC, last_seen_at DESC
-                LIMIT 4000
-            `).all(since).map(row => ({
+                LIMIT ?
+            `).all(since, formalLimit).map(row => ({
                 ...mapFormalKnowledgeAsset(row),
                 pool_source: 'formal',
                 pool_id: row.asset_uid,
@@ -973,6 +999,9 @@ function loadKnowledgeAssetPool(db, options = {}) {
         return rows.filter(asset => {
             if (!asset) return false;
             if (!scopeMatchesRegion(asset.collection_region, scope)) return false;
+            if ((regionSet.size || sectorSet.size) &&
+                !regionSet.has(String(asset.collection_region || '').trim()) &&
+                !sectorSet.has(normalizeSector(asset.business_sector))) return false;
             if (options.region && asset.collection_region !== options.region) return false;
             if (options.sector && asset.business_sector !== options.sector) return false;
             if (options.type && asset.asset_type !== options.type) return false;
@@ -1294,25 +1323,57 @@ function loadRegionalBusinessSignals(options = {}) {
 
     const dayNum = Math.min(365, Math.max(1, parseInt(options.days) || 30));
     const scope = normalizeIntelligenceScope(options.scope);
+    const regionSet = normalizeFilterSet(options.regions);
+    const sectorSet = normalizeFilterSet(options.sectors, normalizeSector);
+    const rowLimit = boundedLimit(options.limit, 22000, 50000);
     const cacheOptions = {
         days: dayNum,
         scope,
         region: options.region || '',
         sector: options.sector || '',
+        regions: Array.from(regionSet).sort(),
+        sectors: Array.from(sectorSet).sort(),
+        limit: rowLimit,
     };
 
     return cachedPerfValue('regional-business-signals', cacheOptions, () => {
         const since = Date.now() - dayNum * 24 * 3600 * 1000;
         const accountMap = getAccountRegionMap();
+        const domainAccounts = [];
+        if (regionSet.size || sectorSet.size) {
+            for (const [account, info] of accountMap.entries()) {
+                const region = String(info.region || '').trim();
+                const sector = normalizeSector(info.business_sector);
+                if (regionSet.has(region) || sectorSet.has(sector)) domainAccounts.push(account);
+            }
+        }
+        const where = [
+            'timestamp >= ?',
+            'content IS NOT NULL',
+            "TRIM(content) != ''",
+        ];
+        const params = [since];
+        const scopedClauses = [];
+        if (domainAccounts.length) {
+            scopedClauses.push(`receiver_account IN (${domainAccounts.map(() => '?').join(',')})`);
+            params.push(...domainAccounts);
+        }
+        if (sectorSet.size) {
+            const sectors = Array.from(sectorSet);
+            scopedClauses.push(`business_sector IN (${sectors.map(() => '?').join(',')})`);
+            params.push(...sectors);
+        }
+        if (scopedClauses.length) {
+            where.push(`(${scopedClauses.join(' OR ')})`);
+        }
+        params.push(rowLimit);
         const rows = sdb.prepare(`
             SELECT id, receiver_account, business_sector, group_name, sender_name, content, has_media, timestamp
             FROM messages
-            WHERE timestamp >= ?
-              AND content IS NOT NULL
-              AND TRIM(content) != ''
+            WHERE ${where.join(' AND ')}
             ORDER BY timestamp DESC
-            LIMIT 22000
-        `).all(since);
+            LIMIT ?
+        `).all(...params);
 
         const byKey = new Map();
         const categoryTotals = {};
@@ -1324,6 +1385,7 @@ function loadRegionalBusinessSignals(options = {}) {
             const region = info.region || '未知区';
             const sector = normalizeSector(msg.business_sector || info.business_sector);
             if (!scopeMatchesRegion(region, scope)) continue;
+            if ((regionSet.size || sectorSet.size) && !regionSet.has(region) && !sectorSet.has(sector)) continue;
             if (options.region && region !== options.region) continue;
             if (options.sector && sector !== options.sector) continue;
 
@@ -2815,64 +2877,87 @@ async function enrichRegionDashboardWithAi(summary, options = {}) {
 function buildDomainIntelligenceDashboard(db, kind, options = {}) {
     const profile = domainProfileFor(kind);
     const days = Math.min(365, Math.max(1, parseInt(options.days) || 30));
-    const allAssets = loadKnowledgeAssetPool(db, { days, scope: 'domain' });
-    const assets = allAssets.filter(asset => assetMatchesDomainProfile(asset, profile));
-    const allSignals = loadRegionalBusinessSignals({ days, scope: 'domain' });
-    const signalSummary = aggregateDomainSignals(allSignals, profile);
-    const assetSummary = summarizeDomainAssets(assets);
-    const stats = assetSummary.stats;
-    const categories = signalSummary.category_totals || {};
-    const summary = {
-        message_count: signalSummary.total_messages,
-        active_group_count: signalSummary.active_group_count,
-        latest_at: signalSummary.latest_at,
-        asset_count: stats.total,
-        high_value: stats.high_value,
-    };
-    const cards = profile.key === 'customer_service'
-        ? buildCustomerServiceCards(stats, signalSummary)
-        : buildDeviceTechCards(stats, signalSummary);
-    const regionalSummary = summarizeRegionDashboard(assets, signalSummary, { scope: 'domain' });
-
-    return {
-        profile,
+    const dashboard = cachedPerfValue('domain-dashboard-base', {
+        kind: profile.key,
         days,
-        brief: buildDomainBrief(profile, stats, categories, summary, signalSummary),
-        summary,
-        stats,
-        category_totals: categories,
-        category_details: signalSummary.category_details || [],
-        top_signal_samples: signalSummary.top_samples || [],
-        cards,
-        priority_actions: buildDomainActions(profile, stats, categories),
-        top_groups: topCounters(assetSummary.counters.groups, 8),
-        top_actions: topCounters(assetSummary.counters.actions, 8),
-        top_risks: topCounters(assetSummary.counters.risks, 8),
-        top_roles: topCounters(assetSummary.counters.roles, 8),
-        top_contacts: topCounters(assetSummary.counters.contacts, 8),
-        top_resources: topCounters(assetSummary.counters.resources, 8),
-        knowledge_flow: topCounters(assetSummary.counters.libraries, 6),
-        top_types: topCounters(assetSummary.counters.types, 6),
-        matrix: regionalSummary.matrix,
-        top_assets: assets
-            .slice()
-            .sort((a, b) => (Number(b.asset_value_score || 0) - Number(a.asset_value_score || 0)) || (Number(b.confidence || 0) - Number(a.confidence || 0)))
-            .slice(0, 10)
-            .map(asset => ({
-                id: asset.pool_id,
-                source: asset.pool_source,
-                asset_type: asset.asset_type,
-                asset_type_label: TYPE_LABELS[asset.asset_type] || asset.asset_type,
-                title: asset.title,
-                summary: asset.metrics?.asset_insight?.reusable_summary || asset.summary || asset.description,
-                group_name: asset.group_name,
-                collection_region: asset.collection_region,
-                business_sector: asset.business_sector,
-                value_score: asset.asset_value_score,
-                confidence: asset.confidence,
-                target_library_label: asset.metrics?.target_library_label || LIBRARY_LABELS[assetLibraryKey(asset)] || assetLibraryKey(asset),
-            })),
-    };
+        regions: profile.regions,
+        sectors: profile.sectors,
+    }, () => {
+        const domainFilter = {
+            regions: profile.regions,
+            sectors: profile.sectors,
+        };
+        const allAssets = loadKnowledgeAssetPool(db, {
+            days,
+            scope: 'domain',
+            ...domainFilter,
+            limit: DOMAIN_INTELLIGENCE_ASSET_SCAN_LIMIT,
+        });
+        const assets = allAssets.filter(asset => assetMatchesDomainProfile(asset, profile));
+        const allSignals = loadRegionalBusinessSignals({
+            days,
+            scope: 'domain',
+            ...domainFilter,
+            limit: DOMAIN_INTELLIGENCE_MESSAGE_SCAN_LIMIT,
+        });
+        const signalSummary = aggregateDomainSignals(allSignals, profile);
+        const assetSummary = summarizeDomainAssets(assets);
+        const stats = assetSummary.stats;
+        const categories = signalSummary.category_totals || {};
+        const summary = {
+            message_count: signalSummary.total_messages,
+            active_group_count: signalSummary.active_group_count,
+            latest_at: signalSummary.latest_at,
+            asset_count: stats.total,
+            high_value: stats.high_value,
+        };
+        const cards = profile.key === 'customer_service'
+            ? buildCustomerServiceCards(stats, signalSummary)
+            : buildDeviceTechCards(stats, signalSummary);
+        const regionalSummary = summarizeRegionDashboard(assets, signalSummary, { scope: 'domain' });
+
+        return {
+            profile,
+            days,
+            brief: buildDomainBrief(profile, stats, categories, summary, signalSummary),
+            summary,
+            stats,
+            category_totals: categories,
+            category_details: signalSummary.category_details || [],
+            top_signal_samples: signalSummary.top_samples || [],
+            cards,
+            priority_actions: buildDomainActions(profile, stats, categories),
+            top_groups: topCounters(assetSummary.counters.groups, 8),
+            top_actions: topCounters(assetSummary.counters.actions, 8),
+            top_risks: topCounters(assetSummary.counters.risks, 8),
+            top_roles: topCounters(assetSummary.counters.roles, 8),
+            top_contacts: topCounters(assetSummary.counters.contacts, 8),
+            top_resources: topCounters(assetSummary.counters.resources, 8),
+            knowledge_flow: topCounters(assetSummary.counters.libraries, 6),
+            top_types: topCounters(assetSummary.counters.types, 6),
+            matrix: regionalSummary.matrix,
+            top_assets: assets
+                .slice()
+                .sort((a, b) => (Number(b.asset_value_score || 0) - Number(a.asset_value_score || 0)) || (Number(b.confidence || 0) - Number(a.confidence || 0)))
+                .slice(0, 10)
+                .map(asset => ({
+                    id: asset.pool_id,
+                    source: asset.pool_source,
+                    asset_type: asset.asset_type,
+                    asset_type_label: TYPE_LABELS[asset.asset_type] || asset.asset_type,
+                    title: asset.title,
+                    summary: asset.metrics?.asset_insight?.reusable_summary || asset.summary || asset.description,
+                    group_name: asset.group_name,
+                    collection_region: asset.collection_region,
+                    business_sector: asset.business_sector,
+                    value_score: asset.asset_value_score,
+                    confidence: asset.confidence,
+                    target_library_label: asset.metrics?.target_library_label || LIBRARY_LABELS[assetLibraryKey(asset)] || assetLibraryKey(asset),
+                })),
+        };
+    }, DOMAIN_DASHBOARD_CACHE_TTL_MS);
+
+    return cloneJson(dashboard);
 }
 
 function graphNodeId(type, value) {

@@ -42,6 +42,13 @@
 
     <section v-if="loading" class="panel empty-state loading-pulse">加载{{ pageFallbackTitle }}...</section>
 
+    <section v-else-if="errorMessage" class="panel empty-state error-state">
+      <span>{{ errorMessage }}</span>
+      <button type="button" @click="fetchData">重试</button>
+    </section>
+
+    <section v-else-if="!hasCards" class="panel empty-state">{{ pageFallbackTitle }}暂无可展示卡片。</section>
+
     <section v-else class="focus-grid">
       <article v-for="card in data.cards" :key="card.label" class="focus-card" :class="card.tone">
         <div class="focus-head">
@@ -137,8 +144,10 @@ import api from '@/utils/request'
 
 const route = useRoute()
 const loading = ref(false)
+const errorMessage = ref('')
 const filters = reactive({ days: '30' })
 let requestSeq = 0
+const DOMAIN_DASHBOARD_TIMEOUT_MS = 12000
 const data = ref({
   profile: {},
   brief: {},
@@ -168,6 +177,7 @@ const secondaryList = computed(() => {
   const rows = [...(data.value.top_actions || []).slice(0, 5), ...(data.value.top_risks || []).slice(0, 5)]
   return rows.slice(0, 10)
 })
+const hasCards = computed(() => (data.value.cards || []).length > 0)
 const aiStatusClass = computed(() => data.value.ai_judgment?.status || 'fallback')
 const aiStatusText = computed(() => {
   const status = data.value.ai_judgment?.status
@@ -210,8 +220,10 @@ const pendingAiJudgment = (base = {}) => ({
 const fetchData = async () => {
   const seq = ++requestSeq
   loading.value = true
+  errorMessage.value = ''
   try {
     const res = await api.get('/api/knowledge-assets/intelligence/domain-dashboard', {
+      timeout: DOMAIN_DASHBOARD_TIMEOUT_MS,
       params: { kind: kind.value, days: filters.days, ai: 0 },
     })
     if (seq !== requestSeq) return
@@ -221,6 +233,14 @@ const fetchData = async () => {
         ai_judgment: pendingAiJudgment(res.data?.ai_judgment || {}),
       }
       fetchAiData(seq)
+    } else {
+      errorMessage.value = res.error || `${pageFallbackTitle.value}加载失败。`
+    }
+  } catch (err) {
+    if (seq === requestSeq) {
+      errorMessage.value = err.code === 'ECONNABORTED'
+        ? `${pageFallbackTitle.value}加载超时，请稍后重试。`
+        : `${pageFallbackTitle.value}加载失败，请稍后重试。`
     }
   } finally {
     if (seq === requestSeq) loading.value = false
@@ -386,6 +406,22 @@ onMounted(fetchData)
 .ai-tags b.priority-high { color: #991b1b; border-color: #fecaca; background: #fef2f2; }
 .ai-tags b.priority-medium { color: #92400e; border-color: #fde68a; background: #fffbeb; }
 .ai-tags b.priority-low { color: #047857; border-color: #a7f3d0; background: #ecfdf5; }
+.error-state {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  justify-content: center;
+  color: #991b1b;
+}
+.error-state button {
+  border: 1px solid #fecaca;
+  border-radius: 8px;
+  background: #fff;
+  color: #991b1b;
+  padding: 8px 14px;
+  font-weight: 900;
+  cursor: pointer;
+}
 .focus-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
