@@ -25,6 +25,7 @@ const { checkStorageWatermark: readStorageWatermark } = require('./lib/storage-h
 const app = express();
 const PORT = process.env.PORT || 3000;
 const STARTED_AT = new Date();
+const SLOW_API_LOG_MS = Math.max(0, Number(process.env.SLOW_API_LOG_MS || 1200));
 
 function envFlag(name) {
     return ['1', 'true', 'yes', 'on'].includes(String(process.env[name] || '').trim().toLowerCase());
@@ -134,9 +135,83 @@ function buildHealthReport() {
     };
 }
 
+function apiTimingMiddleware(req, res, next) {
+    if (!req.path.startsWith('/api')) return next();
+    const startedAt = process.hrtime.bigint();
+    res.on('finish', () => {
+        if (!SLOW_API_LOG_MS) return;
+        const durationMs = Number(process.hrtime.bigint() - startedAt) / 1e6;
+        if (durationMs < SLOW_API_LOG_MS) return;
+        console.warn('[perf] slow api', JSON.stringify({
+            method: req.method,
+            path: req.path,
+            status: res.statusCode,
+            durationMs: Math.round(durationMs),
+            bytes: Number(res.getHeader('content-length') || 0)
+        }));
+    });
+    next();
+}
+
+function setStaticCacheHeaders(res, filePath) {
+    const normalized = String(filePath || '');
+    if (normalized.includes(`${path.sep}assets${path.sep}`)) {
+        const value = 'public, max-age=31536000, immutable';
+        res.setHeader('Cache-Control', value);
+        res.setHeader('CDN-Cache-Control', value);
+        res.setHeader('Surrogate-Control', 'max-age=31536000');
+    } else if (normalized.endsWith('.html')) {
+        res.setHeader('Cache-Control', 'no-cache');
+    } else {
+        res.setHeader('Cache-Control', 'public, max-age=3600');
+    }
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+}
+
+function safeStaticFilePath(publicDir, reqPath) {
+    try {
+        const decoded = decodeURIComponent(reqPath);
+        const relative = path.normalize(decoded).replace(/^[/\\]+/, '');
+        if (!relative || relative.startsWith('..')) return null;
+        const filePath = path.join(publicDir, relative);
+        const root = `${publicDir}${path.sep}`;
+        return filePath === publicDir || filePath.startsWith(root) ? filePath : null;
+    } catch (_) {
+        return null;
+    }
+}
+
+function preferredEncoding(req) {
+    const accepted = String(req.headers['accept-encoding'] || '');
+    if (/\bbr\b/.test(accepted)) return { encoding: 'br', suffix: '.br' };
+    if (/\bgzip\b/.test(accepted)) return { encoding: 'gzip', suffix: '.gz' };
+    return null;
+}
+
+function servePrecompressedStatic(publicDir) {
+    return (req, res, next) => {
+        if (req.method !== 'GET' && req.method !== 'HEAD') return next();
+        const variant = preferredEncoding(req);
+        if (!variant) return next();
+
+        const filePath = safeStaticFilePath(publicDir, req.path);
+        if (!filePath || !/\.(?:js|css|html|svg|json|txt|map)$/i.test(filePath)) return next();
+
+        const compressedPath = `${filePath}${variant.suffix}`;
+        if (!fs.existsSync(compressedPath)) return next();
+
+        setStaticCacheHeaders(res, filePath);
+        res.setHeader('Content-Encoding', variant.encoding);
+        res.setHeader('Vary', 'Accept-Encoding');
+        res.type(path.basename(filePath));
+        res.sendFile(compressedPath);
+    };
+}
+
 // ─── 登录接口 (Auth Routes) ──────────────────────────────────────
 app.use(cors());
 app.use(responseHelperMiddleware);
+app.use(apiTimingMiddleware);
 app.use('/api/collector', express.json({ limit: process.env.COLLECTOR_BODY_LIMIT || '30mb' }), collectorRoutes);
 app.use(express.json({ limit: process.env.JSON_BODY_LIMIT || '2mb' }));
 app.use('/api/auth', authRoutes);
@@ -166,6 +241,7 @@ function sendRuntimeConfig(req, res) {
         guestLoginEnabled: guestLoginEnabled()
     };
     const body = `window.__SOCIAL_MONITOR_CONFIG__ = ${JSON.stringify(config).replace(/</g, '\\u003c')};\n`;
+    res.setHeader('Cache-Control', 'no-cache');
     res.type('application/javascript').send(body);
 }
 
@@ -441,18 +517,11 @@ const publicDir = path.join(__dirname, 'frontend/dist');
 if (!fs.existsSync(publicDir)) {
     fs.mkdirSync(publicDir, { recursive: true });
 }
+app.use(servePrecompressedStatic(publicDir));
 app.use(express.static(publicDir, {
     etag: true,
     lastModified: true,
-    setHeaders(res, filePath) {
-        if (filePath.includes(`${path.sep}assets${path.sep}`)) {
-            res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
-        } else if (filePath.endsWith('.html')) {
-            res.setHeader('Cache-Control', 'no-cache');
-        } else {
-            res.setHeader('Cache-Control', 'public, max-age=3600');
-        }
-    }
+    setHeaders: setStaticCacheHeaders
 }));
 
 // Fallback for SPA routing

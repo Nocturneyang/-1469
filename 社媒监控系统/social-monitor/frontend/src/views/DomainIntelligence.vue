@@ -230,7 +230,7 @@ const fetchData = async () => {
 const fetchAiData = async (seq) => {
   try {
     const res = await api.get('/api/knowledge-assets/intelligence/domain-dashboard', {
-      timeout: 60000,
+      timeout: 30000,
       silentError: true,
       params: { kind: kind.value, days: filters.days, ai: 1 },
     })

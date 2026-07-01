@@ -22,7 +22,10 @@ const STAFF_CONFIG_PATH = path.join(process.env.DATA_DIR || path.join(__dirname,
 const ACCOUNT_REGION_CONFIG_PATH = path.join(process.env.DATA_DIR || path.join(__dirname, '..'), 'config', 'account-regions.json');
 let _analyticsDb = null;
 let _sourceDb = null;
-const PERF_CACHE_TTL_MS = positiveNumber('ANALYTICS_PERF_CACHE_TTL_MS', 20 * 1000);
+const PERF_CACHE_TTL_MS = positiveNumber('ANALYTICS_PERF_CACHE_TTL_MS', 60 * 1000);
+const INTELLIGENCE_CACHE_TTL_MS = positiveNumber('ANALYTICS_INTELLIGENCE_CACHE_TTL_MS', 2 * 60 * 1000);
+const FORMAL_LIBRARY_CACHE_TTL_MS = positiveNumber('FORMAL_LIBRARY_CACHE_TTL_MS', 5 * 60 * 1000);
+const SUPPLIER_COVERAGE_CACHE_TTL_MS = positiveNumber('SUPPLIER_COVERAGE_CACHE_TTL_MS', 2 * 60 * 1000);
 const analyticsPerfCache = new Map();
 
 function positiveNumber(name, fallback) {
@@ -681,7 +684,7 @@ function formalAssetsForLibrary(db, library, limit = 2000) {
             .map(mapFormalKnowledgeAsset)
             .filter(asset => asset.target_library === library)
             .slice(0, limit)
-    ));
+    ), FORMAL_LIBRARY_CACHE_TTL_MS);
 }
 
 function formalAssetToQa(asset) {
@@ -975,7 +978,7 @@ function loadKnowledgeAssetPool(db, options = {}) {
             if (options.type && asset.asset_type !== options.type) return false;
             return true;
         });
-    });
+    }, INTELLIGENCE_CACHE_TTL_MS);
 }
 
 function assetTargetLibrary(asset) {
@@ -1345,7 +1348,7 @@ function loadRegionalBusinessSignals(options = {}) {
             category_totals: categoryTotals,
             top_samples: [],
         };
-    });
+    }, INTELLIGENCE_CACHE_TTL_MS);
 }
 
 function serializeBusinessCategory(bucket) {
@@ -2494,7 +2497,7 @@ function domainAiRuntimeConfig() {
         tier: process.env.DOMAIN_INTELLIGENCE_AI_TIER || 'default',
         hasProvider: Boolean(config.hasKey || config.hasGemini),
         promptVersion: aiClient.PROMPT_VERSIONS?.domainIntelligence || 'v1.0',
-        timeoutMs: envPositiveNumber('DOMAIN_INTELLIGENCE_AI_TIMEOUT_MS', 25000),
+        timeoutMs: envPositiveNumber('DOMAIN_INTELLIGENCE_AI_TIMEOUT_MS', 12000),
         cacheMs: envPositiveNumber('DOMAIN_INTELLIGENCE_AI_CACHE_MS', 10 * 60 * 1000),
     };
 }
@@ -4846,11 +4849,15 @@ function sortSupplierCoverageRows(rows, sort) {
     return rows.sort(sorters[sort] || sorters.score);
 }
 
+function cachedSupplierCoverageRows(adb, sdb) {
+    return cachedPerfValue('supplier-coverage', 'all', () => buildSupplierCoverageRows(adb, sdb), SUPPLIER_COVERAGE_CACHE_TTL_MS);
+}
+
 router.get('/supplier-profiles/sectors', (req, res) => {
     try {
         const adb = getAnalyticsDb();
         if (!adb) return res.json({ success: true, data: [] });
-        const rows = buildSupplierCoverageRows(adb, getSourceDb());
+        const rows = cachedSupplierCoverageRows(adb, getSourceDb());
         const sectors = Array.from(new Set(rows.map(r => r.business_sector).filter(Boolean))).sort();
         res.json({ success: true, data: sectors });
     } catch (err) {
@@ -4867,7 +4874,7 @@ router.get('/supplier-profiles/:groupName', (req, res) => {
         const profileRow = tableExists(adb, 'supplier_profiles')
             ? adb.prepare('SELECT * FROM supplier_profiles WHERE group_name = ?').get(groupName)
             : null;
-        const coverage = buildSupplierCoverageRows(adb, getSourceDb()).find(row => row.group_name === groupName);
+        const coverage = cachedSupplierCoverageRows(adb, getSourceDb()).find(row => row.group_name === groupName);
         if (!profileRow && !coverage) return res.status(404).json({ success: false, error: '供应商未找到' });
         const profile = profileRow
             ? {
@@ -4963,7 +4970,7 @@ router.get('/supplier-profiles', (req, res) => {
         const limitNum = Math.min(50, Math.max(1, parseInt(limit) || 20));
         const offset = (pageNum - 1) * limitNum;
 
-        let rows = buildSupplierCoverageRows(adb, getSourceDb());
+        let rows = cachedSupplierCoverageRows(adb, getSourceDb()).slice();
         if (sector) rows = rows.filter(row => row.business_sector === sector);
         if (region) rows = rows.filter(row => row.region === region);
         rows = sortSupplierCoverageRows(rows, sort);
