@@ -32,6 +32,7 @@ import App from './App.vue'
 import router from './router'
 
 const app = createApp(App)
+app.provide('appBuildId', '2026-07-01-perf-2')
 
 const elementComponents = [
   ElAlert,
