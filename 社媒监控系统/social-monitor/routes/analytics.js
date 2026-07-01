@@ -27,6 +27,9 @@ const INTELLIGENCE_CACHE_TTL_MS = positiveNumber('ANALYTICS_INTELLIGENCE_CACHE_T
 const FORMAL_LIBRARY_CACHE_TTL_MS = positiveNumber('FORMAL_LIBRARY_CACHE_TTL_MS', 5 * 60 * 1000);
 const SUPPLIER_COVERAGE_CACHE_TTL_MS = positiveNumber('SUPPLIER_COVERAGE_CACHE_TTL_MS', 2 * 60 * 1000);
 const DOMAIN_DASHBOARD_CACHE_TTL_MS = positiveNumber('DOMAIN_DASHBOARD_CACHE_TTL_MS', 2 * 60 * 1000);
+const REGION_DASHBOARD_CACHE_TTL_MS = positiveNumber('REGION_DASHBOARD_CACHE_TTL_MS', 2 * 60 * 1000);
+const REGION_INTELLIGENCE_MESSAGE_SCAN_LIMIT = positiveNumber('REGION_INTELLIGENCE_MESSAGE_SCAN_LIMIT', 9000);
+const REGION_INTELLIGENCE_ASSET_SCAN_LIMIT = positiveNumber('REGION_INTELLIGENCE_ASSET_SCAN_LIMIT', 3500);
 const DOMAIN_INTELLIGENCE_MESSAGE_SCAN_LIMIT = positiveNumber('DOMAIN_INTELLIGENCE_MESSAGE_SCAN_LIMIT', 6000);
 const DOMAIN_INTELLIGENCE_ASSET_SCAN_LIMIT = positiveNumber('DOMAIN_INTELLIGENCE_ASSET_SCAN_LIMIT', 2500);
 const analyticsPerfCache = new Map();
@@ -80,6 +83,13 @@ function boundedLimit(value, fallback, max) {
 function normalizeFilterSet(value, normalizer = item => String(item || '').trim()) {
     const items = Array.isArray(value) ? value : (value == null || value === '' ? [] : [value]);
     return new Set(items.map(normalizer).filter(Boolean));
+}
+
+function mergeFilterValues(...values) {
+    return values.flatMap(value => {
+        if (Array.isArray(value)) return value;
+        return value == null || value === '' ? [] : [value];
+    });
 }
 
 function cloneJson(value) {
@@ -945,8 +955,8 @@ function loadKnowledgeAssetPool(db, options = {}) {
     if (!db) return [];
     const days = Math.min(365, Math.max(1, parseInt(options.days) || 30));
     const scope = options.scope == null ? 'all' : normalizeIntelligenceScope(options.scope);
-    const regionSet = normalizeFilterSet(options.regions);
-    const sectorSet = normalizeFilterSet(options.sectors, normalizeSector);
+    const regionSet = normalizeFilterSet(mergeFilterValues(options.regions, options.region));
+    const sectorSet = normalizeFilterSet(mergeFilterValues(options.sectors, options.sector), normalizeSector);
     const candidateLimit = boundedLimit(options.candidateLimit || options.limit, 6000, 6000);
     const formalLimit = boundedLimit(options.formalLimit || Math.ceil(candidateLimit * 0.67), 4000, 4000);
     const cacheOptions = {
@@ -963,15 +973,29 @@ function loadKnowledgeAssetPool(db, options = {}) {
     return cachedPerfValue('asset-pool', cacheOptions, () => {
         const since = Date.now() - days * 24 * 3600 * 1000;
         const rows = [];
+        const scopedClauses = [];
+        const scopedParams = [];
+        if (regionSet.size) {
+            const regions = Array.from(regionSet);
+            scopedClauses.push(`collection_region IN (${regions.map(() => '?').join(',')})`);
+            scopedParams.push(...regions);
+        }
+        if (sectorSet.size) {
+            const sectors = Array.from(sectorSet);
+            scopedClauses.push(`business_sector IN (${sectors.map(() => '?').join(',')})`);
+            scopedParams.push(...sectors);
+        }
+        const scopedWhere = scopedClauses.length ? ` AND (${scopedClauses.join(' OR ')})` : '';
 
         if (tableExists(db, 'knowledge_asset_candidates')) {
             const candidateRows = db.prepare(`
                 SELECT *
                 FROM knowledge_asset_candidates
                 WHERE COALESCE(last_seen_at, first_seen_at, 0) >= ?
+                  ${scopedWhere}
                 ORDER BY asset_value_score DESC, confidence DESC, last_seen_at DESC
                 LIMIT ?
-            `).all(since, candidateLimit).map(row => ({
+            `).all(since, ...scopedParams, candidateLimit).map(row => ({
                 ...mapKnowledgeAsset(row),
                 pool_source: 'candidate',
                 pool_id: row.dedupe_key,
@@ -985,9 +1009,10 @@ function loadKnowledgeAssetPool(db, options = {}) {
                 FROM knowledge_assets
                 WHERE status = 'active'
                   AND COALESCE(last_seen_at, first_seen_at, 0) >= ?
+                  ${scopedWhere}
                 ORDER BY asset_value_score DESC, quality_score DESC, last_seen_at DESC
                 LIMIT ?
-            `).all(since, formalLimit).map(row => ({
+            `).all(since, ...scopedParams, formalLimit).map(row => ({
                 ...mapFormalKnowledgeAsset(row),
                 pool_source: 'formal',
                 pool_id: row.asset_uid,
@@ -1002,8 +1027,8 @@ function loadKnowledgeAssetPool(db, options = {}) {
             if ((regionSet.size || sectorSet.size) &&
                 !regionSet.has(String(asset.collection_region || '').trim()) &&
                 !sectorSet.has(normalizeSector(asset.business_sector))) return false;
-            if (options.region && asset.collection_region !== options.region) return false;
-            if (options.sector && asset.business_sector !== options.sector) return false;
+            if (options.region && asset.collection_region !== String(options.region || '').trim()) return false;
+            if (options.sector && normalizeSector(asset.business_sector) !== normalizeSector(options.sector)) return false;
             if (options.type && asset.asset_type !== options.type) return false;
             return true;
         });
@@ -1323,8 +1348,8 @@ function loadRegionalBusinessSignals(options = {}) {
 
     const dayNum = Math.min(365, Math.max(1, parseInt(options.days) || 30));
     const scope = normalizeIntelligenceScope(options.scope);
-    const regionSet = normalizeFilterSet(options.regions);
-    const sectorSet = normalizeFilterSet(options.sectors, normalizeSector);
+    const regionSet = normalizeFilterSet(mergeFilterValues(options.regions, options.region));
+    const sectorSet = normalizeFilterSet(mergeFilterValues(options.sectors, options.sector), normalizeSector);
     const rowLimit = boundedLimit(options.limit, 22000, 50000);
     const cacheOptions = {
         days: dayNum,
@@ -1386,8 +1411,8 @@ function loadRegionalBusinessSignals(options = {}) {
             const sector = normalizeSector(msg.business_sector || info.business_sector);
             if (!scopeMatchesRegion(region, scope)) continue;
             if ((regionSet.size || sectorSet.size) && !regionSet.has(region) && !sectorSet.has(sector)) continue;
-            if (options.region && region !== options.region) continue;
-            if (options.sector && sector !== options.sector) continue;
+            if (options.region && region !== String(options.region || '').trim()) continue;
+            if (options.sector && sector !== normalizeSector(options.sector)) continue;
 
             const key = `${region}::${sector}`;
             const row = byKey.get(key) || initBusinessSignalRow(region, sector);
@@ -2874,6 +2899,39 @@ async function enrichRegionDashboardWithAi(summary, options = {}) {
     }
 }
 
+function buildRegionIntelligenceDashboard(db, options = {}) {
+    const days = Math.min(365, Math.max(1, parseInt(options.days) || 30));
+    const scope = normalizeIntelligenceScope(options.scope);
+    const region = String(options.region || '').trim();
+    const sector = options.sector ? normalizeSector(options.sector) : '';
+    const dashboard = cachedPerfValue('region-dashboard-base', {
+        days,
+        scope,
+        region,
+        sector,
+    }, () => {
+        const assets = loadKnowledgeAssetPool(db, {
+            days,
+            scope,
+            region,
+            sector,
+            limit: REGION_INTELLIGENCE_ASSET_SCAN_LIMIT,
+        });
+        const messageIntel = loadRegionalBusinessSignals({
+            days,
+            scope,
+            region,
+            sector,
+            limit: REGION_INTELLIGENCE_MESSAGE_SCAN_LIMIT,
+        });
+        const dashboard = summarizeRegionDashboard(assets, messageIntel, { scope });
+        dashboard.days = days;
+        return dashboard;
+    }, REGION_DASHBOARD_CACHE_TTL_MS);
+
+    return cloneJson(dashboard);
+}
+
 function buildDomainIntelligenceDashboard(db, kind, options = {}) {
     const profile = domainProfileFor(kind);
     const days = Math.min(365, Math.max(1, parseInt(options.days) || 30));
@@ -3910,10 +3968,7 @@ router.get('/knowledge-assets/intelligence/region-dashboard', async (req, res) =
 
         const { region, sector, days } = req.query;
         const scope = normalizeIntelligenceScope(req.query.scope);
-        const assets = loadKnowledgeAssetPool(adb, { region, sector, days, scope });
-        const messageIntel = loadRegionalBusinessSignals({ region, sector, days, scope });
-        const dashboard = summarizeRegionDashboard(assets, messageIntel, { scope });
-        dashboard.days = Math.min(365, Math.max(1, parseInt(days) || 30));
+        const dashboard = buildRegionIntelligenceDashboard(adb, { region, sector, days, scope });
         const data = await enrichRegionDashboardWithAi(dashboard, {
             enableAi: req.query.ai !== '0',
             focusKey: req.query.focusKey,

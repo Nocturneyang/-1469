@@ -125,10 +125,14 @@
     <section class="panel">
       <div class="panel-title compact">
         <span class="title-text">{{ axisLabel }} × 业务板块</span>
-        <span class="hint">点击单元格切换简报对象</span>
+        <span class="hint">{{ loading && matrix.length ? '正在刷新...' : '点击单元格切换简报对象' }}</span>
       </div>
 
-      <div v-if="loading" class="empty-state loading-pulse">加载{{ pageTitle }}...</div>
+      <div v-if="loading && matrix.length === 0" class="empty-state loading-pulse">加载{{ pageTitle }}...</div>
+      <div v-else-if="errorMessage && matrix.length === 0" class="empty-state error-state">
+        <span>{{ errorMessage }}</span>
+        <button type="button" @click="fetchData">重试</button>
+      </div>
       <div v-else-if="matrix.length === 0" class="empty-state">暂无{{ pageTitle }}样本</div>
       <div v-else class="heatmap" :style="matrixStyle">
         <div class="matrix-corner">{{ axisLabel }} / 板块</div>
@@ -346,9 +350,11 @@ const scopeOptions = [
 ]
 
 const loading = ref(false)
+const errorMessage = ref('')
 const filters = ref({ days: '30', region: '', sector: '', scope: 'market' })
 let requestSeq = 0
 let aiRequestSeq = 0
+const REGION_DASHBOARD_TIMEOUT_MS = 12000
 const summary = ref({
   view_scope: null,
   total: 0,
@@ -506,8 +512,12 @@ const jumpGraph = (item) => {
 const fetchData = async () => {
   const seq = ++requestSeq
   loading.value = true
+  errorMessage.value = ''
   try {
-    const res = await api.get('/api/knowledge-assets/intelligence/region-dashboard', { params: { ...filters.value, ai: 0 } })
+    const res = await api.get('/api/knowledge-assets/intelligence/region-dashboard', {
+      timeout: REGION_DASHBOARD_TIMEOUT_MS,
+      params: { ...filters.value, ai: 0 },
+    })
     if (seq !== requestSeq) return
     if (res.success) {
       summary.value = {
@@ -517,6 +527,14 @@ const fetchData = async () => {
       }
       selectedKey.value = summary.value.matrix?.[0]?.key || ''
       if (selected.value) fetchRegionAiForSelected(selected.value)
+    } else {
+      errorMessage.value = res.error || `${pageTitle.value}加载失败。`
+    }
+  } catch (err) {
+    if (seq === requestSeq) {
+      errorMessage.value = err.code === 'ECONNABORTED'
+        ? `${pageTitle.value}加载超时，请稍后重试。`
+        : `${pageTitle.value}加载失败，请稍后重试。`
     }
   } finally {
     if (seq === requestSeq) loading.value = false
@@ -787,6 +805,22 @@ onMounted(fetchData)
 .ai-tags b.priority-high { color: #991b1b; border-color: #fecaca; background: #fef2f2; }
 .ai-tags b.priority-medium { color: #92400e; border-color: #fde68a; background: #fffbeb; }
 .ai-tags b.priority-low { color: #047857; border-color: #a7f3d0; background: #ecfdf5; }
+.error-state {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  justify-content: center;
+  color: #991b1b;
+}
+.error-state button {
+  border: 1px solid #fecaca;
+  border-radius: 8px;
+  background: #fff;
+  color: #991b1b;
+  padding: 8px 14px;
+  font-weight: 900;
+  cursor: pointer;
+}
 .battle-layout {
   display: grid;
   grid-template-columns: minmax(0, 1.1fr) minmax(360px, .9fr);
