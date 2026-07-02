@@ -1,4 +1,5 @@
 const express = require('express');
+const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 
@@ -12,7 +13,7 @@ const {
     targetLibraryForAsset,
 } = require('../lib/knowledge-assets');
 const aiClient = require('../lib/ai-client');
-const { shanghaiDateString, shanghaiISOString } = require('../lib/time');
+const { shanghaiDateString, shanghaiDateStartMs, shanghaiISOString } = require('../lib/time');
 const { isSqliteStorageError } = require('../lib/storage-health');
 const { requireAdmin } = require('../middleware/auth');
 
@@ -32,7 +33,10 @@ const REGION_INTELLIGENCE_MESSAGE_SCAN_LIMIT = positiveNumber('REGION_INTELLIGEN
 const REGION_INTELLIGENCE_ASSET_SCAN_LIMIT = positiveNumber('REGION_INTELLIGENCE_ASSET_SCAN_LIMIT', 3500);
 const DOMAIN_INTELLIGENCE_MESSAGE_SCAN_LIMIT = positiveNumber('DOMAIN_INTELLIGENCE_MESSAGE_SCAN_LIMIT', 6000);
 const DOMAIN_INTELLIGENCE_ASSET_SCAN_LIMIT = positiveNumber('DOMAIN_INTELLIGENCE_ASSET_SCAN_LIMIT', 2500);
+const ASSET_DAILY_SNAPSHOT_VERSION = process.env.ASSET_DAILY_SNAPSHOT_VERSION || '2026-07-01-daily-v1';
+const ASSET_DAILY_SNAPSHOT_DIR = path.join(process.env.DATA_DIR || path.join(__dirname, '..'), 'cache', 'asset-analysis-snapshots');
 const analyticsPerfCache = new Map();
+const assetDailySnapshotCache = new Map();
 
 function positiveNumber(name, fallback) {
     const value = Number(process.env[name]);
@@ -72,6 +76,101 @@ function cachedPerfValue(namespace, key, producer, ttlMs = PERF_CACHE_TTL_MS) {
         if (firstKey) analyticsPerfCache.delete(firstKey);
     }
     return value;
+}
+
+function assetDailySnapshotEnabled() {
+    return !envFlag('ASSET_DAILY_SNAPSHOT_DISABLED');
+}
+
+function nextShanghaiMidnightMs(now = Date.now()) {
+    const today = shanghaiDateString(new Date(now));
+    return shanghaiDateStartMs(today) + 24 * 60 * 60 * 1000;
+}
+
+function assetSnapshotCacheKey(namespace, key, date = shanghaiDateString()) {
+    return `${ASSET_DAILY_SNAPSHOT_VERSION}:${date}:${namespace}:${stableKey(key)}`;
+}
+
+function assetSnapshotFilePath(namespace, key, date = shanghaiDateString()) {
+    const hash = crypto.createHash('sha1')
+        .update(assetSnapshotCacheKey(namespace, key, date))
+        .digest('hex')
+        .slice(0, 24);
+    const safeNamespace = String(namespace || 'snapshot').replace(/[^a-z0-9_.-]+/gi, '-').slice(0, 80);
+    return path.join(ASSET_DAILY_SNAPSHOT_DIR, date, `${safeNamespace}-${hash}.json`);
+}
+
+function cloneSnapshotValue(value) {
+    if (value == null) return value;
+    return cloneJson(value);
+}
+
+function readAssetSnapshot(namespace, key, date, now) {
+    const cacheKey = assetSnapshotCacheKey(namespace, key, date);
+    const cached = assetDailySnapshotCache.get(cacheKey);
+    if (cached && now < cached.expiresAt) return cloneSnapshotValue(cached.value);
+
+    const filePath = assetSnapshotFilePath(namespace, key, date);
+    if (!fs.existsSync(filePath)) return null;
+    try {
+        const payload = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+        if (payload?.version !== ASSET_DAILY_SNAPSHOT_VERSION || payload?.date !== date) return null;
+        const value = payload.data;
+        assetDailySnapshotCache.set(cacheKey, { expiresAt: payload.expires_at_ms || nextShanghaiMidnightMs(now), value });
+        return cloneSnapshotValue(value);
+    } catch (err) {
+        console.warn('[asset-snapshot] read failed:', err.message);
+        return null;
+    }
+}
+
+function writeAssetSnapshot(namespace, key, date, value, now) {
+    const cacheKey = assetSnapshotCacheKey(namespace, key, date);
+    const expiresAt = nextShanghaiMidnightMs(now);
+    assetDailySnapshotCache.set(cacheKey, { expiresAt, value });
+    if (assetDailySnapshotCache.size > 500) {
+        const firstKey = assetDailySnapshotCache.keys().next().value;
+        if (firstKey) assetDailySnapshotCache.delete(firstKey);
+    }
+
+    try {
+        const filePath = assetSnapshotFilePath(namespace, key, date);
+        fs.mkdirSync(path.dirname(filePath), { recursive: true });
+        const payload = {
+            version: ASSET_DAILY_SNAPSHOT_VERSION,
+            date,
+            namespace,
+            key,
+            generated_at: shanghaiISOString(new Date(now)),
+            expires_at_ms: expiresAt,
+            data: value,
+        };
+        const tmpPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
+        fs.writeFileSync(tmpPath, JSON.stringify(payload));
+        fs.renameSync(tmpPath, filePath);
+    } catch (err) {
+        console.warn('[asset-snapshot] write failed:', err.message);
+    }
+    return cloneSnapshotValue(value);
+}
+
+function dailyAssetSnapshotValue(namespace, key, producer) {
+    if (!assetDailySnapshotEnabled()) return producer();
+    const now = Date.now();
+    const date = shanghaiDateString(new Date(now));
+    const cached = readAssetSnapshot(namespace, key, date, now);
+    if (cached != null) return cached;
+    return writeAssetSnapshot(namespace, key, date, producer(), now);
+}
+
+async function dailyAssetSnapshotValueAsync(namespace, key, producer) {
+    if (!assetDailySnapshotEnabled()) return producer();
+    const now = Date.now();
+    const date = shanghaiDateString(new Date(now));
+    const cached = readAssetSnapshot(namespace, key, date, now);
+    if (cached != null) return cached;
+    const value = await producer();
+    return writeAssetSnapshot(namespace, key, date, value, now);
 }
 
 function boundedLimit(value, fallback, max) {
@@ -3829,7 +3928,7 @@ router.get('/knowledge-assets/summary', (req, res) => {
             return res.sendSuccess(emptyKnowledgeAssetSummary());
         }
 
-        const data = cachedPerfValue('knowledge-assets-summary', 'all', () => {
+        const data = dailyAssetSnapshotValue('knowledge-assets-summary', 'all', () => cachedPerfValue('knowledge-assets-summary', 'all', () => {
             const total = adb.prepare('SELECT COUNT(*) AS c FROM knowledge_asset_candidates').get()?.c || 0;
             const highValue = adb.prepare("SELECT COUNT(*) AS c FROM knowledge_asset_candidates WHERE value_level = 'high' OR asset_value_score >= 75").get()?.c || 0;
             const pending = adb.prepare("SELECT COUNT(*) AS c FROM knowledge_asset_candidates WHERE review_status = 'pending_review'").get()?.c || 0;
@@ -3891,7 +3990,7 @@ router.get('/knowledge-assets/summary', (req, res) => {
             `).all().map(mapKnowledgeAsset);
 
             return { ready: true, total, highValue, pending, confirmed, manualPending, machineHandled, byType, byStatus, bySector, byInteraction, byMachineDecision, top };
-        });
+        }));
 
         res.sendSuccess(data);
     } catch (err) {
@@ -3908,51 +4007,51 @@ router.get('/knowledge-assets/intelligence/regions', (req, res) => {
         }
 
         const { region, sector, days } = req.query;
-        const dayNum = Math.min(90, Math.max(1, parseInt(days) || 30));
-        const since = Date.now() - dayNum * 24 * 3600 * 1000;
-        const where = ['COALESCE(last_seen_at, first_seen_at, 0) >= ?'];
-        const params = [since];
-        if (region) { where.push('collection_region = ?'); params.push(region); }
-        if (sector) { where.push('business_sector = ?'); params.push(sector); }
+        const data = dailyAssetSnapshotValue('knowledge-assets-intelligence-regions', { region, sector, days }, () => {
+            const dayNum = Math.min(90, Math.max(1, parseInt(days) || 30));
+            const since = Date.now() - dayNum * 24 * 3600 * 1000;
+            const where = ['COALESCE(last_seen_at, first_seen_at, 0) >= ?'];
+            const params = [since];
+            if (region) { where.push('collection_region = ?'); params.push(region); }
+            if (sector) { where.push('business_sector = ?'); params.push(sector); }
 
-        const rows = adb.prepare(`
-            SELECT collection_region, business_sector,
-                   COUNT(*) AS total,
-                   SUM(CASE WHEN value_level = 'high' OR asset_value_score >= 75 THEN 1 ELSE 0 END) AS high_value,
-                   SUM(CASE WHEN asset_type = 'risk_pattern' THEN 1 ELSE 0 END) AS risk_count,
-                   SUM(CASE WHEN asset_type = 'operation_action' THEN 1 ELSE 0 END) AS action_count,
-                   SUM(CASE WHEN asset_type = 'sla_commitment' THEN 1 ELSE 0 END) AS commitment_count,
-                   SUM(CASE WHEN asset_type = 'media_evidence' THEN 1 ELSE 0 END) AS media_count,
-                   SUM(CASE WHEN business_region IS NOT NULL AND collection_region IS NOT NULL AND business_region != collection_region THEN 1 ELSE 0 END) AS cross_region_count,
-                   ROUND(AVG(asset_value_score), 1) AS avg_value,
-                   ROUND(AVG(confidence), 2) AS avg_confidence,
-                   MAX(last_seen_at) AS last_seen_at
-            FROM knowledge_asset_candidates
-            WHERE ${where.join(' AND ')}
-            GROUP BY collection_region, business_sector
-            ORDER BY high_value DESC, avg_value DESC, total DESC
-            LIMIT 60
-        `).all(...params);
+            const rows = adb.prepare(`
+                SELECT collection_region, business_sector,
+                       COUNT(*) AS total,
+                       SUM(CASE WHEN value_level = 'high' OR asset_value_score >= 75 THEN 1 ELSE 0 END) AS high_value,
+                       SUM(CASE WHEN asset_type = 'risk_pattern' THEN 1 ELSE 0 END) AS risk_count,
+                       SUM(CASE WHEN asset_type = 'operation_action' THEN 1 ELSE 0 END) AS action_count,
+                       SUM(CASE WHEN asset_type = 'sla_commitment' THEN 1 ELSE 0 END) AS commitment_count,
+                       SUM(CASE WHEN asset_type = 'media_evidence' THEN 1 ELSE 0 END) AS media_count,
+                       SUM(CASE WHEN business_region IS NOT NULL AND collection_region IS NOT NULL AND business_region != collection_region THEN 1 ELSE 0 END) AS cross_region_count,
+                       ROUND(AVG(asset_value_score), 1) AS avg_value,
+                       ROUND(AVG(confidence), 2) AS avg_confidence,
+                       MAX(last_seen_at) AS last_seen_at
+                FROM knowledge_asset_candidates
+                WHERE ${where.join(' AND ')}
+                GROUP BY collection_region, business_sector
+                ORDER BY high_value DESC, avg_value DESC, total DESC
+                LIMIT 60
+            `).all(...params);
 
-        const topStmt = adb.prepare(`
-            SELECT asset_type, COUNT(*) AS count, ROUND(AVG(asset_value_score), 1) AS avg_value
-            FROM knowledge_asset_candidates
-            WHERE collection_region = ?
-              AND business_sector = ?
-              AND asset_type != 'regional_intelligence'
-              AND COALESCE(last_seen_at, first_seen_at, 0) >= ?
-            GROUP BY asset_type
-            ORDER BY count DESC
-            LIMIT 4
-        `);
+            const topStmt = adb.prepare(`
+                SELECT asset_type, COUNT(*) AS count, ROUND(AVG(asset_value_score), 1) AS avg_value
+                FROM knowledge_asset_candidates
+                WHERE collection_region = ?
+                  AND business_sector = ?
+                  AND asset_type != 'regional_intelligence'
+                  AND COALESCE(last_seen_at, first_seen_at, 0) >= ?
+                GROUP BY asset_type
+                ORDER BY count DESC
+                LIMIT 4
+            `);
 
-        res.json({
-            success: true,
-            data: rows.map(row => ({
-                ...row,
-                top_types: topStmt.all(row.collection_region, row.business_sector, since),
-            }))
+            return rows.map(row => ({
+                    ...row,
+                    top_types: topStmt.all(row.collection_region, row.business_sector, since),
+                }));
         });
+        res.json({ success: true, data });
     } catch (err) {
         if (handleAnalyticsStorageError(res, err, { data: [] })) return;
         res.status(500).json({ success: false, error: err.message });
@@ -3968,10 +4067,15 @@ router.get('/knowledge-assets/intelligence/region-dashboard', async (req, res) =
 
         const { region, sector, days } = req.query;
         const scope = normalizeIntelligenceScope(req.query.scope);
-        const dashboard = buildRegionIntelligenceDashboard(adb, { region, sector, days, scope });
-        const data = await enrichRegionDashboardWithAi(dashboard, {
-            enableAi: req.query.ai !== '0',
-            focusKey: req.query.focusKey,
+        const enableAi = req.query.ai !== '0';
+        const data = await dailyAssetSnapshotValueAsync('region-dashboard-response', {
+            region, sector, days, scope, ai: enableAi ? '1' : '0', focusKey: req.query.focusKey || '',
+        }, async () => {
+            const dashboard = buildRegionIntelligenceDashboard(adb, { region, sector, days, scope });
+            return enrichRegionDashboardWithAi(dashboard, {
+                enableAi,
+                focusKey: req.query.focusKey,
+            });
         });
         res.json({
             success: true,
@@ -3990,8 +4094,15 @@ router.get('/knowledge-assets/intelligence/domain-dashboard', async (req, res) =
             return res.json({ success: true, data: { profile: domainProfileFor(req.query.kind), summary: {}, cards: [], priority_actions: [], top_assets: [] } });
         }
         const profile = domainProfileFor(req.query.kind);
-        const dashboard = buildDomainIntelligenceDashboard(adb, profile.key, { days: req.query.days });
-        const data = await enrichDomainDashboardWithAi(profile, dashboard, { enableAi: req.query.ai !== '0' });
+        const enableAi = req.query.ai !== '0';
+        const data = await dailyAssetSnapshotValueAsync('domain-dashboard-response', {
+            kind: profile.key,
+            days: req.query.days || '',
+            ai: enableAi ? '1' : '0',
+        }, async () => {
+            const dashboard = buildDomainIntelligenceDashboard(adb, profile.key, { days: req.query.days });
+            return enrichDomainDashboardWithAi(profile, dashboard, { enableAi });
+        });
 
         res.json({
             success: true,
@@ -4011,10 +4122,13 @@ router.get('/knowledge-assets/entity-graph', (req, res) => {
         }
 
         const { region, sector, type, center, days, view } = req.query;
-        const assets = loadKnowledgeAssetPool(adb, { region, sector, type, days });
+        const data = dailyAssetSnapshotValue('knowledge-assets-entity-graph', { region, sector, type, center, days, view }, () => {
+            const assets = loadKnowledgeAssetPool(adb, { region, sector, type, days });
+            return buildEntityGraph(assets, String(center || '').trim(), view);
+        });
         res.json({
             success: true,
-            data: buildEntityGraph(assets, String(center || '').trim(), view),
+            data,
         });
     } catch (err) {
         if (handleAnalyticsStorageError(res, err, { data: emptyEntityGraph() })) return;
@@ -4029,7 +4143,7 @@ router.get('/knowledge-assets/facets', (req, res) => {
             return res.json({ success: true, data: emptyKnowledgeFacets() });
         }
 
-        const data = cachedPerfValue('knowledge-assets-facets', 'all', () => {
+        const data = dailyAssetSnapshotValue('knowledge-assets-facets', 'all', () => cachedPerfValue('knowledge-assets-facets', 'all', () => {
             const pick = (sql, col) => adb.prepare(sql).all().map(r => r[col]).filter(Boolean);
             return {
                 types: pick('SELECT DISTINCT asset_type FROM knowledge_asset_candidates ORDER BY asset_type', 'asset_type'),
@@ -4038,7 +4152,7 @@ router.get('/knowledge-assets/facets', (req, res) => {
                 statuses: pick('SELECT DISTINCT review_status FROM knowledge_asset_candidates ORDER BY review_status', 'review_status'),
                 valueLevels: pick('SELECT DISTINCT value_level FROM knowledge_asset_candidates ORDER BY value_level', 'value_level'),
             };
-        });
+        }));
         res.json({ success: true, data });
     } catch (err) {
         if (handleAnalyticsStorageError(res, err, { data: emptyKnowledgeFacets() })) return;
@@ -4087,7 +4201,10 @@ router.get('/knowledge-assets', (req, res) => {
             params.push(minValueNum);
         }
 
-        const result = cachedPerfValue('knowledge-assets-list', {
+        const result = dailyAssetSnapshotValue('knowledge-assets-list-response', {
+            keyword, type, sector, region, status, valueLevel, minValue: minValueNum || '',
+            effective, interaction, machineDecision, manualReview, page: pageNum, limit: limitNum, sort: sort || 'value',
+        }, () => cachedPerfValue('knowledge-assets-list', {
             keyword, type, sector, region, status, valueLevel, minValue: minValueNum || '',
             effective, interaction, machineDecision, manualReview, page: pageNum, limit: limitNum, sort: sort || 'value',
         }, () => {
@@ -4109,7 +4226,7 @@ router.get('/knowledge-assets', (req, res) => {
             `).all(...params, limitNum, offset).map(mapKnowledgeAsset);
 
             return { data: rows, total, page: pageNum, limit: limitNum };
-        });
+        }));
 
         res.json({ success: true, ...result });
     } catch (err) {
@@ -4153,7 +4270,7 @@ router.get('/knowledge-assets/formal/summary', (req, res) => {
             return res.json({ success: true, data: emptyFormalKnowledgeAssetSummary() });
         }
 
-        const data = cachedPerfValue('formal-knowledge-assets-summary', 'all', () => {
+        const data = dailyAssetSnapshotValue('formal-knowledge-assets-summary', 'all', () => cachedPerfValue('formal-knowledge-assets-summary', 'all', () => {
             const total = adb.prepare('SELECT COUNT(*) AS c FROM knowledge_assets').get()?.c || 0;
             const active = adb.prepare("SELECT COUNT(*) AS c FROM knowledge_assets WHERE status = 'active'").get()?.c || 0;
             const byType = adb.prepare(`
@@ -4177,7 +4294,7 @@ router.get('/knowledge-assets/formal/summary', (req, res) => {
             `).all().map(mapFormalKnowledgeAsset);
 
             return { ready: true, total, active, byType, bySector, top };
-        });
+        }));
 
         res.json({ success: true, data });
     } catch (err) {
@@ -4211,7 +4328,9 @@ router.get('/knowledge-assets/formal', (req, res) => {
         if (status) { where.push('status = ?'); params.push(status); }
         if (groupName) { where.push('group_name = ?'); params.push(groupName); }
 
-        const result = cachedPerfValue('formal-knowledge-assets-list', {
+        const result = dailyAssetSnapshotValue('formal-knowledge-assets-list-response', {
+            keyword, type, sector, region, status, groupName, page: pageNum, limit: limitNum, sort: sort || 'value',
+        }, () => cachedPerfValue('formal-knowledge-assets-list', {
             keyword, type, sector, region, status, groupName, page: pageNum, limit: limitNum, sort: sort || 'value',
         }, () => {
             const whereSql = where.join(' AND ');
@@ -4231,7 +4350,7 @@ router.get('/knowledge-assets/formal', (req, res) => {
             `).all(...params, limitNum, offset).map(mapFormalKnowledgeAsset);
 
             return { data: rows, total, page: pageNum, limit: limitNum };
-        });
+        }));
 
         res.json({ success: true, ...result });
     } catch (err) {
@@ -4267,26 +4386,28 @@ router.get('/knowledge-assets/formal/library/:library', (req, res) => {
             params.push(kw, kw, kw, kw, kw);
         }
 
-        const rows = adb.prepare(`
-            SELECT *
-            FROM knowledge_assets
-            WHERE ${where.join(' AND ')}
-            ORDER BY asset_value_score DESC, quality_score DESC, last_seen_at DESC
-            LIMIT 2000
-        `).all(...params).map(mapFormalKnowledgeAsset);
+        const data = dailyAssetSnapshotValue('formal-library-response', { library, keyword, sector, region, limit: limitNum }, () => {
+            const rows = adb.prepare(`
+                SELECT *
+                FROM knowledge_assets
+                WHERE ${where.join(' AND ')}
+                ORDER BY asset_value_score DESC, quality_score DESC, last_seen_at DESC
+                LIMIT 2000
+            `).all(...params).map(mapFormalKnowledgeAsset);
 
-        const filtered = rows.filter(asset => asset.target_library === library);
-        const byType = {};
-        for (const asset of filtered) byType[asset.asset_type] = (byType[asset.asset_type] || 0) + 1;
+            const filtered = rows.filter(asset => asset.target_library === library);
+            const byType = {};
+            for (const asset of filtered) byType[asset.asset_type] = (byType[asset.asset_type] || 0) + 1;
 
-        res.json({
-            success: true,
-            library,
-            label: LIBRARY_LABELS[library],
-            total: filtered.length,
-            byType: Object.entries(byType).map(([asset_type, count]) => ({ asset_type, count })).sort((a, b) => b.count - a.count),
-            data: filtered.slice(0, limitNum),
+            return {
+                library,
+                label: LIBRARY_LABELS[library],
+                total: filtered.length,
+                byType: Object.entries(byType).map(([asset_type, count]) => ({ asset_type, count })).sort((a, b) => b.count - a.count),
+                data: filtered.slice(0, limitNum),
+            };
         });
+        res.json({ success: true, ...data });
     } catch (err) {
         if (handleAnalyticsStorageError(res, err, {
             library: req.params.library,
@@ -4634,18 +4755,25 @@ router.get('/knowledge-base', (req, res) => {
         const limitNum = Math.min(100, Math.max(1, parseInt(limit) || 20));
         const offset = (pageNum - 1) * limitNum;
 
-        const kw = keyword ? String(keyword).toLowerCase() : '';
-        const rows = qaRowsWithFormalAssets(adb)
-            .filter(r => !sector || r.business_sector === sector)
-            .filter(r => !kw || [r.question_summary, r.question_type, r.answer_pattern, ...(r.question_keywords || [])].join(' ').toLowerCase().includes(kw));
-        const total = rows.length;
+        const result = dailyAssetSnapshotValue('knowledge-base-list-response', {
+            keyword, sector, page: pageNum, limit: limitNum,
+        }, () => {
+            const kw = keyword ? String(keyword).toLowerCase() : '';
+            const rows = qaRowsWithFormalAssets(adb)
+                .filter(r => !sector || r.business_sector === sector)
+                .filter(r => !kw || [r.question_summary, r.question_type, r.answer_pattern, ...(r.question_keywords || [])].join(' ').toLowerCase().includes(kw));
+            const total = rows.length;
+            return {
+                data: rows.slice(offset, offset + limitNum),
+                total,
+                page: pageNum,
+                limit: limitNum,
+            };
+        });
 
         res.json({
             success: true,
-            data: rows.slice(offset, offset + limitNum),
-            total,
-            page: pageNum,
-            limit: limitNum,
+            ...result,
         });
     } catch (err) {
         res.status(500).json({ success: false, error: err.message });
@@ -4730,11 +4858,14 @@ router.get('/knowledge-base/sectors', (req, res) => {
     try {
         const adb = getAnalyticsDb();
         if (!adb) return res.json({ success: true, data: [] });
-        const rows = adb.prepare(
-            'SELECT DISTINCT business_sector FROM qa_knowledge_base WHERE business_sector IS NOT NULL ORDER BY business_sector'
-        ).all();
-        const flowed = formalAssetsForLibrary(adb, 'qa').map(asset => asset.business_sector).filter(Boolean);
-        res.json({ success: true, data: Array.from(new Set([...rows.map(r => r.business_sector), ...flowed])).sort() });
+        const data = dailyAssetSnapshotValue('knowledge-base-sectors', 'all', () => {
+            const rows = adb.prepare(
+                'SELECT DISTINCT business_sector FROM qa_knowledge_base WHERE business_sector IS NOT NULL ORDER BY business_sector'
+            ).all();
+            const flowed = formalAssetsForLibrary(adb, 'qa').map(asset => asset.business_sector).filter(Boolean);
+            return Array.from(new Set([...rows.map(r => r.business_sector), ...flowed])).sort();
+        });
+        res.json({ success: true, data });
     } catch (err) {
         res.status(500).json({ success: false, error: err.message });
     }
@@ -4997,9 +5128,11 @@ router.get('/supplier-profiles/sectors', (req, res) => {
     try {
         const adb = getAnalyticsDb();
         if (!adb) return res.json({ success: true, data: [] });
-        const rows = cachedSupplierCoverageRows(adb, getSourceDb());
-        const sectors = Array.from(new Set(rows.map(r => r.business_sector).filter(Boolean))).sort();
-        res.json({ success: true, data: sectors });
+        const data = dailyAssetSnapshotValue('supplier-profiles-sectors', 'all', () => {
+            const rows = cachedSupplierCoverageRows(adb, getSourceDb());
+            return Array.from(new Set(rows.map(r => r.business_sector).filter(Boolean))).sort();
+        });
+        res.json({ success: true, data });
     } catch (err) {
         res.status(500).json({ success: false, error: err.message });
     }
@@ -5011,72 +5144,71 @@ router.get('/supplier-profiles/:groupName', (req, res) => {
         if (!adb) return res.status(503).json({ success: false, error: 'analytics 不可用' });
 
         const groupName = decodeURIComponent(req.params.groupName);
-        const profileRow = tableExists(adb, 'supplier_profiles')
-            ? adb.prepare('SELECT * FROM supplier_profiles WHERE group_name = ?').get(groupName)
-            : null;
-        const coverage = cachedSupplierCoverageRows(adb, getSourceDb()).find(row => row.group_name === groupName);
-        if (!profileRow && !coverage) return res.status(404).json({ success: false, error: '供应商未找到' });
-        const profile = profileRow
-            ? {
-                ...(coverage || {}),
-                ...mapSupplierProfile(profileRow),
-                source_coverage: coverage?.source_coverage || ['正式画像'],
-                message_count: coverage?.message_count || profileRow.total_messages || 0,
-                asset_count: coverage?.asset_count || 0,
-                contact_assets: coverage?.contact_assets || 0,
-                action_assets: coverage?.action_assets || 0,
-                risk_assets: coverage?.risk_assets || 0,
-                sla_assets: coverage?.sla_assets || 0,
-                change_assets: coverage?.change_assets || 0,
-                entity_assets: coverage?.entity_assets || 0,
-                profile_status: 'profiled',
-                profile_status_label: '已画像',
-                is_profiled: 1,
-            }
-            : {
-                ...coverage,
-                active_hours: {},
-                top_issue_types: [],
-                ai_attitude_tags: [],
-                ai_insight_tags: ['待画像', ...(coverage.asset_count > 0 ? ['已有知识资产'] : [])],
-                ai_sub_scores: {},
-                ai_avg_turns: null,
-                ai_fcr: null,
-                ai_tech_contact: '',
-                ai_tech_reply_rate: null,
-                ai_planned_maintenance_pct: null,
-                ai_profile_version: '',
-                ai_insight_summary: `该供应商群已在${(coverage.source_coverage || []).join('、') || '消息记录'}中出现，但尚未完成正式可靠性画像；建议先查看已沉淀知识资产、近期告警和消息量，再决定是否纳入重点评分。`,
-            };
+        const data = dailyAssetSnapshotValue('supplier-profile-detail', { groupName }, () => {
+            const profileRow = tableExists(adb, 'supplier_profiles')
+                ? adb.prepare('SELECT * FROM supplier_profiles WHERE group_name = ?').get(groupName)
+                : null;
+            const coverage = cachedSupplierCoverageRows(adb, getSourceDb()).find(row => row.group_name === groupName);
+            if (!profileRow && !coverage) return null;
+            const profile = profileRow
+                ? {
+                    ...(coverage || {}),
+                    ...mapSupplierProfile(profileRow),
+                    source_coverage: coverage?.source_coverage || ['正式画像'],
+                    message_count: coverage?.message_count || profileRow.total_messages || 0,
+                    asset_count: coverage?.asset_count || 0,
+                    contact_assets: coverage?.contact_assets || 0,
+                    action_assets: coverage?.action_assets || 0,
+                    risk_assets: coverage?.risk_assets || 0,
+                    sla_assets: coverage?.sla_assets || 0,
+                    change_assets: coverage?.change_assets || 0,
+                    entity_assets: coverage?.entity_assets || 0,
+                    profile_status: 'profiled',
+                    profile_status_label: '已画像',
+                    is_profiled: 1,
+                }
+                : {
+                    ...coverage,
+                    active_hours: {},
+                    top_issue_types: [],
+                    ai_attitude_tags: [],
+                    ai_insight_tags: ['待画像', ...(coverage.asset_count > 0 ? ['已有知识资产'] : [])],
+                    ai_sub_scores: {},
+                    ai_avg_turns: null,
+                    ai_fcr: null,
+                    ai_tech_contact: '',
+                    ai_tech_reply_rate: null,
+                    ai_planned_maintenance_pct: null,
+                    ai_profile_version: '',
+                    ai_insight_summary: `该供应商群已在${(coverage.source_coverage || []).join('、') || '消息记录'}中出现，但尚未完成正式可靠性画像；建议先查看已沉淀知识资产、近期告警和消息量，再决定是否纳入重点评分。`,
+                };
 
-        const recentAlerts = tableExists(adb, 'alert_records') ? adb.prepare(`
-            SELECT alert_level, trigger_type, trigger_keywords, created_at
-            FROM alert_records WHERE group_name = ? ORDER BY created_at DESC LIMIT 10
-        `).all(groupName) : [];
+            const recentAlerts = tableExists(adb, 'alert_records') ? adb.prepare(`
+                SELECT alert_level, trigger_type, trigger_keywords, created_at
+                FROM alert_records WHERE group_name = ? ORDER BY created_at DESC LIMIT 10
+            `).all(groupName) : [];
 
-        const qualityMetrics = tableExists(adb, 'channel_quality_metrics') ? adb.prepare(`
-            SELECT metric_date, metric_type, metric_value
-            FROM channel_quality_metrics
-            WHERE group_name = ? AND metric_date >= ?
-            ORDER BY metric_date DESC, metric_type
-            LIMIT 100
-        `).all(groupName, shanghaiDateString(Date.now() - 30 * 24 * 3600 * 1000)) : [];
+            const qualityMetrics = tableExists(adb, 'channel_quality_metrics') ? adb.prepare(`
+                SELECT metric_date, metric_type, metric_value
+                FROM channel_quality_metrics
+                WHERE group_name = ? AND metric_date >= ?
+                ORDER BY metric_date DESC, metric_type
+                LIMIT 100
+            `).all(groupName, shanghaiDateString(Date.now() - 30 * 24 * 3600 * 1000)) : [];
 
-        const relatedKnowledgeAssets = tableExists(adb, 'knowledge_assets')
-            ? adb.prepare(`
-                SELECT *
-                FROM knowledge_assets
-                WHERE group_name = ?
-                  AND status = 'active'
-                  AND asset_type IN ('contact_role', 'operation_action', 'risk_pattern', 'sla_commitment', 'change_event')
-                ORDER BY asset_value_score DESC, quality_score DESC, last_seen_at DESC
-                LIMIT 12
-            `).all(groupName).map(mapFormalKnowledgeAsset)
-            : [];
+            const relatedKnowledgeAssets = tableExists(adb, 'knowledge_assets')
+                ? adb.prepare(`
+                    SELECT *
+                    FROM knowledge_assets
+                    WHERE group_name = ?
+                      AND status = 'active'
+                      AND asset_type IN ('contact_role', 'operation_action', 'risk_pattern', 'sla_commitment', 'change_event')
+                    ORDER BY asset_value_score DESC, quality_score DESC, last_seen_at DESC
+                    LIMIT 12
+                `).all(groupName).map(mapFormalKnowledgeAsset)
+                : [];
 
-        res.json({
-            success: true,
-            data: {
+            return {
                 ...profile,
                 top_issue_types: safeProfileJson(profile.top_issue_types, []),
                 active_hours: safeProfileJson(profile.active_hours, {}),
@@ -5093,8 +5225,11 @@ router.get('/supplier-profiles/:groupName', (req, res) => {
                 recent_alerts: recentAlerts,
                 quality_metrics: qualityMetrics,
                 related_knowledge_assets: relatedKnowledgeAssets,
-            },
+            };
         });
+        if (!data) return res.status(404).json({ success: false, error: '供应商未找到' });
+
+        res.json({ success: true, data });
     } catch (err) {
         res.status(500).json({ success: false, error: err.message });
     }
@@ -5110,17 +5245,24 @@ router.get('/supplier-profiles', (req, res) => {
         const limitNum = Math.min(50, Math.max(1, parseInt(limit) || 20));
         const offset = (pageNum - 1) * limitNum;
 
-        let rows = cachedSupplierCoverageRows(adb, getSourceDb()).slice();
-        if (sector) rows = rows.filter(row => row.business_sector === sector);
-        if (region) rows = rows.filter(row => row.region === region);
-        rows = sortSupplierCoverageRows(rows, sort);
-        const total = rows.length;
-        const pageRows = rows.slice(offset, offset + limitNum);
+        const result = dailyAssetSnapshotValue('supplier-profiles-list-response', {
+            sector, region, sort, page: pageNum, limit: limitNum,
+        }, () => {
+            let rows = cachedSupplierCoverageRows(adb, getSourceDb()).slice();
+            if (sector) rows = rows.filter(row => row.business_sector === sector);
+            if (region) rows = rows.filter(row => row.region === region);
+            rows = sortSupplierCoverageRows(rows, sort);
+            const total = rows.length;
+            const pageRows = rows.slice(offset, offset + limitNum);
+            return {
+                data: pageRows.map(mapSupplierProfile),
+                total, page: pageNum, limit: limitNum,
+            };
+        });
 
         res.json({
             success: true,
-            data: pageRows.map(mapSupplierProfile),
-            total, page: pageNum, limit: limitNum,
+            ...result,
         });
     } catch (err) {
         res.status(500).json({ success: false, error: err.message });
@@ -5136,12 +5278,17 @@ router.get('/device-kb', (req, res) => {
         const limitNum = Math.min(50, Math.max(1, parseInt(limit) || 20));
         const offset = (pageNum - 1) * limitNum;
 
-        const kw = keyword ? String(keyword).toLowerCase() : '';
-        const rows = deviceKbRowsWithFormalAssets(adb)
-            .filter(r => !category || r.fault_category === category)
-            .filter(r => !kw || [r.device_model, r.fault_symptom, r.solution_steps, r.fault_category].join(' ').toLowerCase().includes(kw));
-        const total = rows.length;
-        res.json({ success: true, data: rows.slice(offset, offset + limitNum), total, page: pageNum, pages: Math.ceil(total / limitNum) });
+        const result = dailyAssetSnapshotValue('device-kb-list-response', {
+            keyword, category, page: pageNum, limit: limitNum,
+        }, () => {
+            const kw = keyword ? String(keyword).toLowerCase() : '';
+            const rows = deviceKbRowsWithFormalAssets(adb)
+                .filter(r => !category || r.fault_category === category)
+                .filter(r => !kw || [r.device_model, r.fault_symptom, r.solution_steps, r.fault_category].join(' ').toLowerCase().includes(kw));
+            const total = rows.length;
+            return { data: rows.slice(offset, offset + limitNum), total, page: pageNum, pages: Math.ceil(total / limitNum) };
+        });
+        res.json({ success: true, ...result });
     } catch (err) {
         res.status(500).json({ success: false, error: err.message });
     }
@@ -5151,11 +5298,14 @@ router.get('/device-kb/categories', (req, res) => {
     try {
         const adb = getAnalyticsDb();
         if (!adb) return res.json({ success: true, data: [] });
-        const rows = adb.prepare(
-            'SELECT DISTINCT fault_category FROM device_knowledge_graph WHERE fault_category IS NOT NULL ORDER BY fault_category'
-        ).all();
-        const flowed = formalAssetsForLibrary(adb, 'device').map(formalAssetToDeviceKb).map(item => item.fault_category).filter(Boolean);
-        res.json({ success: true, data: Array.from(new Set([...rows.map(r => r.fault_category), ...flowed])).sort() });
+        const data = dailyAssetSnapshotValue('device-kb-categories', 'all', () => {
+            const rows = adb.prepare(
+                'SELECT DISTINCT fault_category FROM device_knowledge_graph WHERE fault_category IS NOT NULL ORDER BY fault_category'
+            ).all();
+            const flowed = formalAssetsForLibrary(adb, 'device').map(formalAssetToDeviceKb).map(item => item.fault_category).filter(Boolean);
+            return Array.from(new Set([...rows.map(r => r.fault_category), ...flowed])).sort();
+        });
+        res.json({ success: true, data });
     } catch (err) {
         res.status(500).json({ success: false, error: err.message });
     }
@@ -5236,19 +5386,24 @@ router.get('/content-templates', (req, res) => {
         if (customer) { where += ' AND customer_name = ?'; params.push(customer); }
         if (type) { where += ' AND template_type = ?'; params.push(type); }
 
-        const nativeRows = adb.prepare(
-            `SELECT * FROM content_template_lib ${where} ORDER BY frequency DESC, last_seen_at DESC LIMIT 5000`
-        ).all(...params).map(row => ({ ...row, source_type: 'content_extractor' }));
-        const kw = keyword ? String(keyword).toLowerCase() : '';
-        const flowedRows = formalAssetsForLibrary(adb, 'content')
-            .map(formalAssetToContentTemplate)
-            .filter(r => !customer || r.customer_name === customer)
-            .filter(r => !type || r.template_type === type)
-            .filter(r => !kw || [r.template_content, r.compliance_notes, r.customer_name, r.template_type].join(' ').toLowerCase().includes(kw));
-        const rows = [...flowedRows, ...nativeRows]
-            .sort((a, b) => (Number(b.frequency || 0) - Number(a.frequency || 0)) || (Number(b.last_seen_at || 0) - Number(a.last_seen_at || 0)));
-        const total = rows.length;
-        res.json({ success: true, data: rows.slice(offset, offset + limitNum), total, page: pageNum, pages: Math.ceil(total / limitNum) });
+        const result = dailyAssetSnapshotValue('content-templates-list-response', {
+            keyword, customer, type, page: pageNum, limit: limitNum,
+        }, () => {
+            const nativeRows = adb.prepare(
+                `SELECT * FROM content_template_lib ${where} ORDER BY frequency DESC, last_seen_at DESC LIMIT 5000`
+            ).all(...params).map(row => ({ ...row, source_type: 'content_extractor' }));
+            const kw = keyword ? String(keyword).toLowerCase() : '';
+            const flowedRows = formalAssetsForLibrary(adb, 'content')
+                .map(formalAssetToContentTemplate)
+                .filter(r => !customer || r.customer_name === customer)
+                .filter(r => !type || r.template_type === type)
+                .filter(r => !kw || [r.template_content, r.compliance_notes, r.customer_name, r.template_type].join(' ').toLowerCase().includes(kw));
+            const rows = [...flowedRows, ...nativeRows]
+                .sort((a, b) => (Number(b.frequency || 0) - Number(a.frequency || 0)) || (Number(b.last_seen_at || 0) - Number(a.last_seen_at || 0)));
+            const total = rows.length;
+            return { data: rows.slice(offset, offset + limitNum), total, page: pageNum, pages: Math.ceil(total / limitNum) };
+        });
+        res.json({ success: true, ...result });
     } catch (err) {
         res.status(500).json({ success: false, error: err.message });
     }
@@ -5258,11 +5413,14 @@ router.get('/content-templates/customers', (req, res) => {
     try {
         const adb = getAnalyticsDb();
         if (!adb) return res.json({ success: true, data: [] });
-        const rows = adb.prepare(
-            'SELECT DISTINCT customer_name FROM content_template_lib WHERE customer_name IS NOT NULL ORDER BY customer_name'
-        ).all();
-        const flowed = formalAssetsForLibrary(adb, 'content').map(formalAssetToContentTemplate).map(item => item.customer_name).filter(Boolean);
-        res.json({ success: true, data: Array.from(new Set([...rows.map(r => r.customer_name), ...flowed])).sort() });
+        const data = dailyAssetSnapshotValue('content-templates-customers', 'all', () => {
+            const rows = adb.prepare(
+                'SELECT DISTINCT customer_name FROM content_template_lib WHERE customer_name IS NOT NULL ORDER BY customer_name'
+            ).all();
+            const flowed = formalAssetsForLibrary(adb, 'content').map(formalAssetToContentTemplate).map(item => item.customer_name).filter(Boolean);
+            return Array.from(new Set([...rows.map(r => r.customer_name), ...flowed])).sort();
+        });
+        res.json({ success: true, data });
     } catch (err) {
         res.status(500).json({ success: false, error: err.message });
     }
@@ -5418,6 +5576,121 @@ router.get('/daily-digest', (req, res) => {
         res.status(500).json({ success: false, error: err.message });
     }
 });
+
+async function warmAssetAnalysisDailySnapshots(reason = 'startup') {
+    if (!assetDailySnapshotEnabled()) return;
+    const adb = getAnalyticsDb();
+    if (!adb) return;
+    const run = async (label, fn) => {
+        try {
+            await fn();
+        } catch (err) {
+            if (isSqliteStorageError(err)) throw err;
+            console.warn(`[asset-snapshot] warm ${label} failed:`, err.message);
+        }
+    };
+
+    console.log(`[asset-snapshot] warm start reason=${reason} date=${shanghaiDateString()}`);
+    await run('region-dashboard-market-30', () => dailyAssetSnapshotValueAsync(
+        'region-dashboard-response',
+        { region: '', sector: '', days: '30', scope: 'market', ai: '0', focusKey: '' },
+        async () => enrichRegionDashboardWithAi(
+            buildRegionIntelligenceDashboard(adb, { days: '30', scope: 'market' }),
+            { enableAi: false }
+        )
+    ));
+    await run('region-dashboard-domain-30', () => dailyAssetSnapshotValueAsync(
+        'region-dashboard-response',
+        { region: '', sector: '', days: '30', scope: 'domain', ai: '0', focusKey: '' },
+        async () => enrichRegionDashboardWithAi(
+            buildRegionIntelligenceDashboard(adb, { days: '30', scope: 'domain' }),
+            { enableAi: false }
+        )
+    ));
+    await run('domain-dashboard-customer-30', () => dailyAssetSnapshotValueAsync(
+        'domain-dashboard-response',
+        { kind: 'customer_service', days: '30', ai: '0' },
+        async () => {
+            const profile = domainProfileFor('customer_service');
+            return enrichDomainDashboardWithAi(profile, buildDomainIntelligenceDashboard(adb, profile.key, { days: '30' }), { enableAi: false });
+        }
+    ));
+    await run('domain-dashboard-device-30', () => dailyAssetSnapshotValueAsync(
+        'domain-dashboard-response',
+        { kind: 'device_tech', days: '30', ai: '0' },
+        async () => {
+            const profile = domainProfileFor('device_tech');
+            return enrichDomainDashboardWithAi(profile, buildDomainIntelligenceDashboard(adb, profile.key, { days: '30' }), { enableAi: false });
+        }
+    ));
+    await run('entity-graph-default', () => dailyAssetSnapshotValue(
+        'knowledge-assets-entity-graph',
+        { region: '', sector: '', type: '', center: '', days: '', view: '' },
+        () => buildEntityGraph(loadKnowledgeAssetPool(adb, {}), '', '')
+    ));
+    await run('supplier-profiles-default', () => dailyAssetSnapshotValue(
+        'supplier-profiles-list-response',
+        { sector: '', region: undefined, sort: 'score', page: 1, limit: 30 },
+        () => {
+            const rows = sortSupplierCoverageRows(cachedSupplierCoverageRows(adb, getSourceDb()).slice(), 'score');
+            return { data: rows.slice(0, 30).map(mapSupplierProfile), total: rows.length, page: 1, limit: 30 };
+        }
+    ));
+    await run('knowledge-base-default', () => dailyAssetSnapshotValue(
+        'knowledge-base-list-response',
+        { keyword: '', sector: '', page: 1, limit: 20 },
+        () => {
+            const rows = qaRowsWithFormalAssets(adb);
+            return { data: rows.slice(0, 20), total: rows.length, page: 1, limit: 20 };
+        }
+    ));
+    await run('device-kb-default', () => dailyAssetSnapshotValue(
+        'device-kb-list-response',
+        { keyword: '', category: '', page: 1, limit: 20 },
+        () => {
+            const rows = deviceKbRowsWithFormalAssets(adb);
+            return { data: rows.slice(0, 20), total: rows.length, page: 1, pages: Math.ceil(rows.length / 20) };
+        }
+    ));
+    await run('content-templates-default', () => dailyAssetSnapshotValue(
+        'content-templates-list-response',
+        { keyword: '', customer: '', type: '', page: 1, limit: 20 },
+        () => {
+            const nativeRows = tableExists(adb, 'content_template_lib')
+                ? adb.prepare('SELECT * FROM content_template_lib ORDER BY frequency DESC, last_seen_at DESC LIMIT 5000').all().map(row => ({ ...row, source_type: 'content_extractor' }))
+                : [];
+            const flowedRows = formalAssetsForLibrary(adb, 'content').map(formalAssetToContentTemplate);
+            const rows = [...flowedRows, ...nativeRows]
+                .sort((a, b) => (Number(b.frequency || 0) - Number(a.frequency || 0)) || (Number(b.last_seen_at || 0) - Number(a.last_seen_at || 0)));
+            return { data: rows.slice(0, 20), total: rows.length, page: 1, pages: Math.ceil(rows.length / 20) };
+        }
+    ));
+    console.log(`[asset-snapshot] warm done reason=${reason}`);
+}
+
+function scheduleAssetAnalysisSnapshotWarmup() {
+    if (!assetDailySnapshotEnabled() || envFlag('ASSET_DAILY_SNAPSHOT_WARMUP_DISABLED')) return;
+    const startupDelay = positiveNumber('ASSET_DAILY_SNAPSHOT_STARTUP_WARMUP_MS', 15 * 1000);
+    const startupTimer = setTimeout(() => {
+        warmAssetAnalysisDailySnapshots('startup').catch(err => console.warn('[asset-snapshot] startup warm failed:', err.message));
+    }, startupDelay);
+    if (startupTimer.unref) startupTimer.unref();
+
+    const scheduleNextMidnight = () => {
+        const delay = Math.max(60 * 1000, nextShanghaiMidnightMs() + 60 * 1000 - Date.now());
+        const timer = setTimeout(() => {
+            analyticsPerfCache.clear();
+            assetDailySnapshotCache.clear();
+            warmAssetAnalysisDailySnapshots('shanghai-midnight')
+                .catch(err => console.warn('[asset-snapshot] midnight warm failed:', err.message))
+                .finally(scheduleNextMidnight);
+        }, delay);
+        if (timer.unref) timer.unref();
+    };
+    scheduleNextMidnight();
+}
+
+scheduleAssetAnalysisSnapshotWarmup();
 
 module.exports = router;
 module.exports.getAnalyticsDb = getAnalyticsDb;
