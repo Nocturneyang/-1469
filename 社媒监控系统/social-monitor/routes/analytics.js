@@ -5670,11 +5670,13 @@ async function warmAssetAnalysisDailySnapshots(reason = 'startup') {
 
 function scheduleAssetAnalysisSnapshotWarmup() {
     if (!assetDailySnapshotEnabled() || envFlag('ASSET_DAILY_SNAPSHOT_WARMUP_DISABLED')) return;
-    const startupDelay = positiveNumber('ASSET_DAILY_SNAPSHOT_STARTUP_WARMUP_MS', 15 * 1000);
-    const startupTimer = setTimeout(() => {
-        warmAssetAnalysisDailySnapshots('startup').catch(err => console.warn('[asset-snapshot] startup warm failed:', err.message));
-    }, startupDelay);
-    if (startupTimer.unref) startupTimer.unref();
+    if (envFlag('ASSET_DAILY_SNAPSHOT_STARTUP_WARMUP_ENABLED')) {
+        const startupDelay = positiveNumber('ASSET_DAILY_SNAPSHOT_STARTUP_WARMUP_MS', 5 * 60 * 1000);
+        const startupTimer = setTimeout(() => {
+            warmAssetAnalysisDailySnapshots('startup').catch(err => console.warn('[asset-snapshot] startup warm failed:', err.message));
+        }, startupDelay);
+        if (startupTimer.unref) startupTimer.unref();
+    }
 
     const scheduleNextMidnight = () => {
         const delay = Math.max(60 * 1000, nextShanghaiMidnightMs() + 60 * 1000 - Date.now());

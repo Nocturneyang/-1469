@@ -25,9 +25,9 @@
 
 - 资产分析相关 GET 数据默认按上海时间（UTC+8）自然日生成快照，同一天相同参数请求直接返回快照。
 - 快照持久化到 `DATA_DIR/cache/asset-analysis-snapshots/{YYYY-MM-DD}/`，Pod 重启后仍复用当天结果。
-- 服务启动后会后台预热常用默认板块；之后每天上海时间 00:01 清空内存并预热新一天快照。
+- 服务启动时不默认预热，避免与分析器启动抢 SQLite/PVC I/O；之后每天上海时间 00:01 清空内存并预热新一天快照。
 - 影响范围包括资产发现、区域运营情报、客服运营情报、设备技术情报、实体关系图谱、QA 知识库、设备知识库、内容模板库、供应商画像等资产分析页面。
-- 可通过 `ASSET_DAILY_SNAPSHOT_DISABLED=1` 临时关闭日快照；可通过 `ASSET_DAILY_SNAPSHOT_WARMUP_DISABLED=1` 关闭后台预热。
+- 可通过 `ASSET_DAILY_SNAPSHOT_DISABLED=1` 临时关闭日快照；可通过 `ASSET_DAILY_SNAPSHOT_WARMUP_DISABLED=1` 关闭午夜预热；可通过 `ASSET_DAILY_SNAPSHOT_STARTUP_WARMUP_ENABLED=1` 显式开启启动预热。
 
 ## 影响范围
 
