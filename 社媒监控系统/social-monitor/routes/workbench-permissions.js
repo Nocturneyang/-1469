@@ -1,21 +1,38 @@
 const express = require('express');
+const fs = require('fs');
+const path = require('path');
+
+function resolveWorkbenchRoot() {
+    const candidates = [
+        process.env.WORKBENCH_ROOT,
+        path.resolve(__dirname, '..', '..', 'workbench'),
+        path.resolve(__dirname, '..', '..', '..', 'workbench')
+    ].filter(Boolean);
+
+    return candidates.find((candidate) =>
+        fs.existsSync(path.join(candidate, 'db', 'workbench-db.js'))
+    ) || candidates[0];
+}
+
+const WORKBENCH_ROOT = resolveWorkbenchRoot();
+
 const {
     DEFAULT_WORKBENCH_DB_PATH,
     ensureOperator,
     openWorkbenchDb
-} = require('../../../workbench/db/workbench-db');
+} = require(path.join(WORKBENCH_ROOT, 'db', 'workbench-db'));
 const {
     DEFAULT_RAW_DB_PATH,
     listAccountProfiles,
     resolveAccountScope
-} = require('../../../workbench/db/raw-messages');
+} = require(path.join(WORKBENCH_ROOT, 'db', 'raw-messages'));
 const {
     ALL_GROUPS,
     UNGROUPED_GROUP,
     loadPortalAccess,
     requireWorkbenchSuperAdmin,
     resolveWorkbenchOperator
-} = require('../../../workbench/lib/permissions');
+} = require(path.join(WORKBENCH_ROOT, 'lib', 'permissions'));
 
 function createWorkbenchPermissionsRouter(options = {}) {
     const router = express.Router();
