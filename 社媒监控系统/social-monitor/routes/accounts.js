@@ -2,7 +2,12 @@ const express = require('express');
 const fs = require('fs');
 const path = require('path');
 const { spawn, exec } = require('child_process');
-const { db } = require('../db/database');
+const {
+    db,
+    getChannelAccountRegistry,
+    listChannelAccountRegistry,
+    upsertChannelAccountRegistry
+} = require('../db/database');
 const {
     getPuppeteerChromeInfo,
     getWaChromeStats,
@@ -379,6 +384,58 @@ function accountEnvKey(accountName) {
     return String(accountName || '').toUpperCase().replace(/-/g, '_');
 }
 
+function normalizeAccountRole(role) {
+    const value = String(role || '').trim().toLowerCase();
+    if (['collector', 'service', 'both', 'disabled'].includes(value)) return value;
+    return 'collector';
+}
+
+function roleDefaults(role) {
+    const normalized = normalizeAccountRole(role);
+    const service = normalized === 'service' || normalized === 'both';
+    const collect = normalized === 'collector' || normalized === 'service' || normalized === 'both';
+    return {
+        account_role: normalized,
+        workbench_visible: service ? 1 : 0,
+        collect_enabled: collect ? 1 : 0,
+        send_enabled: service ? 1 : 0,
+        sync_groups_enabled: service ? 1 : 0,
+    };
+}
+
+function registryPlatformFromAccountId(id, platform) {
+    const value = String(platform || '').trim().toLowerCase();
+    if (value === 'whatsapp' || value === 'wa') return 'wa';
+    if (value === 'telegram' || value === 'tg') return 'tg';
+    if (value === 'teams') return 'teams';
+    if (String(id || '').startsWith('wa-')) return 'wa';
+    if (String(id || '').startsWith('tg-') || String(id || '').startsWith('tgu-')) return 'tg';
+    if (String(id || '').startsWith('teams-')) return 'teams';
+    return value || 'unknown';
+}
+
+function accountLoginType(platform) {
+    const normalized = registryPlatformFromAccountId('', platform);
+    if (normalized === 'wa') return 'wa_personal_qr';
+    if (normalized === 'tg') return 'telegram_bot_api';
+    if (normalized === 'teams') return 'teams_oauth';
+    return 'unknown';
+}
+
+function normalizeRolePatch(body = {}) {
+    const defaults = roleDefaults(body.account_role || body.role);
+    return {
+        ...defaults,
+        workbench_visible: body.workbench_visible == null ? defaults.workbench_visible : Number(Boolean(body.workbench_visible)),
+        collect_enabled: body.collect_enabled == null ? defaults.collect_enabled : Number(Boolean(body.collect_enabled)),
+        send_enabled: body.send_enabled == null ? defaults.send_enabled : Number(Boolean(body.send_enabled)),
+        sync_groups_enabled: body.sync_groups_enabled == null ? defaults.sync_groups_enabled : Number(Boolean(body.sync_groups_enabled)),
+        display_name: body.display_name || null,
+        owner_team: body.owner_team || null,
+        risk_level: body.risk_level || null,
+    };
+}
+
 function getRuntimeSpec(accountId) {
     try {
         return db.prepare('SELECT * FROM collector_runtime_specs WHERE account_id = ?').get(accountId) || null;
@@ -434,6 +491,7 @@ function createAccountsRouter({ safeWriteEcosystem }) {
     router.get('/', async (req, res) => {
         try {
             const accounts = db.prepare(`SELECT * FROM accounts ORDER BY updated_at DESC`).all();
+            const registryByAccount = new Map(listChannelAccountRegistry().map(row => [row.account, row]));
             const waChromeStats = await collectWaChromeStats();
             const waChromeById = new Map((waChromeStats.accounts || []).map(item => [item.accountId, item]));
             const heartbeats = db.prepare(`
@@ -454,6 +512,16 @@ function createAccountsRouter({ safeWriteEcosystem }) {
             
             // Add running status assessment for each account
             accounts.forEach(acc => {
+                const registry = registryByAccount.get(acc.id) || null;
+                acc.channel_registry = registry;
+                acc.account_role = registry?.account_role || 'collector';
+                acc.workbench_visible = registry ? Boolean(registry.workbench_visible) : false;
+                acc.collect_enabled = registry ? Boolean(registry.collect_enabled) : true;
+                acc.send_enabled = registry ? Boolean(registry.send_enabled) : false;
+                acc.sync_groups_enabled = registry ? Boolean(registry.sync_groups_enabled) : false;
+                acc.risk_level = registry?.risk_level || 'low';
+                acc.owner_team = registry?.owner_team || null;
+                acc.workbench_display_name = registry?.display_name || acc.display_name || acc.pushname || acc.id;
                 const runtimeSpec = runtimeSpecByAccount.get(acc.id);
                 if (runtimeSpec) {
                     acc.runtime_provider = runtimeSpec.runtime_provider || acc.runtime_provider || 'k8s';
@@ -945,6 +1013,25 @@ function createAccountsRouter({ safeWriteEcosystem }) {
         }
     }));
 
+    router.patch('/:id/workbench-role', (req, res) => runSerializedMutation('Workbench Role', req, res, async () => {
+        const { id } = req.params;
+        if (!/^(wa|tg|tgu|teams)-[a-zA-Z0-9_-]+$/.test(id)) {
+            return res.status(400).json({ success: false, error: 'Invalid account id format' });
+        }
+        const account = db.prepare('SELECT * FROM accounts WHERE id = ?').get(id);
+        if (!account) return res.status(404).json({ success: false, error: 'Account not found' });
+        const patch = normalizeRolePatch(req.body || {});
+        const registry = upsertChannelAccountRegistry({
+            account: id,
+            platform: registryPlatformFromAccountId(id, account.platform),
+            login_type: accountLoginType(account.platform),
+            display_name: patch.display_name || account.display_name || account.pushname || id,
+            status: account.status,
+            ...patch,
+        });
+        res.json({ success: true, data: registry });
+    }));
+
     router.post('/create', (req, res) => runSerializedMutation('Create', req, res, async () => {
         const { platform, id, token } = req.body;
         console.log('[CREATE ACCOUNT] Request:', { platform, id, token });
@@ -961,11 +1048,13 @@ function createAccountsRouter({ safeWriteEcosystem }) {
         }
         if (token && !/^[a-zA-Z0-9_:.-]+$/.test(token)) return res.status(400).json({ success: false, error: 'Invalid token format' });
 
+        const accountRolePatch = normalizeRolePatch(req.body || {});
+        const accountId = platform === 'whatsapp' ? `wa-${trimmedId}` : `tg-${trimmedId}`;
+
         try {
             if (isCloudCollectorEnabled()) {
                 const orchestrator = createCloudOrchestrator();
                 if (platform === 'whatsapp') {
-                    const accountId = `wa-${trimmedId}`;
                     db.prepare(`
                         INSERT INTO accounts (id, platform, status, health_status, runtime_provider, runtime_desired_state, updated_at)
                         VALUES (?, 'whatsapp', 'initializing', 'starting', 'k8s', 'running', datetime('now', '+8 hours'))
@@ -976,12 +1065,19 @@ function createAccountsRouter({ safeWriteEcosystem }) {
                             runtime_desired_state = 'running',
                             updated_at = datetime('now', '+8 hours')
                     `).run(accountId);
+                    upsertChannelAccountRegistry({
+                        account: accountId,
+                        platform: 'wa',
+                        login_type: 'wa_personal_qr',
+                        display_name: accountRolePatch.display_name || accountId,
+                        status: 'initializing',
+                        ...accountRolePatch,
+                    });
                     await orchestrator.ensureRuntime(accountId, { migrationSource: 'web-create' });
                     return res.json({ success: true, message: 'WhatsApp 云端采集 Pod 已创建，请稍后在列表中扫描二维码。' });
                 }
 
                 if (platform === 'telegram') {
-                    const accountId = `tg-${trimmedId}`;
                     writeEnvKeys({ [`TG_BOT_TOKEN_${accountEnvKey(trimmedId)}`]: token });
                     db.prepare(`
                         INSERT INTO accounts (id, platform, status, health_status, runtime_provider, runtime_desired_state, updated_at)
@@ -993,6 +1089,14 @@ function createAccountsRouter({ safeWriteEcosystem }) {
                             runtime_desired_state = 'running',
                             updated_at = datetime('now', '+8 hours')
                     `).run(accountId);
+                    upsertChannelAccountRegistry({
+                        account: accountId,
+                        platform: 'tg',
+                        login_type: 'telegram_bot_api',
+                        display_name: accountRolePatch.display_name || accountId,
+                        status: 'initializing',
+                        ...accountRolePatch,
+                    });
                     await orchestrator.ensureRuntime(accountId, { migrationSource: 'web-create' });
                     return res.json({ success: true, message: 'TG Bot 云端采集 Pod 已创建。' });
                 }
@@ -1012,17 +1116,41 @@ function createAccountsRouter({ safeWriteEcosystem }) {
                             runtime_provider = excluded.runtime_provider,
                             updated_at = datetime('now', '+8 hours')
                     `).run('wa-' + trimmedId);
+                    upsertChannelAccountRegistry({
+                        account: 'wa-' + trimmedId,
+                        platform: 'wa',
+                        login_type: 'wa_personal_qr',
+                        display_name: accountRolePatch.display_name || 'wa-' + trimmedId,
+                        status: 'remote_pending',
+                        ...accountRolePatch,
+                    });
                     return res.json({
                         success: true,
                         message: 'WhatsApp 账号已在生产端登记；请在本地 collector PM2 配置中启动同名账号并配置 COLLECTOR_API_URL/COLLECTOR_TOKEN。'
                     });
                 }
                 db.prepare(`INSERT OR REPLACE INTO accounts (id, platform, status) VALUES (?, 'whatsapp', 'initializing')`).run('wa-' + trimmedId);
+                upsertChannelAccountRegistry({
+                    account: 'wa-' + trimmedId,
+                    platform: 'wa',
+                    login_type: 'wa_personal_qr',
+                    display_name: accountRolePatch.display_name || 'wa-' + trimmedId,
+                    status: 'initializing',
+                    ...accountRolePatch,
+                });
                 ensureWaAccountManaged(trimmedId);
             } else {
                 workerName = `worker-tg-${trimmedId}`;
                 scriptPath = './workers/worker-tg.js';
                 db.prepare(`INSERT OR REPLACE INTO accounts (id, platform, status) VALUES (?, 'telegram', 'initializing')`).run('tg-' + trimmedId);
+                upsertChannelAccountRegistry({
+                    account: 'tg-' + trimmedId,
+                    platform: 'tg',
+                    login_type: 'telegram_bot_api',
+                    display_name: accountRolePatch.display_name || 'tg-' + trimmedId,
+                    status: 'initializing',
+                    ...accountRolePatch,
+                });
             }
 
             const ecoPath = path.join(process.env.DATA_DIR || path.join(__dirname, '..'), 'ecosystem.config.js');

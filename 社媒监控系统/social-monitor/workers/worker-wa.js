@@ -11,7 +11,7 @@ require.cache[require.resolve('puppeteer')] = {
     exports: puppeteer
 };
 
-const { Client, LocalAuth } = require('whatsapp-web.js');
+const { Client, LocalAuth, MessageMedia } = require('whatsapp-web.js');
 const qrcode = require('qrcode-terminal');
 const fs = require('fs');
 const path = require('path');
@@ -23,6 +23,8 @@ const { getWaChromeLaunchConfig } = require('../lib/wa-chrome-runtime');
 const { createCollectorClient } = require('../lib/collector-client');
 const { shanghaiISOString } = require('../lib/time');
 const { isMediaUploadDisabled } = require('../lib/media-policy');
+const { startWorkbenchOutboundRuntime } = require('../lib/workbench-outbound-runtime');
+const { startWorkbenchChannelSyncRuntime } = require('../lib/workbench-channel-sync-runtime');
 
 // 区域映射配置
 let regionMap = {};
@@ -47,11 +49,18 @@ const collectorApiUrl = process.env.COLLECTOR_API_URL || '';
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '..');
 const {
     db,
+    buildCanonicalMessageId,
+    getChannelAccountRuntimeConfig,
     saveMessage,
     updateAccountStatus,
     upsertCollectorHeartbeat,
     recordRuntimeEvent
 } = require('../db/database');
+const accountRuntimeConfig = getChannelAccountRuntimeConfig(accountId, 'wa');
+const isServiceAccount = accountRuntimeConfig.is_service_account && Number(accountRuntimeConfig.workbench_visible) !== 0;
+const canCollectMessages = Number(accountRuntimeConfig.collect_enabled) !== 0;
+const canSyncWorkbenchGroups = isServiceAccount && Number(accountRuntimeConfig.sync_groups_enabled) !== 0;
+const canSendWorkbenchMessages = isServiceAccount && Number(accountRuntimeConfig.send_enabled) !== 0;
 const legacySessionPath = path.join(DATA_DIR, `whatsapp-session-${accountName}`);
 const legacyChromiumDataDir = path.join(legacySessionPath, 'session');
 const authDataPath = process.env.WA_AUTH_DATA_PATH || path.join(DATA_DIR, '.wwebjs_auth');
@@ -65,7 +74,10 @@ const collectorClient = createCollectorClient({
     token: process.env.COLLECTOR_TOKEN,
     logger: console
 });
+let workbenchOutboundRuntime = null;
+let workbenchChannelSyncRuntime = null;
 console.log(`[WA:${accountName}] Chrome runtime: version=${chromeRuntime.chromeVersion || 'unknown'}, ua=${chromeRuntime.userAgent}`);
+console.log(`[WA:${accountName}] Account role: ${accountRuntimeConfig.account_role}, service=${isServiceAccount}, collect=${canCollectMessages}`);
 if (collectorClient) {
     console.log(`[WA:${accountName}] Collector API enabled: ${collectorClient.baseUrl}`);
 }
@@ -654,6 +666,215 @@ client.on('change_state', (state) => {
     transitionWaState(state);
 });
 
+function createWorkbenchSendError(code, message) {
+    const err = new Error(message);
+    err.code = code;
+    return err;
+}
+
+async function sendWorkbenchWaMessage(task) {
+    const chatId = task.chat_id || task.group_id;
+    if (!chatId) throw createWorkbenchSendError('MISSING_CHAT_ID', 'Missing WhatsApp chat id');
+
+    const text = String(task.text || '').trim();
+    const attachments = parseWorkbenchAttachments(task.attachment_json);
+    if (!text && !attachments.length) throw createWorkbenchSendError('EMPTY_MESSAGE', 'Cannot send an empty WhatsApp message');
+
+    const remoteIds = [];
+    if (attachments.length) {
+        let captionUsed = false;
+        for (let index = 0; index < attachments.length; index += 1) {
+            const attachment = attachments[index];
+            const payload = decodeWorkbenchAttachment(attachment);
+            const media = new MessageMedia(payload.mimeType, payload.base64, payload.filename);
+            const options = {};
+            if (index === 0 && task.quote_msg_id) options.quotedMessageId = task.quote_msg_id;
+            if (payload.kind === 'sticker') {
+                options.sendMediaAsSticker = true;
+            } else if (payload.kind === 'file' || !payload.mimeType.startsWith('image/')) {
+                options.sendMediaAsDocument = true;
+            }
+            if (text && !captionUsed && payload.kind !== 'sticker') {
+                options.caption = text;
+                captionUsed = true;
+            }
+            const sent = await client.sendMessage(chatId, media, Object.keys(options).length ? options : undefined);
+            const remoteId = extractWaRemoteMessageId(sent);
+            if (remoteId) remoteIds.push(canonicalWaRemoteMessageId(chatId, remoteId) || remoteId);
+        }
+        if (text && !captionUsed) {
+            const options = {};
+            if (task.quote_msg_id && !remoteIds.length) options.quotedMessageId = task.quote_msg_id;
+            const sent = await client.sendMessage(chatId, text, Object.keys(options).length ? options : undefined);
+            const remoteId = extractWaRemoteMessageId(sent);
+            if (remoteId) remoteIds.push(canonicalWaRemoteMessageId(chatId, remoteId) || remoteId);
+        }
+    } else {
+        const options = {};
+        if (task.quote_msg_id) options.quotedMessageId = task.quote_msg_id;
+        const sent = await client.sendMessage(chatId, text, Object.keys(options).length ? options : undefined);
+        const remoteId = extractWaRemoteMessageId(sent);
+        if (remoteId) remoteIds.push(canonicalWaRemoteMessageId(chatId, remoteId) || remoteId);
+    }
+    return {
+        remote_msg_id: remoteIds.length ? remoteIds.join(',') : null,
+    };
+}
+
+function parseWorkbenchAttachments(attachmentJson) {
+    if (!attachmentJson) return [];
+    let parsed;
+    try {
+        parsed = typeof attachmentJson === 'string' ? JSON.parse(attachmentJson) : attachmentJson;
+    } catch (err) {
+        throw createWorkbenchSendError('INVALID_ATTACHMENT', 'Invalid attachment JSON');
+    }
+    const list = Array.isArray(parsed) ? parsed : [parsed];
+    return list.filter((item) => item && typeof item === 'object');
+}
+
+function decodeWorkbenchAttachment(attachment) {
+    const dataUrl = String(attachment.data_url || '').trim();
+    const match = dataUrl.match(/^data:([^;,]+)?;base64,(.+)$/s);
+    if (!match) throw createWorkbenchSendError('INVALID_ATTACHMENT', 'Attachment data URL is missing');
+    const mimeType = String(attachment.type || match[1] || 'application/octet-stream').toLowerCase();
+    const base64 = match[2].replace(/\s/g, '');
+    if (!base64) throw createWorkbenchSendError('INVALID_ATTACHMENT', 'Attachment data is empty');
+    return {
+        base64,
+        mimeType,
+        filename: sanitizeWorkbenchAttachmentName(attachment.name),
+        kind: String(attachment.kind || 'file').toLowerCase(),
+    };
+}
+
+function sanitizeWorkbenchAttachmentName(name) {
+    const cleaned = String(name || 'attachment')
+        .replace(/[\\/\r\n]/g, '_')
+        .trim()
+        .slice(0, 180);
+    return cleaned || 'attachment';
+}
+
+function extractWaRemoteMessageId(sent) {
+    if (!sent || !sent.id) return null;
+    return sent.id._serialized || sent.id.id || null;
+}
+
+function canonicalWaRemoteMessageId(chatId, nativeMessageId) {
+    if (!nativeMessageId) return null;
+    return buildCanonicalMessageId({
+        platform: 'whatsapp',
+        receiver_account: accountId,
+        group_id: chatId,
+        message_id: nativeMessageId,
+        native_message_id: nativeMessageId,
+        chat_kind: String(chatId || '').endsWith('@g.us') ? 'group' : 'private',
+    });
+}
+
+function startWorkbenchOutboundIfNeeded() {
+    if (workbenchOutboundRuntime) return;
+    if (!canSendWorkbenchMessages) {
+        console.log(`[WA:${accountName}] Workbench outbound disabled for account_role=${accountRuntimeConfig.account_role}`);
+        return;
+    }
+    workbenchOutboundRuntime = startWorkbenchOutboundRuntime({
+        platform: 'wa',
+        accountAliases: [accountId, accountName],
+        label: `wa:${accountName}`,
+        logger: console,
+        sendMessage: sendWorkbenchWaMessage,
+    });
+}
+
+async function collectWorkbenchWaChannelSnapshot() {
+    const maxGroups = Number(process.env.WORKBENCH_CHANNEL_SYNC_MAX_GROUPS || 500);
+    const chats = await client.getChats();
+    const groups = chats
+        .filter(chat => chat && chat.id && chat.id._serialized)
+        .slice(0, Number.isFinite(maxGroups) && maxGroups > 0 ? maxGroups : 500)
+        .map(chat => ({
+            group_id: chat.id._serialized,
+            group_name: chat.name || chat.id._serialized,
+            kind: chat.isGroup ? 'group' : 'direct',
+            raw_json: {
+                id: chat.id._serialized,
+                name: chat.name || null,
+                isGroup: Boolean(chat.isGroup),
+                archived: Boolean(chat.archived),
+                pinned: Boolean(chat.pinned),
+                isReadOnly: Boolean(chat.isReadOnly),
+            },
+        }));
+
+    if (typeof client.getLabels !== 'function' || typeof client.getChatLabels !== 'function') {
+        return { groups };
+    }
+
+    const rawLabels = await client.getLabels();
+    const labels = (rawLabels || []).map(label => ({
+        native_label_id: String(label.id),
+        name: label.name || String(label.id),
+        color: label.hexColor || label.color || null,
+        kind: 'label',
+        raw_json: {
+            id: label.id,
+            name: label.name || null,
+            hexColor: label.hexColor || null,
+        },
+    }));
+
+    const maps = [];
+    for (const group of groups) {
+        try {
+            const chatLabels = await client.getChatLabels(group.group_id);
+            (chatLabels || []).forEach(label => {
+                if (label && label.id != null) {
+                    maps.push({ group_id: group.group_id, native_label_id: String(label.id) });
+                }
+            });
+        } catch (err) {
+            console.warn(`[WA:${accountName}] Workbench label sync skipped chat ${group.group_id}: ${err.message}`);
+        }
+    }
+
+    return { groups, labels, maps };
+}
+
+function startWorkbenchChannelSyncIfNeeded() {
+    if (workbenchChannelSyncRuntime) return;
+    if (!canSyncWorkbenchGroups) {
+        console.log(`[WA:${accountName}] Workbench channel sync disabled for account_role=${accountRuntimeConfig.account_role}`);
+        return;
+    }
+    workbenchChannelSyncRuntime = startWorkbenchChannelSyncRuntime({
+        platform: 'wa',
+        accountAliases: [accountId, accountName],
+        label: `wa:${accountName}`,
+        logger: console,
+        collectSnapshot: collectWorkbenchWaChannelSnapshot,
+    });
+}
+
+function stopWorkbenchChannelSync(reason) {
+    if (!workbenchChannelSyncRuntime) return;
+    if (workbenchChannelSyncRuntime.enabled) {
+        console.warn(`[WA:${accountName}] Stopping Workbench channel sync runtime: ${reason}`);
+    }
+    workbenchChannelSyncRuntime.stop();
+    workbenchChannelSyncRuntime = null;
+}
+
+function stopWorkbenchOutbound(reason) {
+    if (!workbenchOutboundRuntime) return;
+    if (workbenchOutboundRuntime.enabled) {
+        console.warn(`[WA:${accountName}] Stopping Workbench outbound runtime: ${reason}`);
+    }
+    workbenchOutboundRuntime.stop();
+    workbenchOutboundRuntime = null;
+}
+
 client.on('ready', () => {
     clearQrTimeout();
     clearInitStrikes();
@@ -672,10 +893,14 @@ client.on('ready', () => {
         offlineTimer = null;
         console.log(`[WA] Reconnected successfully. Offline alert cancelled.`);
     }
+    startWorkbenchOutboundIfNeeded();
+    startWorkbenchChannelSyncIfNeeded();
 });
 
 client.on('disconnected', (reason) => {
     console.log('🔴 [WhatsApp] Client was logged out', reason);
+    stopWorkbenchOutbound(`disconnected: ${reason}`);
+    stopWorkbenchChannelSync(`disconnected: ${reason}`);
     transitionRuntime('disconnected', 'disconnected', `Disconnected: ${reason}`, 'warn');
     persistAccountStatus('disconnected');
 
@@ -690,6 +915,8 @@ client.on('disconnected', (reason) => {
 
 client.on('auth_failure', (msg) => {
     console.error('🔴 [WhatsApp] Authentication failure', msg);
+    stopWorkbenchOutbound(`auth_failure: ${msg}`);
+    stopWorkbenchChannelSync(`auth_failure: ${msg}`);
     transitionRuntime('auth_failure', 'disconnected', `Authentication failure: ${msg}`, 'error');
     persistAccountStatus('disconnected');
 
@@ -737,6 +964,7 @@ client.on('message_create', async (message) => {
     try {
         // 先跳过各种明显非正常的纯状态/系统类或无用协议类型的消息，保护后续调用
         if (!message || !message.from) return;
+        if (!canCollectMessages) return;
         const skipTypes = ['e2e_notification', 'protocol', 'gp2', 'notification_template', 'call_log', 'revoked', 'chat_event'];
         if (skipTypes.includes(message.type)) return;
 
@@ -744,7 +972,7 @@ client.on('message_create', async (message) => {
             console.error(`[WA] Failed to get chat for message ${message.id.id}:`, err.message);
             return null;
         });
-        if (!chat || !chat.isGroup) return; // Only process group messages
+        if (!chat) return;
 
         let contact;
         try {
@@ -759,12 +987,12 @@ client.on('message_create', async (message) => {
 
         // 如果是系统消息或获取不到，回退保护
         if (!contact || contact.isGroup) {
-            console.log(`[WA] Skipped a group-level system event or unresolvable contact in ${chat.name}`);
+            console.log(`[WA] Skipped a chat-level system event or unresolvable contact in ${chat.name || chat.id?._serialized}`);
             return;
         }
 
         const senderName = contact.pushname || contact.name || contact.number || 'Unknown';
-        const groupName = chat.name;
+        const groupName = chat.name || senderName || chat.id._serialized;
 
         let mediaPath = null;
         let hasMedia = false;
@@ -806,12 +1034,15 @@ client.on('message_create', async (message) => {
                 fromMe: message.fromMe,
                 hasMedia: message.hasMedia,
                 timestamp: message.timestamp,
+                native_chat_id: chat.id._serialized,
+                native_message_id: message.id._serialized,
+                chat_kind: chat.isGroup ? 'group' : 'direct',
             })
         });
         runtimeState.lastMessageAt = shanghaiISOString();
         reportHeartbeat({ phase: 'ready', status: 'authenticated', healthStatus: 'ready' });
 
-        console.log(`[WA] Saved group message from ${senderName} in group ${groupName}`);
+        console.log(`[WA] Saved ${chat.isGroup ? 'group' : 'direct'} message from ${senderName} in ${groupName}`);
     } catch (e) {
         console.error('[WhatsApp] Error processing message:', e.message);
     }

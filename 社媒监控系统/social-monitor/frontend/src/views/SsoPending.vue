@@ -3,14 +3,14 @@
     <div class="sso-panel">
       <div class="sso-title">钉钉身份认证</div>
       <p class="sso-copy">
-        系统正在等待钉钉 SSO 网关注入用户信息。认证成功后会自动进入监控系统。
+        {{ copyText }}
       </p>
 
       <div class="sso-actions">
-        <button class="btn-primary" @click="checkAuth" :disabled="checking">
+        <button v-if="!loggedOut" class="btn-primary" @click="checkAuth" :disabled="checking">
           {{ checking ? '检查中...' : '重新检查授权' }}
         </button>
-        <button class="btn-secondary" @click="openSso">
+        <button :class="loggedOut ? 'btn-primary' : 'btn-secondary'" @click="openSso">
           打开统一认证
         </button>
       </div>
@@ -21,7 +21,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { computed, ref, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '@/store/auth'
 import { redirectToSsoLogin } from '@/utils/runtime-config'
@@ -31,6 +31,13 @@ const router = useRouter()
 const authStore = useAuthStore()
 const checking = ref(false)
 const error = ref('')
+const loggedOut = computed(() => authStore.ssoLoggedOut || route.query.logged_out === '1')
+const copyText = computed(() => {
+  if (loggedOut.value) {
+    return '你已退出当前本地会话。为避免 SSO 有效会话自动回登，请点击“打开统一认证”重新授权。'
+  }
+  return '系统正在等待钉钉 SSO 网关注入用户信息。认证成功后会按入口权限进入监控系统或工作台。'
+})
 
 const targetPath = () => {
   const from = typeof route.query.from === 'string' ? route.query.from : '/'
@@ -38,12 +45,21 @@ const targetPath = () => {
 }
 
 const checkAuth = async () => {
+  if (loggedOut.value) {
+    error.value = '当前处于已退出状态，请先打开统一认证重新授权。'
+    return
+  }
   checking.value = true
   error.value = ''
   try {
     const user = await authStore.hydrateSsoUser()
     if (user) {
-      router.replace(targetPath())
+      const destination = await authStore.resolvePortalDestination(targetPath())
+      if (destination.startsWith('/workbench')) {
+        window.location.assign(destination)
+      } else {
+        router.replace(destination)
+      }
       return
     }
     error.value = '还没有获取到钉钉授权信息。请确认已从平台统一入口访问，或完成统一认证后再检查。'
@@ -55,10 +71,18 @@ const checkAuth = async () => {
 }
 
 const openSso = () => {
-  redirectToSsoLogin()
+  authStore.clearSsoLoggedOut()
+  const redirectTo = `${window.location.origin}/sso-pending?from=${encodeURIComponent(targetPath())}`
+  if (!redirectToSsoLogin({ redirectTo })) {
+    error.value = '未配置统一认证地址，请联系管理员检查 SSO_LOGIN_URL。'
+  }
 }
 
 onMounted(() => {
+  if (loggedOut.value) {
+    error.value = '已退出账号。需要重新进入时，请点击“打开统一认证”。'
+    return
+  }
   checkAuth()
 })
 </script>

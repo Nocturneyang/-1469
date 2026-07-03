@@ -55,9 +55,10 @@
 </template>
 
 <script setup>
-import { computed } from 'vue'
+import { computed, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useAuthStore } from '@/store/auth'
+import { isSsoEnabled, redirectToSsoLogout } from '@/utils/runtime-config'
 
 const router = useRouter()
 const route = useRoute()
@@ -96,6 +97,7 @@ const navSections = computed(() => {
       items: [
         { path: "/admin/config", label: "系统配置", icon: "⚙️" },
         { path: "/admin/accounts", label: "帐号管理", icon: "👥" },
+        { path: "/admin/workbench-permissions", label: "工作台权限", icon: "▦", workbenchSuperOnly: true },
         { path: "/admin/users", label: "权限管理", icon: "🔐" },
         { path: "/admin/logs", label: "系统日志", icon: "📋" },
       ]
@@ -104,8 +106,17 @@ const navSections = computed(() => {
 
   return sections.map(section => ({
     ...section,
-    items: section.items.filter(item => !item.adminOnly || authStore.isAdmin)
+    items: section.items.filter(item => (
+      (!item.adminOnly || authStore.isAdmin) &&
+      (!item.workbenchSuperOnly || authStore.isWorkbenchSuperAdmin)
+    ))
   }))
+})
+
+onMounted(() => {
+  if (authStore.isAdmin) {
+    authStore.hydrateWorkbenchAccess().catch(() => {})
+  }
 })
 
 const isActive = (path) => {
@@ -126,6 +137,7 @@ const titleMap = {
   '/entity-graph': '实体关系图谱',
   '/admin/accounts': '帐号管理 Accounts',
   '/admin/config': '系统配置 Config',
+  '/admin/workbench-permissions': '工作台权限 Workbench Access',
   '/admin/users': '权限管理 Access',
   '/knowledge': 'QA 知识库',
   '/profiles': '供应商画像 Supplier Profiles',
@@ -136,6 +148,15 @@ const titleMap = {
 const pageTitle = computed(() => titleMap[route.path] || 'Dashboard')
 
 const handleLogout = () => {
+  if (isSsoEnabled()) {
+    const from = route.fullPath && route.fullPath.startsWith('/') ? route.fullPath : '/'
+    const loggedOutPath = `/sso-pending?logged_out=1&from=${encodeURIComponent(from)}`
+    const redirectTo = `${window.location.origin}${loggedOutPath}`
+    authStore.logout({ manualSsoLogout: true })
+    if (redirectToSsoLogout({ redirectTo })) return
+    router.replace(loggedOutPath)
+    return
+  }
   authStore.logout()
   router.push('/login')
 }

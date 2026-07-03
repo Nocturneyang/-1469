@@ -32,6 +32,7 @@
           @tgu-backfill="openBackfillModal"
           @tgu-revoke="tguRevokeSession"
           @tgu-relogin="openTguReloginModal"
+          @workbench-role="handleWorkbenchRole"
         />
       </div>
     </div>
@@ -44,6 +45,13 @@
             <el-form-item label="设备标识符 (支持英文、数字、下划线、横线，可使用驼峰命名)">
               <el-input v-model="newWaId" placeholder="例如: sales_01 或 SalesAccount" />
             </el-form-item>
+            <el-form-item label="账号用途">
+              <el-select v-model="newAccountRole" class="w-100">
+                <el-option label="采集账号（默认，不进工作台）" value="collector" />
+                <el-option label="服务账号（进入工作台，可回复）" value="service" />
+                <el-option label="采集 + 服务（谨慎使用）" value="both" />
+              </el-select>
+            </el-form-item>
             <el-button type="primary" class="w-100" @click="createWaAccount">部署 WhatsApp 终端</el-button>
           </el-form>
         </el-tab-pane>
@@ -55,6 +63,13 @@
             </el-form-item>
             <el-form-item label="Bot Token (向 BotFather 申请)">
               <el-input v-model="newTgToken" placeholder="123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11" />
+            </el-form-item>
+            <el-form-item label="账号用途">
+              <el-select v-model="newAccountRole" class="w-100">
+                <el-option label="采集账号（默认，不进工作台）" value="collector" />
+                <el-option label="服务账号（进入工作台，可回复）" value="service" />
+                <el-option label="采集 + 服务（谨慎使用）" value="both" />
+              </el-select>
             </el-form-item>
             <el-button type="primary" class="w-100" @click="createTgBot">部署 TG 官方机器人</el-button>
           </el-form>
@@ -215,7 +230,8 @@ import {
   reloginTeams,
   startTeamsBackfill,
   revokeTgUser,
-  getTgRateLimit
+  getTgRateLimit,
+  updateAccountWorkbenchRole
 } from '@/api/accounts'
 import AccountCard from '@/components/admin/AccountCard.vue'
 import WaSupervisorStatus from '@/components/admin/WaSupervisorStatus.vue'
@@ -234,6 +250,7 @@ const newWaId = ref('')
 const newTgId = ref('')
 const newTgToken = ref('')
 const newTeamsId = ref('')
+const newAccountRole = ref('collector')
 
 // TGU Login Flow
 const tguStep = ref(1)
@@ -302,7 +319,7 @@ const openAddModal = () => {
 const createWaAccount = async () => {
   if (!newWaId.value) return ElMessage.warning('请输入标识符')
   try {
-    const res = await createWaAccountApi({ platform: 'whatsapp', id: newWaId.value })
+    const res = await createWaAccountApi({ platform: 'whatsapp', id: newWaId.value, account_role: newAccountRole.value })
     if (res.success) {
       ElMessage.success('进程启动指令已下发！请查看列表获取扫描二维码')
       addModalVisible.value = false
@@ -316,7 +333,7 @@ const createWaAccount = async () => {
 const createTgBot = async () => {
   if (!newTgId.value || !newTgToken.value) return ElMessage.warning('请输入完整信息')
   try {
-    const res = await createWaAccountApi({ platform: 'telegram', id: newTgId.value, token: newTgToken.value })
+    const res = await createWaAccountApi({ platform: 'telegram', id: newTgId.value, token: newTgToken.value, account_role: newAccountRole.value })
     if (res.success) {
       ElMessage.success('TG 机器人启动成功')
       addModalVisible.value = false
@@ -325,6 +342,20 @@ const createTgBot = async () => {
       ElMessage.error(res.error)
     }
   } catch (e) {}
+}
+
+const handleWorkbenchRole = async (acc, accountRole) => {
+  try {
+    const res = await updateAccountWorkbenchRole(acc.id, { account_role: accountRole })
+    if (res.success) {
+      ElMessage.success('账号用途已更新')
+      fetchAccounts()
+    } else {
+      ElMessage.error(res.error || '更新失败')
+    }
+  } catch (e) {
+    ElMessage.error('账号用途更新失败')
+  }
 }
 
 const createTeams = async () => {

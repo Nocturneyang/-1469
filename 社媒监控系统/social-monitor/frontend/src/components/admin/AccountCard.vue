@@ -12,6 +12,27 @@
     <div style="color:var(--t3);font-size:13px;margin-bottom:4px">{{ acc.id }}</div>
     <div v-if="acc.pushname && acc.pushname !== 'Loading...'" style="font-weight:700;color:var(--p);font-size:14px">{{ acc.pushname }}</div>
 
+    <div class="workbench-role-box">
+      <div class="workbench-role-head">
+        <span>工作台用途</span>
+        <strong :class="['role-pill', roleClass]">{{ roleLabel }}</strong>
+      </div>
+      <el-select
+        :model-value="acc.account_role || 'collector'"
+        size="small"
+        class="workbench-role-select"
+        @change="(role) => $emit('workbench-role', acc, role)"
+      >
+        <el-option label="采集账号" value="collector" />
+        <el-option label="服务账号" value="service" />
+        <el-option label="采集 + 服务" value="both" />
+        <el-option label="停用" value="disabled" />
+      </el-select>
+      <div class="workbench-role-note">
+        {{ roleNote }}
+      </div>
+    </div>
+
     <!-- 运行状态评估 -->
     <div style="margin-top: 14px; padding: 10px 14px; border-radius: 12px; background: var(--bg-tint, #fcfcfc); font-size: 13px; width: 100%; border: 1px solid var(--border); box-shadow: var(--in-shadow); text-align: left;">
       <div style="display: flex; justify-content: space-between; margin-bottom: 6px; align-items: center;">
@@ -177,7 +198,7 @@ const props = defineProps({
   acc: { type: Object, required: true }
 })
 
-defineEmits(['delete', 'restart', 'relogin', 'runtime-action', 'teams-backfill', 'teams-relogin', 'tgu-ratelimit', 'tgu-reconfig', 'tgu-backfill', 'tgu-revoke', 'tgu-relogin'])
+defineEmits(['delete', 'restart', 'relogin', 'runtime-action', 'teams-backfill', 'teams-relogin', 'tgu-ratelimit', 'tgu-reconfig', 'tgu-backfill', 'tgu-revoke', 'tgu-relogin', 'workbench-role'])
 
 const tguName = computed(() => props.acc.id.replace('tgu-', ''))
 const runtimeLabel = computed(() => {
@@ -187,6 +208,27 @@ const runtimeLabel = computed(() => {
   return 'PM2'
 })
 const isCloudRuntime = computed(() => String(props.acc.runtime_provider || '').toLowerCase() === 'k8s')
+const roleLabel = computed(() => {
+  const role = props.acc.account_role || 'collector'
+  if (role === 'service') return '服务'
+  if (role === 'both') return '双用途'
+  if (role === 'disabled') return '停用'
+  return '采集'
+})
+const roleClass = computed(() => {
+  const role = props.acc.account_role || 'collector'
+  if (role === 'service') return 'service'
+  if (role === 'both') return 'both'
+  if (role === 'disabled') return 'disabled'
+  return 'collector'
+})
+const roleNote = computed(() => {
+  const role = props.acc.account_role || 'collector'
+  if (role === 'service') return '进入客服工作台，显示本账号消息并允许授权回复'
+  if (role === 'both') return '同时用于监控采集和客服工作台，需谨慎使用'
+  if (role === 'disabled') return '不采集、不进入工作台、不发送'
+  return '只进入监控采集和分析链路，默认不在工作台展示'
+})
 
 const qrCodeUrl = computed(() => {
   if (!props.acc.qr_code) return ''
@@ -451,5 +493,52 @@ const formatRestartReason = (reason) => {
   color: var(--color-warning, #b7791f);
   font-size: 12px;
   line-height: 1.4;
+}
+.workbench-role-box {
+  width: 100%;
+  margin-top: 12px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg-tint, #fcfcfc);
+  text-align: left;
+}
+.workbench-role-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+  color: var(--t3);
+  font-size: 12px;
+}
+.role-pill {
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  color: var(--t2);
+  background: rgba(0, 0, 0, 0.06);
+}
+.role-pill.service {
+  color: #047857;
+  background: rgba(16, 185, 129, 0.14);
+}
+.role-pill.both {
+  color: #b45309;
+  background: rgba(245, 158, 11, 0.16);
+}
+.role-pill.disabled {
+  color: #991b1b;
+  background: rgba(239, 68, 68, 0.14);
+}
+.workbench-role-select {
+  width: 100%;
+}
+.workbench-role-note {
+  min-height: 34px;
+  margin-top: 8px;
+  color: var(--t3);
+  font-size: 12px;
+  line-height: 1.45;
 }
 </style>

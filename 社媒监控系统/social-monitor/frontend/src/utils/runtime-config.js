@@ -21,20 +21,43 @@ export function getSsoLoginUrl() {
   return config.ssoLoginUrl || import.meta.env.VITE_SSO_LOGIN_URL || ''
 }
 
-export function redirectToSsoLogin() {
+export function getSsoLogoutUrl() {
+  const config = getRuntimeConfig()
+  return config.ssoLogoutUrl || import.meta.env.VITE_SSO_LOGOUT_URL || ''
+}
+
+function withRedirectParam(baseUrl, redirectTo, configuredParam = '') {
+  const url = new URL(baseUrl, window.location.origin)
+  const redirectParam = configuredParam || (url.hostname === 'skyline-ark-sso.tyhark.com' ? 'redirect' : '')
+  if (redirectParam) {
+    url.searchParams.set(redirectParam, redirectTo)
+  }
+  return url.toString()
+}
+
+export function redirectToSsoLogin(options = {}) {
   const loginUrl = getSsoLoginUrl()
   if (!loginUrl) return false
 
   try {
-    const url = new URL(loginUrl, window.location.origin)
     const configuredRedirectParam = getRuntimeConfig().ssoRedirectParam || import.meta.env.VITE_SSO_REDIRECT_PARAM || ''
-    const redirectParam = configuredRedirectParam || (url.hostname === 'skyline-ark-sso.tyhark.com' ? 'redirect' : '')
-    if (redirectParam) {
-      url.searchParams.set(redirectParam, window.location.href)
-    }
-    window.location.assign(url.toString())
+    window.location.assign(withRedirectParam(loginUrl, options.redirectTo || window.location.href, configuredRedirectParam))
   } catch (_) {
     window.location.assign(loginUrl)
+  }
+
+  return true
+}
+
+export function redirectToSsoLogout(options = {}) {
+  const logoutUrl = getSsoLogoutUrl()
+  if (!logoutUrl) return false
+
+  try {
+    const configuredRedirectParam = getRuntimeConfig().ssoLogoutRedirectParam || import.meta.env.VITE_SSO_LOGOUT_REDIRECT_PARAM || ''
+    window.location.assign(withRedirectParam(logoutUrl, options.redirectTo || window.location.origin, configuredRedirectParam))
+  } catch (_) {
+    window.location.assign(logoutUrl)
   }
 
   return true

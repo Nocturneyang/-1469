@@ -3,6 +3,8 @@ require('dotenv').config({ path: path.join(process.env.DATA_DIR || path.join(__d
 const TelegramBot = require('node-telegram-bot-api');
 const fs = require('fs');
 const {
+    buildCanonicalMessageId,
+    getChannelAccountRuntimeConfig,
     saveMessage,
     updateAccountStatus,
     upsertCollectorHeartbeat,
@@ -11,10 +13,17 @@ const {
 const { createCollectorClient } = require('../lib/collector-client');
 const { shanghaiISOString } = require('../lib/time');
 const { isMediaUploadDisabled } = require('../lib/media-policy');
+const { startWorkbenchOutboundRuntime } = require('../lib/workbench-outbound-runtime');
+const { startWorkbenchChannelSyncRuntime } = require('../lib/workbench-channel-sync-runtime');
 
 const accountName = process.env.TG_ACCOUNT_NAME || 'default';
 const accountKey = accountName.toUpperCase().replace(/-/g, '_');
 const accountId = `tg-${accountName}`;
+const accountRuntimeConfig = getChannelAccountRuntimeConfig(accountId, 'tg');
+const isServiceAccount = accountRuntimeConfig.is_service_account && Number(accountRuntimeConfig.workbench_visible) !== 0;
+const canCollectMessages = Number(accountRuntimeConfig.collect_enabled) !== 0;
+const canSyncWorkbenchGroups = isServiceAccount && Number(accountRuntimeConfig.sync_groups_enabled) !== 0;
+const canSendWorkbenchMessages = isServiceAccount && Number(accountRuntimeConfig.send_enabled) !== 0;
 const collectorId = process.env.COLLECTOR_ID || `pm2:tg:${accountName}`;
 const runId = process.env.TG_RUN_ID || `${accountName}-${Date.now()}-${process.pid}`;
 const runStartedAt = shanghaiISOString();
@@ -32,6 +41,11 @@ const runtimeState = {
     lastReadyAt: null,
     lastMessageAt: null
 };
+let workbenchOutboundRuntime = null;
+let workbenchChannelSyncRuntime = null;
+const seenChats = new Map();
+
+console.log(`[TG:${accountName}] Account role: ${accountRuntimeConfig.account_role}, service=${isServiceAccount}, collect=${canCollectMessages}`);
 
 function reportHeartbeat(patch = {}) {
     Object.assign(runtimeState, patch);
@@ -82,6 +96,82 @@ async function persistMessage(payload) {
     return localResult;
 }
 
+function createWorkbenchSendError(code, message) {
+    const err = new Error(message);
+    err.code = code;
+    return err;
+}
+
+function canonicalTgRemoteMessageId(chatId, nativeMessageId) {
+    if (!nativeMessageId) return null;
+    return buildCanonicalMessageId({
+        platform: 'telegram',
+        receiver_account: accountId,
+        group_id: String(chatId),
+        message_id: String(nativeMessageId),
+        native_message_id: String(nativeMessageId),
+        chat_kind: String(chatId).startsWith('-') ? 'group' : 'private',
+    });
+}
+
+async function sendWorkbenchTgMessage(task) {
+    const chatId = task.chat_id || task.group_id;
+    if (!chatId) throw createWorkbenchSendError('MISSING_CHAT_ID', 'Missing Telegram chat id');
+    const text = String(task.text || '').trim();
+    if (!text) throw createWorkbenchSendError('EMPTY_MESSAGE', 'Cannot send an empty Telegram message');
+    const options = {};
+    if (task.quote_msg_id) {
+        const quoteId = Number(task.quote_msg_id);
+        if (Number.isFinite(quoteId)) options.reply_to_message_id = quoteId;
+    }
+    const sent = await bot.sendMessage(chatId, text, options);
+    return {
+        remote_msg_id: canonicalTgRemoteMessageId(chatId, sent && sent.message_id),
+    };
+}
+
+function startWorkbenchOutboundIfNeeded() {
+    if (workbenchOutboundRuntime) return;
+    if (!canSendWorkbenchMessages) {
+        console.log(`[TG:${accountName}] Workbench outbound disabled for account_role=${accountRuntimeConfig.account_role}`);
+        return;
+    }
+    workbenchOutboundRuntime = startWorkbenchOutboundRuntime({
+        platform: 'tg',
+        accountAliases: [accountId, accountName],
+        label: `tg:${accountName}`,
+        logger: console,
+        sendMessage: sendWorkbenchTgMessage,
+    });
+}
+
+function collectWorkbenchTgChannelSnapshot() {
+    const groups = [...seenChats.values()].map((chat) => ({
+        group_id: chat.id,
+        group_name: chat.title || chat.name || chat.id,
+        kind: chat.kind || 'group',
+        raw_json: chat.raw || chat,
+    }));
+    return {
+        groups,
+    };
+}
+
+function startWorkbenchChannelSyncIfNeeded() {
+    if (workbenchChannelSyncRuntime) return;
+    if (!canSyncWorkbenchGroups) {
+        console.log(`[TG:${accountName}] Workbench channel sync disabled for account_role=${accountRuntimeConfig.account_role}`);
+        return;
+    }
+    workbenchChannelSyncRuntime = startWorkbenchChannelSyncRuntime({
+        platform: 'tg',
+        accountAliases: [accountId, accountName],
+        label: `tg:${accountName}`,
+        logger: console,
+        collectSnapshot: async () => collectWorkbenchTgChannelSnapshot(),
+    });
+}
+
 if (!token || token === 'your_telegram_bot_token_here') {
     console.warn('⚠️ [Telegram] TG_BOT_TOKEN not configured. Skipping startup.');
     reportHeartbeat({
@@ -103,19 +193,35 @@ bot.getMe().then((me) => {
     setAccountStatus('authenticated', botName, null);
     reportHeartbeat({ lastReadyAt: shanghaiISOString() });
     recordCollectorEvent('connected', `TG bot collector connected as ${botName}`);
+    startWorkbenchOutboundIfNeeded();
+    startWorkbenchChannelSyncIfNeeded();
 }).catch(err => {
     console.log('✅ [Telegram] Bot started polling...');
     setAccountStatus('authenticated', 'TG Bot', null);
     reportHeartbeat({ lastReadyAt: shanghaiISOString(), lastError: err.message });
+    startWorkbenchOutboundIfNeeded();
+    startWorkbenchChannelSyncIfNeeded();
 });
 
 bot.on('message', async (msg) => {
     try {
-        // Must be supergroup or group
-        if (msg.chat.type !== 'group' && msg.chat.type !== 'supergroup') return;
+        if (!canCollectMessages) return;
+        if (!msg.chat || !['group', 'supergroup', 'private'].includes(msg.chat.type)) return;
 
-        const groupName = msg.chat.title || 'Unknown Group';
+        const groupName = msg.chat.title || [msg.chat.first_name, msg.chat.last_name].filter(Boolean).join(' ') || msg.chat.username || 'Unknown Chat';
         const senderName = msg.from.username || msg.from.first_name || 'Unknown';
+        const groupIdStr = msg.chat.id.toString();
+        seenChats.set(groupIdStr, {
+            id: groupIdStr,
+            title: groupName,
+            kind: msg.chat.type === 'private' ? 'direct' : 'group',
+            raw: {
+                id: msg.chat.id,
+                type: msg.chat.type,
+                title: msg.chat.title || null,
+                username: msg.chat.username || null,
+            },
+        });
         
         let content = msg.text || msg.caption || '';
         let mediaPath = null;
@@ -145,7 +251,6 @@ bot.on('message', async (msg) => {
             }
         }
 
-        const groupIdStr = msg.chat.id.toString();
         const normalizedGroupId = groupIdStr.replace(/^-100/, '').replace(/^-/, '');
         const globalMessageId = `${normalizedGroupId}_${msg.message_id}`;
 
@@ -161,7 +266,12 @@ bot.on('message', async (msg) => {
             has_media: mediaPath ? 1 : 0,
             media_path: mediaPath,
             timestamp: msg.date * 1000,
-            raw_data: JSON.stringify(msg)
+            raw_data: JSON.stringify({
+                ...msg,
+                native_chat_id: groupIdStr,
+                native_message_id: msg.message_id,
+                chat_kind: msg.chat.type === 'private' ? 'private' : 'group',
+            })
         });
         
         console.log(`[TG] Saved message from ${senderName} in group ${groupName}`);

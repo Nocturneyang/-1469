@@ -5,12 +5,25 @@ export const useAuthStore = defineStore('auth', {
     token: localStorage.getItem('auth_token') || null,
     user: JSON.parse(localStorage.getItem('auth_user') || 'null'),
     ssoHydratedAt: Number(localStorage.getItem('sso_hydrated_at') || 0),
-    ssoHydratePromise: null
+    ssoHydratePromise: null,
+    ssoLoggedOut: localStorage.getItem('sso_logged_out') === '1',
+    workbenchAccess: JSON.parse(localStorage.getItem('workbench_access') || 'null'),
+    workbenchAccessHydratedAt: Number(localStorage.getItem('workbench_access_hydrated_at') || 0),
+    workbenchAccessPromise: null
   }),
 
   getters: {
     isAuthenticated: (state) => !!state.token,
     isAdmin: (state) => state.user?.role === 'admin',
+    isWorkbenchSuperAdmin: (state) => Boolean(state.workbenchAccess?.is_super_admin),
+    portalAccess: (state) => state.workbenchAccess?.portal_access || {
+      can_monitor: false,
+      can_workbench: false,
+      default_entry: 'auto',
+      landing: '/entry'
+    },
+    canAccessMonitor: (state) => Boolean(state.workbenchAccess?.portal_access?.can_monitor),
+    canAccessWorkbench: (state) => Boolean(state.workbenchAccess?.portal_access?.can_workbench),
     username: (state) => state.user?.username || ''
   },
 
@@ -22,19 +35,43 @@ export const useAuthStore = defineStore('auth', {
       localStorage.setItem('auth_user', JSON.stringify(user))
     },
 
-    logout() {
+    logout(options = {}) {
+      const manualSsoLogout = Boolean(options.manualSsoLogout)
       this.token = null
       this.user = null
+      this.ssoHydratedAt = 0
+      this.ssoHydratePromise = null
+      this.workbenchAccessPromise = null
       localStorage.removeItem('auth_token')
       localStorage.removeItem('auth_user')
       localStorage.removeItem('sso_token')
       localStorage.removeItem('sso_hydrated_at')
+      localStorage.removeItem('workbench_access')
+      localStorage.removeItem('workbench_access_hydrated_at')
+      this.workbenchAccess = null
+      this.workbenchAccessHydratedAt = 0
+      if (manualSsoLogout) {
+        this.markSsoLoggedOut()
+      } else {
+        this.clearSsoLoggedOut()
+      }
+    },
+
+    markSsoLoggedOut() {
+      this.ssoLoggedOut = true
+      localStorage.setItem('sso_logged_out', '1')
+    },
+
+    clearSsoLoggedOut() {
+      this.ssoLoggedOut = false
+      localStorage.removeItem('sso_logged_out')
     },
 
     getSsoTokenFromUrl() {
       const params = new URLSearchParams(window.location.search)
       const token = params.get('token') || params.get('satoken') || params.get('access_token')
       if (token) {
+        this.clearSsoLoggedOut()
         localStorage.setItem('sso_token', token)
         params.delete('token')
         params.delete('satoken')
@@ -45,10 +82,13 @@ export const useAuthStore = defineStore('auth', {
       return token || localStorage.getItem('sso_token') || ''
     },
 
-    async hydrateSsoUser() {
+    async hydrateSsoUser(options = {}) {
       const hasTokenInUrl = new URLSearchParams(window.location.search).has('token') ||
         new URLSearchParams(window.location.search).has('satoken') ||
         new URLSearchParams(window.location.search).has('access_token')
+      if (this.ssoLoggedOut && !hasTokenInUrl && !options.force) {
+        return null
+      }
       const freshEnough = Date.now() - this.ssoHydratedAt < 60000
       if (!hasTokenInUrl && this.user && freshEnough) {
         return this.user
@@ -82,6 +122,7 @@ export const useAuthStore = defineStore('auth', {
           this.token = token || '__sso__'
           this.user = user
           this.ssoHydratedAt = Date.now()
+          this.clearSsoLoggedOut()
           localStorage.setItem('auth_token', this.token)
           localStorage.setItem('auth_user', JSON.stringify(user))
           localStorage.setItem('sso_hydrated_at', String(this.ssoHydratedAt))
@@ -92,6 +133,62 @@ export const useAuthStore = defineStore('auth', {
         })
 
       return this.ssoHydratePromise
+    },
+
+    async hydrateWorkbenchAccess() {
+      const freshEnough = Date.now() - this.workbenchAccessHydratedAt < 60000
+      if (this.workbenchAccess && freshEnough) return this.workbenchAccess
+      if (this.workbenchAccessPromise) return this.workbenchAccessPromise
+
+      const headers = {}
+      if (this.token && this.token !== '__sso__') headers.Authorization = `Bearer ${this.token}`
+
+      this.workbenchAccessPromise = fetch('/api/admin/workbench-permissions/me', {
+        method: 'GET',
+        credentials: 'include',
+        headers
+      })
+        .then(async (response) => {
+          if (!response.ok) {
+            this.workbenchAccess = { is_super_admin: false }
+            this.workbenchAccessHydratedAt = Date.now()
+            return this.workbenchAccess
+          }
+          const payload = await response.json()
+          this.workbenchAccess = payload.data || { is_super_admin: false }
+          this.workbenchAccessHydratedAt = Date.now()
+          localStorage.setItem('workbench_access', JSON.stringify(this.workbenchAccess))
+          localStorage.setItem('workbench_access_hydrated_at', String(this.workbenchAccessHydratedAt))
+          return this.workbenchAccess
+        })
+        .finally(() => {
+          this.workbenchAccessPromise = null
+        })
+
+      return this.workbenchAccessPromise
+    },
+
+    async resolvePortalDestination(requestedPath = '/') {
+      const accessPayload = await this.hydrateWorkbenchAccess()
+      const portalAccess = accessPayload?.portal_access || {}
+      const canMonitor = Boolean(portalAccess.can_monitor)
+      const canWorkbench = Boolean(portalAccess.can_workbench)
+      const landing = portalAccess.landing || '/entry'
+      const requested = typeof requestedPath === 'string' && requestedPath.startsWith('/') && !requestedPath.startsWith('//')
+        ? requestedPath
+        : '/'
+
+      if (requested.startsWith('/workbench')) return canWorkbench ? requested : (canMonitor ? '/' : '/entry')
+      if (requested !== '/' && requested !== '/entry') {
+        if (canMonitor) return requested
+        if (canWorkbench) return '/workbench/'
+      }
+      if (landing === '/workbench/' || landing === '/workbench') return '/workbench/'
+      if (landing === '/') return '/'
+      if (canMonitor && canWorkbench) return '/entry'
+      if (canWorkbench) return '/workbench/'
+      if (canMonitor) return '/'
+      return '/entry'
     }
   }
 })

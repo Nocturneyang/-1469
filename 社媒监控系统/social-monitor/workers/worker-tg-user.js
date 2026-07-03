@@ -24,10 +24,11 @@
 
 'use strict';
 
+const fs = require('fs');
 const path = require('path');
 require('dotenv').config({ path: path.join(process.env.DATA_DIR || path.join(__dirname, '..'), '.env') });
 
-const { TelegramClient } = require('telegram');
+const { Api, TelegramClient } = require('telegram');
 const { StringSession } = require('telegram/sessions');
 const { NewMessage } = require('telegram/events');
 const {
@@ -41,6 +42,8 @@ const { registerTask, runBackfillLoop } = require('../lib/tg-backfill-queue');
 const { sendAlert, sendAccountAlert } = require('../lib/dingtalk');
 const { createCollectorClient } = require('../lib/collector-client');
 const { formatShanghai, shanghaiISOString } = require('../lib/time');
+const { startWorkbenchOutboundRuntime } = require('../lib/workbench-outbound-runtime');
+const { startWorkbenchChannelSyncRuntime } = require('../lib/workbench-channel-sync-runtime');
 
 // ─── 配置读取 ────────────────────────────────────────────────────────────────
 const accountName = process.env.TG_ACCOUNT_NAME || 'default';
@@ -62,6 +65,8 @@ const runtimeState = {
     lastReadyAt: null,
     lastMessageAt: null
 };
+let workbenchOutboundRuntime = null;
+let workbenchChannelSyncRuntime = null;
 
 function reportHeartbeat(patch = {}) {
     Object.assign(runtimeState, patch);
@@ -214,6 +219,260 @@ async function getCachedSender(msg) {
     return sender;
 }
 
+function createWorkbenchSendError(code, message) {
+    const err = new Error(message);
+    err.code = code;
+    return err;
+}
+
+function telegramPeerCandidates(peerId) {
+    const raw = String(peerId || '').trim();
+    if (!raw) return [];
+    const candidates = [raw];
+    const normalized = raw.replace(/^-100/, '').replace(/^-/, '');
+    if (/^\d+$/.test(normalized)) {
+        candidates.push(`-100${normalized}`);
+        candidates.push(`-${normalized}`);
+    }
+    return [...new Set(candidates)];
+}
+
+async function resolveTelegramPeer(client, peerId) {
+    for (const candidate of telegramPeerCandidates(peerId)) {
+        try {
+            return await client.getInputEntity(candidate);
+        } catch (_) { }
+        try {
+            return await client.getEntity(candidate);
+        } catch (_) { }
+    }
+    throw createWorkbenchSendError('MISSING_PEER_ID', `Cannot resolve Telegram peer: ${peerId || ''}`);
+}
+
+function extractTelegramReplyId(quoteMsgId) {
+    if (!quoteMsgId) return null;
+    const raw = String(quoteMsgId);
+    const tail = raw.includes('_') ? raw.split('_').pop() : raw;
+    const parsed = Number(tail);
+    return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
+async function sendWorkbenchTgMessage(client, task) {
+    const text = String(task.text || '').trim();
+    const attachments = parseWorkbenchAttachments(task.attachment_json);
+    if (!text && !attachments.length) throw createWorkbenchSendError('EMPTY_MESSAGE', 'Cannot send an empty Telegram message');
+
+    const peerId = task.chat_id || task.group_id;
+    if (!peerId) throw createWorkbenchSendError('MISSING_PEER_ID', 'Missing Telegram peer id');
+
+    const peer = await resolveTelegramPeer(client, peerId);
+    const replyTo = extractTelegramReplyId(task.quote_msg_id);
+    const remoteIds = [];
+    const tempFiles = [];
+    try {
+        if (attachments.length) {
+            let captionUsed = false;
+            for (let index = 0; index < attachments.length; index += 1) {
+                const { filePath, payload } = writeWorkbenchAttachmentTempFile(attachments[index]);
+                tempFiles.push(filePath);
+                const caption = text && !captionUsed ? text : '';
+                if (caption) captionUsed = true;
+                const sent = await client.sendMessage(peer, {
+                    message: caption,
+                    file: filePath,
+                    forceDocument: payload.kind === 'file' || !payload.mimeType.startsWith('image/'),
+                    ...(replyTo && index === 0 ? { replyTo } : {}),
+                });
+                if (sent && sent.id) remoteIds.push(`${peerId}_${sent.id}`);
+            }
+        } else {
+            const sent = await client.sendMessage(peer, {
+                message: text,
+                ...(replyTo ? { replyTo } : {}),
+            });
+            if (sent && sent.id) remoteIds.push(`${peerId}_${sent.id}`);
+        }
+    } finally {
+        tempFiles.forEach((filePath) => {
+            try {
+                fs.unlinkSync(filePath);
+            } catch (_) { }
+        });
+    }
+
+    return {
+        remote_msg_id: remoteIds.length ? remoteIds.join(',') : null,
+    };
+}
+
+function parseWorkbenchAttachments(attachmentJson) {
+    if (!attachmentJson) return [];
+    let parsed;
+    try {
+        parsed = typeof attachmentJson === 'string' ? JSON.parse(attachmentJson) : attachmentJson;
+    } catch (err) {
+        throw createWorkbenchSendError('INVALID_ATTACHMENT', 'Invalid attachment JSON');
+    }
+    const list = Array.isArray(parsed) ? parsed : [parsed];
+    return list.filter((item) => item && typeof item === 'object');
+}
+
+function writeWorkbenchAttachmentTempFile(attachment) {
+    const payload = decodeWorkbenchAttachment(attachment);
+    const tempDir = path.join(process.env.DATA_DIR || path.join(__dirname, '..'), 'workbench-outbound-tmp');
+    fs.mkdirSync(tempDir, { recursive: true });
+    const filename = `${Date.now()}-${process.pid}-${Math.random().toString(16).slice(2)}-${payload.filename}`;
+    const filePath = path.join(tempDir, filename);
+    fs.writeFileSync(filePath, Buffer.from(payload.base64, 'base64'));
+    return { filePath, payload };
+}
+
+function decodeWorkbenchAttachment(attachment) {
+    const dataUrl = String(attachment.data_url || '').trim();
+    const match = dataUrl.match(/^data:([^;,]+)?;base64,(.+)$/s);
+    if (!match) throw createWorkbenchSendError('INVALID_ATTACHMENT', 'Attachment data URL is missing');
+    const mimeType = String(attachment.type || match[1] || 'application/octet-stream').toLowerCase();
+    const base64 = match[2].replace(/\s/g, '');
+    if (!base64) throw createWorkbenchSendError('INVALID_ATTACHMENT', 'Attachment data is empty');
+    return {
+        base64,
+        mimeType,
+        filename: sanitizeWorkbenchAttachmentName(attachment.name),
+        kind: String(attachment.kind || 'file').toLowerCase(),
+    };
+}
+
+function sanitizeWorkbenchAttachmentName(name) {
+    const cleaned = String(name || 'attachment')
+        .replace(/[\\/\r\n]/g, '_')
+        .trim()
+        .slice(0, 180);
+    return cleaned || 'attachment';
+}
+
+function startWorkbenchOutboundIfNeeded(client) {
+    if (workbenchOutboundRuntime) return;
+    workbenchOutboundRuntime = startWorkbenchOutboundRuntime({
+        platform: 'tg',
+        accountAliases: [accountId, accountName],
+        label: `tgu:${accountName}`,
+        logger: console,
+        sendMessage: task => sendWorkbenchTgMessage(client, task),
+    });
+}
+
+function peerIdValue(value) {
+    if (value == null) return '';
+    if (typeof value === 'bigint') return value.toString();
+    if (typeof value === 'object') {
+        if (value.value != null) return String(value.value);
+        if (typeof value.toString === 'function') return value.toString();
+    }
+    return String(value);
+}
+
+function inputPeerToGroupId(peer) {
+    if (!peer) return '';
+    return peerIdValue(peer.channelId || peer.chatId || peer.peerId || peer.id || '');
+}
+
+function dialogFilterTitle(filter) {
+    const title = filter && filter.title;
+    if (!title) return `Folder ${filter && filter.id}`;
+    if (typeof title === 'string') return title;
+    if (title.text) return title.text;
+    if (Array.isArray(title.texts)) return title.texts.map(item => item.text || '').join('').trim();
+    return String(title);
+}
+
+async function collectWorkbenchTgChannelSnapshot(client) {
+    const maxGroups = Number(process.env.WORKBENCH_CHANNEL_SYNC_MAX_GROUPS || 500);
+    const dialogs = await client.getDialogs({
+        limit: Number.isFinite(maxGroups) && maxGroups > 0 ? maxGroups : 500,
+    });
+    const groups = [];
+    const groupIds = new Set();
+    for (const dialog of dialogs) {
+        const entity = dialog && dialog.entity;
+        if (!entity || !['Chat', 'Channel'].includes(entity.className)) continue;
+        const groupId = String(entity.id);
+        groupIds.add(groupId);
+        groups.push({
+            group_id: groupId,
+            group_name: entity.title || groupId,
+            kind: entity.className === 'Channel' ? 'channel' : 'group',
+            raw_json: {
+                id: groupId,
+                title: entity.title || null,
+                className: entity.className,
+                broadcast: Boolean(entity.broadcast),
+                megagroup: Boolean(entity.megagroup),
+            },
+        });
+    }
+
+    const labels = [];
+    const maps = [];
+    let filtersResult = null;
+    try {
+        filtersResult = await client.invoke(new Api.messages.GetDialogFilters());
+    } catch (err) {
+        console.warn(`[TGUser:${accountName}] Workbench folder sync skipped: ${err.message}`);
+        return { groups };
+    }
+
+    for (const filter of (filtersResult && filtersResult.filters || [])) {
+        if (!filter || filter.className === 'DialogFilterDefault') continue;
+        const nativeLabelId = `folder:${filter.id}`;
+        labels.push({
+            native_label_id: nativeLabelId,
+            name: dialogFilterTitle(filter),
+            color: filter.color == null ? null : String(filter.color),
+            kind: 'folder',
+            raw_json: {
+                id: filter.id,
+                className: filter.className,
+                title: dialogFilterTitle(filter),
+                groups: Boolean(filter.groups),
+                broadcasts: Boolean(filter.broadcasts),
+                excludeMuted: Boolean(filter.excludeMuted),
+                excludeRead: Boolean(filter.excludeRead),
+                excludeArchived: Boolean(filter.excludeArchived),
+            },
+        });
+
+        const excluded = new Set([...(filter.excludePeers || [])].map(inputPeerToGroupId).filter(Boolean));
+        const explicit = [
+            ...(filter.includePeers || []),
+            ...(filter.pinnedPeers || []),
+        ].map(inputPeerToGroupId).filter(Boolean);
+
+        const targetIds = new Set();
+        explicit.forEach(id => {
+            if (groupIds.has(id) && !excluded.has(id)) targetIds.add(id);
+        });
+        if (filter.groups || filter.broadcasts) {
+            groupIds.forEach(id => {
+                if (!excluded.has(id)) targetIds.add(id);
+            });
+        }
+        targetIds.forEach(groupId => maps.push({ group_id: groupId, native_label_id: nativeLabelId }));
+    }
+
+    return { groups, labels, maps };
+}
+
+function startWorkbenchChannelSyncIfNeeded(client) {
+    if (workbenchChannelSyncRuntime) return;
+    workbenchChannelSyncRuntime = startWorkbenchChannelSyncRuntime({
+        platform: 'tg',
+        accountAliases: [accountId, accountName],
+        label: `tgu:${accountName}`,
+        logger: console,
+        collectSnapshot: () => collectWorkbenchTgChannelSnapshot(client),
+    });
+}
+
 // ─── 主逻辑 ──────────────────────────────────────────────────────────────────
 async function main() {
     const sessionString = getSession(accountName) || '';
@@ -327,6 +586,8 @@ async function main() {
     try {
         await client.getDialogs({ limit: 1 });
     } catch (e) { }
+    startWorkbenchOutboundIfNeeded(client);
+    startWorkbenchChannelSyncIfNeeded(client);
 
     // ─── 实时消息监听（贯穿整个进程生命周期）────────────────────────────────
     client.addEventHandler(async (event) => {

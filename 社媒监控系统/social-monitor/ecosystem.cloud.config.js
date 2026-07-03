@@ -71,8 +71,10 @@ const apps = [
         COLLECTOR_TOKEN_SHA256: process.env.COLLECTOR_TOKEN_SHA256 || COLLECTOR_TOKEN_SHA256_FALLBACK,
         SSO_ENABLED: process.env.SSO_ENABLED || "",
         SSO_LOGIN_URL: process.env.SSO_LOGIN_URL || "",
+        SSO_LOGOUT_URL: process.env.SSO_LOGOUT_URL || "",
         SSO_ADMIN_USERS: process.env.SSO_ADMIN_USERS || "",
         SSO_REDIRECT_PARAM: process.env.SSO_REDIRECT_PARAM || "",
+        SSO_LOGOUT_REDIRECT_PARAM: process.env.SSO_LOGOUT_REDIRECT_PARAM || "",
         SSO_USERINFO_URL: process.env.SSO_USERINFO_URL || ""
       }
     },

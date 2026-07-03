@@ -3,7 +3,7 @@ set -e
 
 export DATA_DIR="${DATA_DIR:-/data}"
 APP_DIR="/app/social-monitor"
-CLOUD_ECOSYSTEM_VERSION="${CLOUD_ECOSYSTEM_VERSION:-18}"
+CLOUD_ECOSYSTEM_VERSION="${CLOUD_ECOSYSTEM_VERSION:-19}"
 
 mkdir -p "$DATA_DIR/db" "$DATA_DIR/media" "$DATA_DIR/config"
 

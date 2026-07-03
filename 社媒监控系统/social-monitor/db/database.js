@@ -100,6 +100,316 @@ function getBusinessSector(receiverAccount) {
     }
 }
 
+function normalizeWorkbenchPlatform(platform) {
+    const value = String(platform || '').trim().toLowerCase();
+    if (value === 'whatsapp' || value === 'wa') return 'wa';
+    if (value === 'telegram' || value === 'tg' || value === 'telegram-user' || value === 'tg-user') return 'tg';
+    if (value === 'teams') return 'teams';
+    return value || 'unknown';
+}
+
+function normalizeStoragePlatform(platform) {
+    const value = normalizeWorkbenchPlatform(platform);
+    if (value === 'wa') return 'whatsapp';
+    if (value === 'tg') return 'telegram';
+    return value;
+}
+
+function inferPlatformFromAccountId(accountId) {
+    const value = String(accountId || '').trim().toLowerCase();
+    if (value.startsWith('wa-')) return 'wa';
+    if (value.startsWith('tg-') || value.startsWith('tgu-')) return 'tg';
+    if (value.startsWith('teams-')) return 'teams';
+    return '';
+}
+
+function accountAliasSet(accountId) {
+    const id = String(accountId || '').trim();
+    const aliases = new Set([id]);
+    if (id.startsWith('wa-')) aliases.add(id.replace(/^wa-/, ''));
+    if (id.startsWith('tg-')) aliases.add(id.replace(/^tg-/, ''));
+    if (id.startsWith('tgu-')) aliases.add(id.replace(/^tgu-/, ''));
+    if (id.startsWith('teams-')) aliases.add(id.replace(/^teams-/, ''));
+    return aliases;
+}
+
+function csvSet(value) {
+    return new Set(String(value || '')
+        .split(',')
+        .map(item => item.trim())
+        .filter(Boolean));
+}
+
+function accountInCsv(accountId, value) {
+    const allowed = csvSet(value);
+    if (!allowed.size) return false;
+    const aliases = accountAliasSet(accountId);
+    for (const alias of aliases) {
+        if (allowed.has(alias)) return true;
+    }
+    return false;
+}
+
+function normalizeAccountRole(role, fallback = 'collector') {
+    const value = String(role || '').trim().toLowerCase();
+    if (['collector', 'service', 'both', 'disabled'].includes(value)) return value;
+    return fallback;
+}
+
+function roleAllowsCollect(role) {
+    return role === 'collector' || role === 'service' || role === 'both';
+}
+
+function roleAllowsService(role) {
+    return role === 'service' || role === 'both';
+}
+
+function defaultAccountRole(accountId) {
+    if (accountInCsv(accountId, process.env.WORKBENCH_SERVICE_ACCOUNTS)
+        || accountInCsv(accountId, process.env.WORKBENCH_VISIBLE_SERVICE_ACCOUNTS)
+        || accountInCsv(accountId, process.env.WORKBENCH_SEND_ACCOUNTS)) {
+        return 'service';
+    }
+    if (accountInCsv(accountId, process.env.WORKBENCH_COLLECTOR_ACCOUNTS)) return 'collector';
+    return 'collector';
+}
+
+function defaultLoginType(platform) {
+    const normalized = normalizeWorkbenchPlatform(platform);
+    if (normalized === 'wa') return 'wa_personal_qr';
+    if (normalized === 'tg') return 'telegram_bot_api';
+    if (normalized === 'teams') return 'teams_oauth';
+    return 'unknown';
+}
+
+function normalizeRegistryPatch(input = {}) {
+    const account = String(input.account || input.id || '').trim();
+    const platform = normalizeWorkbenchPlatform(input.platform || inferPlatformFromAccountId(account));
+    const role = normalizeAccountRole(input.account_role || input.role, defaultAccountRole(account));
+    const isService = roleAllowsService(role);
+    const collectEnabled = input.collect_enabled != null ? Number(Boolean(input.collect_enabled)) : Number(roleAllowsCollect(role));
+    const sendEnabled = input.send_enabled != null ? Number(Boolean(input.send_enabled)) : Number(isService);
+    const syncEnabled = input.sync_groups_enabled != null ? Number(Boolean(input.sync_groups_enabled)) : Number(isService);
+    const visible = input.workbench_visible != null ? Number(Boolean(input.workbench_visible)) : Number(isService);
+    return {
+        platform,
+        account,
+        display_name: input.display_name || input.pushname || account,
+        login_type: input.login_type || defaultLoginType(platform),
+        account_role: role,
+        workbench_visible: visible,
+        collect_enabled: collectEnabled,
+        send_enabled: sendEnabled,
+        sync_groups_enabled: syncEnabled,
+        risk_level: input.risk_level || (platform === 'wa' && isService ? 'medium' : 'low'),
+        owner_team: input.owner_team || null,
+        status: input.status || null,
+    };
+}
+
+function upsertChannelAccountRegistry(input = {}) {
+    if (COLLECTOR_REMOTE_ONLY) return null;
+    const row = normalizeRegistryPatch(input);
+    if (!row.account || !row.platform) return null;
+    db.prepare(`
+        INSERT INTO channel_account_registry (
+            platform, account, display_name, login_type, account_role,
+            workbench_visible, collect_enabled, send_enabled, sync_groups_enabled,
+            risk_level, owner_team, status, updated_at
+        ) VALUES (
+            @platform, @account, @display_name, @login_type, @account_role,
+            @workbench_visible, @collect_enabled, @send_enabled, @sync_groups_enabled,
+            @risk_level, @owner_team, @status, datetime('now', '+8 hours')
+        )
+        ON CONFLICT(account) DO UPDATE SET
+            platform = excluded.platform,
+            display_name = COALESCE(NULLIF(excluded.display_name, ''), display_name),
+            login_type = excluded.login_type,
+            account_role = excluded.account_role,
+            workbench_visible = excluded.workbench_visible,
+            collect_enabled = excluded.collect_enabled,
+            send_enabled = excluded.send_enabled,
+            sync_groups_enabled = excluded.sync_groups_enabled,
+            risk_level = excluded.risk_level,
+            owner_team = excluded.owner_team,
+            status = COALESCE(excluded.status, status),
+            updated_at = datetime('now', '+8 hours')
+    `).run(row);
+    return getChannelAccountRegistry(row.account);
+}
+
+function ensureChannelAccountRegistry(accountId, platform, patch = {}) {
+    if (COLLECTOR_REMOTE_ONLY) return null;
+    const account = String(accountId || '').trim();
+    if (!account) return null;
+    const existing = getChannelAccountRegistry(account);
+    if (existing) {
+        const status = patch.status || null;
+        const displayName = patch.display_name || patch.pushname || null;
+        if (status || displayName) {
+            db.prepare(`
+                UPDATE channel_account_registry
+                SET status = COALESCE(@status, status),
+                    display_name = COALESCE(NULLIF(@displayName, ''), display_name),
+                    updated_at = datetime('now', '+8 hours')
+                WHERE account = @account
+            `).run({ account, status, displayName });
+        }
+        return getChannelAccountRegistry(account);
+    }
+    return upsertChannelAccountRegistry({
+        account,
+        platform,
+        ...patch,
+        account_role: patch.account_role || defaultAccountRole(account),
+    });
+}
+
+function getChannelAccountRegistry(accountId) {
+    if (COLLECTOR_REMOTE_ONLY) return null;
+    try {
+        return db.prepare(`
+            SELECT *
+            FROM channel_account_registry
+            WHERE account = ?
+        `).get(String(accountId || '').trim()) || null;
+    } catch (_) {
+        return null;
+    }
+}
+
+function getChannelAccountRuntimeConfig(accountId, platform) {
+    const existing = getChannelAccountRegistry(accountId);
+    const fallbackRole = defaultAccountRole(accountId);
+    const row = existing || normalizeRegistryPatch({
+        account: accountId,
+        platform,
+        account_role: fallbackRole,
+    });
+    const role = normalizeAccountRole(row.account_role, fallbackRole);
+    return {
+        ...row,
+        platform: normalizeWorkbenchPlatform(row.platform || platform || inferPlatformFromAccountId(accountId)),
+        account: String(row.account || accountId || '').trim(),
+        account_role: role,
+        is_collector_account: roleAllowsCollect(role),
+        is_service_account: roleAllowsService(role),
+        collect_enabled: row.collect_enabled == null ? Number(roleAllowsCollect(role)) : Number(row.collect_enabled),
+        send_enabled: row.send_enabled == null ? Number(roleAllowsService(role)) : Number(row.send_enabled),
+        sync_groups_enabled: row.sync_groups_enabled == null ? Number(roleAllowsService(role)) : Number(row.sync_groups_enabled),
+        workbench_visible: row.workbench_visible == null ? Number(roleAllowsService(role)) : Number(row.workbench_visible),
+    };
+}
+
+function listChannelAccountRegistry() {
+    if (COLLECTOR_REMOTE_ONLY) return [];
+    try {
+        return db.prepare(`
+            SELECT *
+            FROM channel_account_registry
+            ORDER BY platform ASC, account ASC
+        `).all();
+    } catch (_) {
+        return [];
+    }
+}
+
+function parseJsonSafe(value, fallback = null) {
+    if (!value) return fallback;
+    try {
+        return JSON.parse(value);
+    } catch (_) {
+        return fallback;
+    }
+}
+
+function inferChatKind(data, raw) {
+    const explicit = String(data.chat_kind || data.kind || raw.chat_kind || raw.kind || '').trim().toLowerCase();
+    if (explicit) return explicit;
+    const chatType = String(raw.chat?.type || '').trim().toLowerCase();
+    if (chatType) return chatType === 'supergroup' ? 'group' : chatType;
+    const groupId = String(data.group_id || '').trim();
+    if (groupId.endsWith('@g.us')) return 'group';
+    if (groupId.startsWith('-')) return 'group';
+    return 'private';
+}
+
+function extractNativeMessageId(data, raw) {
+    return String(
+        data.native_message_id ||
+        raw.native_message_id ||
+        raw.message_id ||
+        raw.id ||
+        data.message_id ||
+        ''
+    ).trim();
+}
+
+function buildCanonicalMessageId(input = {}) {
+    if (input.canonical_message_id) return String(input.canonical_message_id);
+    const raw = typeof input.raw_data === 'string' ? parseJsonSafe(input.raw_data, {}) : (input.raw_data || {});
+    const platform = normalizeWorkbenchPlatform(input.platform);
+    const account = String(input.receiver_account || input.account || '').trim();
+    const chatId = String(input.native_chat_id || input.group_id || raw.native_chat_id || raw.chat?.id || '').trim();
+    const nativeMessageId = extractNativeMessageId(input, raw);
+    const chatKind = inferChatKind(input, raw);
+    const fallbackId = String(input.message_id || `${Date.now()}-${Math.random().toString(16).slice(2)}`);
+    const safeChatId = chatId || 'unknown-chat';
+    const safeNativeId = nativeMessageId || fallbackId;
+
+    if (platform === 'wa') {
+        if (chatKind === 'group' || safeChatId.endsWith('@g.us')) return `wa:${safeChatId}:${safeNativeId}`;
+        return `wa:${account}:${safeChatId}:${safeNativeId}`;
+    }
+    if (platform === 'tg') {
+        if (chatKind === 'private') return `tg:${account}:${safeChatId}:${safeNativeId}`;
+        return `tg:${safeChatId}:${safeNativeId}`;
+    }
+    return `${platform}:${account}:${safeChatId}:${safeNativeId}`;
+}
+
+function buildMessageRecord(data = {}) {
+    const raw = typeof data.raw_data === 'string' ? parseJsonSafe(data.raw_data, {}) : (data.raw_data || {});
+    const storagePlatform = normalizeStoragePlatform(data.platform);
+    const workbenchPlatform = normalizeWorkbenchPlatform(data.platform);
+    const receiverAccount = String(data.receiver_account || '').trim();
+    const nativeChatId = String(data.native_chat_id || data.group_id || raw.native_chat_id || raw.chat?.id || '').trim();
+    const nativeMessageId = extractNativeMessageId(data, raw);
+    const chatKind = inferChatKind(data, raw);
+    const canonicalMessageId = buildCanonicalMessageId({
+        ...data,
+        platform: workbenchPlatform,
+        receiver_account: receiverAccount,
+        native_chat_id: nativeChatId,
+        native_message_id: nativeMessageId,
+        chat_kind: chatKind,
+    });
+    const accountConfig = getChannelAccountRuntimeConfig(receiverAccount, workbenchPlatform);
+    const observerRole = accountConfig.is_service_account ? 'service' : 'collector';
+    const rawMeta = {
+        ...(raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : { original_raw_data: data.raw_data || null }),
+        canonical_message_id: canonicalMessageId,
+        dedupe_key: canonicalMessageId,
+        observer_account: receiverAccount,
+        observer_role: observerRole,
+        native_chat_id: nativeChatId || null,
+        native_message_id: nativeMessageId || null,
+        chat_kind: chatKind,
+    };
+    return {
+        ...data,
+        platform: storagePlatform,
+        receiver_account: receiverAccount,
+        message_id: canonicalMessageId,
+        group_id: nativeChatId || data.group_id || null,
+        native_chat_id: nativeChatId || data.group_id || null,
+        native_message_id: nativeMessageId || data.message_id || canonicalMessageId,
+        observer_role: observerRole,
+        business_sector: data.business_sector !== undefined ? data.business_sector : getBusinessSector(receiverAccount),
+        raw_data: JSON.stringify(rawMeta),
+    };
+}
+
 function initSchema() {
     db.exec(`
         CREATE TABLE IF NOT EXISTS messages (
@@ -154,6 +464,45 @@ function initSchema() {
             last_supervisor_check_at DATETIME,
             updated_at DATETIME DEFAULT (datetime('now', '+8 hours'))
         );
+
+        CREATE TABLE IF NOT EXISTS channel_account_registry (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            platform TEXT NOT NULL,
+            account TEXT NOT NULL UNIQUE,
+            display_name TEXT,
+            login_type TEXT NOT NULL DEFAULT 'unknown',
+            account_role TEXT NOT NULL DEFAULT 'collector',
+            workbench_visible INTEGER NOT NULL DEFAULT 0,
+            collect_enabled INTEGER NOT NULL DEFAULT 1,
+            send_enabled INTEGER NOT NULL DEFAULT 0,
+            sync_groups_enabled INTEGER NOT NULL DEFAULT 0,
+            risk_level TEXT NOT NULL DEFAULT 'low',
+            owner_team TEXT,
+            status TEXT,
+            created_at DATETIME DEFAULT (datetime('now', '+8 hours')),
+            updated_at DATETIME DEFAULT (datetime('now', '+8 hours'))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_channel_account_registry_platform_role
+            ON channel_account_registry(platform, account_role, workbench_visible);
+
+        CREATE TABLE IF NOT EXISTS message_observations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            platform TEXT NOT NULL,
+            canonical_message_id TEXT NOT NULL,
+            observer_account TEXT NOT NULL,
+            observer_role TEXT NOT NULL DEFAULT 'collector',
+            native_chat_id TEXT,
+            native_message_id TEXT,
+            observed_at DATETIME DEFAULT (datetime('now', '+8 hours')),
+            raw_json TEXT,
+            UNIQUE(platform, canonical_message_id, observer_account)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_message_observations_observer_chat
+            ON message_observations(platform, observer_account, native_chat_id, canonical_message_id);
+        CREATE INDEX IF NOT EXISTS idx_message_observations_canonical
+            ON message_observations(platform, canonical_message_id);
 
         CREATE TABLE IF NOT EXISTS collector_heartbeats (
             account_id TEXT NOT NULL,
@@ -304,9 +653,93 @@ function initSchema() {
             CREATE INDEX IF NOT EXISTS idx_messages_platform_timestamp ON messages(platform, timestamp DESC);
             CREATE INDEX IF NOT EXISTS idx_messages_has_media ON messages(has_media);
             CREATE INDEX IF NOT EXISTS idx_messages_group_name ON messages(group_name);
+            CREATE INDEX IF NOT EXISTS idx_messages_group_id ON messages(platform, group_id, timestamp DESC);
         `);
     } catch (err) {
         console.error('Migration error:', err.message);
+    }
+
+    try {
+        db.exec(`
+            CREATE TABLE IF NOT EXISTS channel_account_registry (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                platform TEXT NOT NULL,
+                account TEXT NOT NULL UNIQUE,
+                display_name TEXT,
+                login_type TEXT NOT NULL DEFAULT 'unknown',
+                account_role TEXT NOT NULL DEFAULT 'collector',
+                workbench_visible INTEGER NOT NULL DEFAULT 0,
+                collect_enabled INTEGER NOT NULL DEFAULT 1,
+                send_enabled INTEGER NOT NULL DEFAULT 0,
+                sync_groups_enabled INTEGER NOT NULL DEFAULT 0,
+                risk_level TEXT NOT NULL DEFAULT 'low',
+                owner_team TEXT,
+                status TEXT,
+                created_at DATETIME DEFAULT (datetime('now', '+8 hours')),
+                updated_at DATETIME DEFAULT (datetime('now', '+8 hours'))
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_channel_account_registry_platform_role
+                ON channel_account_registry(platform, account_role, workbench_visible);
+
+            CREATE TABLE IF NOT EXISTS message_observations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                platform TEXT NOT NULL,
+                canonical_message_id TEXT NOT NULL,
+                observer_account TEXT NOT NULL,
+                observer_role TEXT NOT NULL DEFAULT 'collector',
+                native_chat_id TEXT,
+                native_message_id TEXT,
+                observed_at DATETIME DEFAULT (datetime('now', '+8 hours')),
+                raw_json TEXT,
+                UNIQUE(platform, canonical_message_id, observer_account)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_message_observations_observer_chat
+                ON message_observations(platform, observer_account, native_chat_id, canonical_message_id);
+            CREATE INDEX IF NOT EXISTS idx_message_observations_canonical
+                ON message_observations(platform, canonical_message_id);
+        `);
+
+        const missingObservationRows = db.prepare(`
+            SELECT m.*
+            FROM messages m
+            LEFT JOIN message_observations o
+              ON o.platform = m.platform
+             AND o.canonical_message_id = m.message_id
+             AND o.observer_account = COALESCE(NULLIF(m.receiver_account, ''), 'default')
+            WHERE o.id IS NULL
+            LIMIT 20000
+        `).all();
+        const insertObservation = db.prepare(`
+            INSERT INTO message_observations (
+                platform, canonical_message_id, observer_account, observer_role,
+                native_chat_id, native_message_id, observed_at, raw_json
+            ) VALUES (
+                @platform, @canonicalMessageId, @observerAccount, @observerRole,
+                @nativeChatId, @nativeMessageId, COALESCE(@createdAt, datetime('now', '+8 hours')), @rawJson
+            )
+            ON CONFLICT(platform, canonical_message_id, observer_account) DO NOTHING
+        `);
+        const tx = db.transaction((rows) => {
+            rows.forEach((row) => {
+                const observerAccount = row.receiver_account || 'default';
+                const role = getChannelAccountRuntimeConfig(observerAccount, row.platform).is_service_account ? 'service' : 'collector';
+                insertObservation.run({
+                    platform: row.platform,
+                    canonicalMessageId: row.message_id,
+                    observerAccount,
+                    observerRole: role,
+                    nativeChatId: row.group_id,
+                    nativeMessageId: row.message_id,
+                    createdAt: row.created_at,
+                    rawJson: row.raw_data,
+                });
+            });
+        });
+        tx(missingObservationRows);
+    } catch (err) {
+        console.error('Migration error for workbench account/message observation tables:', err.message);
     }
 
     // Migration: Add Teams user info columns to accounts table
@@ -472,21 +905,87 @@ function getDbRuntimeDegradedReason() {
 function saveMessage(data) {
     if (COLLECTOR_REMOTE_ONLY) return { changes: 0, remoteOnly: true };
     try {
-        const stmt = db.prepare(`
-            INSERT INTO messages (
-                platform, receiver_account, business_sector, message_id, group_id, group_name, sender_id, sender_name,
-                content, has_media, media_path, timestamp, raw_data, created_at
-            ) VALUES (
-                @platform, @receiver_account, @business_sector, @message_id, @group_id, @group_name, @sender_id, @sender_name,
-                @content, @has_media, @media_path, @timestamp, @raw_data, datetime('now', '+8 hours')
-            )
-            ON CONFLICT(platform, message_id) DO NOTHING
-        `);
+        const record = buildMessageRecord(data);
+        const tx = db.transaction((message) => {
+            const insertMessage = db.prepare(`
+                INSERT INTO messages (
+                    platform, receiver_account, business_sector, message_id, group_id, group_name, sender_id, sender_name,
+                    content, has_media, media_path, timestamp, raw_data, created_at
+                ) VALUES (
+                    @platform, @receiver_account, @business_sector, @message_id, @group_id, @group_name, @sender_id, @sender_name,
+                    @content, @has_media, @media_path, @timestamp, @raw_data, datetime('now', '+8 hours')
+                )
+                ON CONFLICT(platform, message_id) DO NOTHING
+            `).run({
+                platform: message.platform,
+                receiver_account: message.receiver_account,
+                business_sector: message.business_sector,
+                message_id: message.message_id,
+                group_id: message.group_id,
+                group_name: message.group_name,
+                sender_id: message.sender_id,
+                sender_name: message.sender_name,
+                content: message.content,
+                has_media: message.has_media,
+                media_path: message.media_path,
+                timestamp: message.timestamp,
+                raw_data: message.raw_data,
+            });
 
-        // dynamically look up business_sector if not provided directly
-        const bs = data.business_sector !== undefined ? data.business_sector : getBusinessSector(data.receiver_account);
+            const observation = db.prepare(`
+                INSERT INTO message_observations (
+                    platform, canonical_message_id, observer_account, observer_role,
+                    native_chat_id, native_message_id, observed_at, raw_json
+                ) VALUES (
+                    @platform, @canonicalMessageId, @observerAccount, @observerRole,
+                    @nativeChatId, @nativeMessageId, datetime('now', '+8 hours'), @rawJson
+                )
+                ON CONFLICT(platform, canonical_message_id, observer_account) DO UPDATE SET
+                    observer_role = excluded.observer_role,
+                    native_chat_id = COALESCE(excluded.native_chat_id, native_chat_id),
+                    native_message_id = COALESCE(excluded.native_message_id, native_message_id),
+                    observed_at = excluded.observed_at,
+                    raw_json = COALESCE(excluded.raw_json, raw_json)
+            `).run({
+                platform: message.platform,
+                canonicalMessageId: message.message_id,
+                observerAccount: message.receiver_account || 'default',
+                observerRole: message.observer_role || 'collector',
+                nativeChatId: message.native_chat_id || message.group_id || null,
+                nativeMessageId: message.native_message_id || null,
+                rawJson: message.raw_data || null,
+            });
 
-        return stmt.run({ receiver_account: data.receiver_account, business_sector: bs, ...data });
+            const countRow = db.prepare(`
+                SELECT COUNT(*) AS count
+                FROM message_observations
+                WHERE platform = @platform AND canonical_message_id = @canonicalMessageId
+            `).get({ platform: message.platform, canonicalMessageId: message.message_id });
+            const existingMessage = db.prepare(`
+                SELECT receiver_account, raw_data
+                FROM messages
+                WHERE platform = @platform AND message_id = @messageId
+            `).get({ platform: message.platform, messageId: message.message_id });
+            const raw = parseJsonSafe(existingMessage?.raw_data, parseJsonSafe(message.raw_data, {}));
+            const mergedRaw = JSON.stringify({
+                ...(raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {}),
+                observed_accounts_count: countRow ? countRow.count : 1,
+                first_seen_account: raw.first_seen_account || existingMessage?.receiver_account || message.receiver_account || null,
+                dedupe_key: message.message_id,
+            });
+            db.prepare(`
+                UPDATE messages
+                SET raw_data = @rawData
+                WHERE platform = @platform AND message_id = @messageId
+            `).run({ rawData: mergedRaw, platform: message.platform, messageId: message.message_id });
+
+            return {
+                changes: insertMessage.changes,
+                observation_changes: observation.changes,
+                canonical_message_id: message.message_id,
+            };
+        });
+        return tx(record);
     } catch (err) {
         console.error('Error saving message:', err.message);
         return null;
@@ -506,6 +1005,10 @@ function updateAccountStatus(id, platform, status, pushname = null, qrCode = nul
               updated_at=datetime('now', '+8 hours')
         `);
         stmt.run({ id, platform, status, pushname, qr_code: qrCode });
+        ensureChannelAccountRegistry(id, platform, {
+            status,
+            display_name: pushname || id,
+        });
     } catch (err) {
         console.error('Error saving account status:', err.message);
     }
@@ -732,6 +1235,11 @@ module.exports = {
     isDbRuntimeDegraded,
     getDbRuntimeDegradedReason,
     saveMessage,
+    buildCanonicalMessageId,
+    getChannelAccountRegistry,
+    getChannelAccountRuntimeConfig,
+    listChannelAccountRegistry,
+    upsertChannelAccountRegistry,
     updateAccountStatus,
     upsertCollectorHeartbeat,
     recordRuntimeEvent,

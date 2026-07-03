@@ -31,10 +31,18 @@ COPY 社媒监控系统/social-monitor/scripts/install-chrome.js ./scripts/insta
 
 RUN npm ci --omit=dev --registry=https://registry.npmmirror.com
 
+WORKDIR /app/workbench
+COPY workbench/package*.json ./
+RUN npm ci --omit=dev --registry=https://registry.npmmirror.com
+
 WORKDIR /app
 COPY 社媒监控系统/social-monitor ./social-monitor
+COPY workbench ./workbench
 COPY docker-entrypoint.sh /docker-entrypoint.sh
 RUN chmod +x /docker-entrypoint.sh
+
+WORKDIR /app/workbench
+RUN WORKBENCH_BASE_PATH=/workbench/ npm run build
 
 WORKDIR /app/social-monitor
 RUN npm install -g pm2 --registry=https://registry.npmmirror.com

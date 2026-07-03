@@ -86,7 +86,7 @@ const handleAdminLogin = async () => {
     if (response.success) {
       authStore.setAuth(response.token, response.user)
       ElMessage.success(`欢迎回来, ${response.user.username}`)
-      router.push('/')
+      await routeAfterLogin('/')
     }
   } catch (err) {
     console.error('Login block:', err)
@@ -102,12 +102,21 @@ const handleViewLogin = async () => {
     if (response.success) {
       authStore.setAuth(response.token, response.user)
       ElMessage.success(`欢迎, ${response.user.username}`)
-      router.push('/')
+      await routeAfterLogin('/')
     }
   } catch (err) {
     console.error('View login block:', err)
   } finally {
     loading.value = false
+  }
+}
+
+const routeAfterLogin = async (target) => {
+  const destination = await authStore.resolvePortalDestination(target)
+  if (destination.startsWith('/workbench')) {
+    window.location.assign(destination)
+  } else {
+    router.push(destination)
   }
 }
 </script>

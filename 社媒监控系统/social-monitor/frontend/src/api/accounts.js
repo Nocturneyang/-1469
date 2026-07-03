@@ -84,6 +84,14 @@ export const getAccountRuntime = (id) =>
 export const accountRuntimeAction = (id, action) =>
   api.post(`/api/accounts/${id}/runtime/${action}`)
 
+/**
+ * 更新账号工作台用途
+ * @param {string} id
+ * @param {{ account_role: 'collector'|'service'|'both'|'disabled', workbench_visible?: boolean, collect_enabled?: boolean, send_enabled?: boolean, sync_groups_enabled?: boolean }} data
+ */
+export const updateAccountWorkbenchRole = (id, data) =>
+  api.patch(`/api/accounts/${id}/workbench-role`, data)
+
 // ─── Telegram 用户账号操作 ────────────────────────────────────────────────────
 
 /**

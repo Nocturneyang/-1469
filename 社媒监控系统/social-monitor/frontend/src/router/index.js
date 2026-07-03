@@ -17,6 +17,11 @@ const routes = [
     meta: { public: true }
   },
   {
+    path: '/entry',
+    name: 'PortalEntry',
+    component: () => import('@/views/PortalEntry.vue')
+  },
+  {
     path: '/',
     name: 'Dashboard',
     component: () => import('@/views/Layout.vue'),
@@ -54,6 +59,12 @@ const routes = [
         name: 'UserManagement',
         component: () => import('@/views/UserManagement.vue'),
         meta: { requiresAdmin: true }
+      },
+      {
+        path: 'admin/workbench-permissions',
+        name: 'WorkbenchPermissions',
+        component: () => import('@/views/WorkbenchPermissions.vue'),
+        meta: { requiresAdmin: true, requiresWorkbenchSuperAdmin: true }
       },
       {
         path: 'admin/logs',
@@ -127,20 +138,39 @@ const router = createRouter({
   routes
 })
 
+function hasSsoTokenQuery(to) {
+  return ['token', 'satoken', 'access_token'].some((key) => Object.prototype.hasOwnProperty.call(to.query || {}, key))
+}
+
 router.beforeEach(async (to, from, next) => {
   const authStore = useAuthStore()
 
   if (isSsoEnabled()) {
     if (to.name === 'Login') {
-      next({ name: 'SsoPending' })
+      next({
+        name: 'SsoPending',
+        query: authStore.ssoLoggedOut ? { logged_out: '1', from: '/' } : {}
+      })
     } else if (to.name === 'SsoPending') {
       next()
     } else {
+      if (authStore.ssoLoggedOut && !hasSsoTokenQuery(to)) {
+        return next({ name: 'SsoPending', query: { logged_out: '1', from: to.fullPath } })
+      }
       try {
         const user = await authStore.hydrateSsoUser()
         if (!user) {
           next({ name: 'SsoPending', query: { from: to.fullPath } })
         } else if (to.meta.requiresAdmin && authStore.user?.role !== 'admin') {
+          next({ name: 'Home' })
+        } else if (to.name !== 'PortalEntry' && !(await authStore.hydrateWorkbenchAccess()).portal_access?.can_monitor) {
+          const access = authStore.portalAccess
+          if (access.can_workbench) {
+            return window.location.assign('/workbench/')
+          } else {
+            return next({ name: 'PortalEntry' })
+          }
+        } else if (to.meta.requiresWorkbenchSuperAdmin && !(await authStore.hydrateWorkbenchAccess()).is_super_admin) {
           next({ name: 'Home' })
         } else {
           next()
@@ -154,6 +184,15 @@ router.beforeEach(async (to, from, next) => {
   } else if (to.name === 'Login' && authStore.isAuthenticated) {
     next({ name: 'Home' })
   } else if (to.meta.requiresAdmin && !authStore.isAdmin) {
+    next({ name: 'Home' })
+  } else if (!to.meta.public && to.name !== 'PortalEntry' && !(await authStore.hydrateWorkbenchAccess()).portal_access?.can_monitor) {
+    const access = authStore.portalAccess
+    if (access.can_workbench) {
+      return window.location.assign('/workbench/')
+    } else {
+      return next({ name: 'PortalEntry' })
+    }
+  } else if (to.meta.requiresWorkbenchSuperAdmin && !(await authStore.hydrateWorkbenchAccess()).is_super_admin) {
     next({ name: 'Home' })
   } else {
     next()
