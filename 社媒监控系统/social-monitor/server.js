@@ -7,6 +7,21 @@ require('dotenv').config({ path: path.join(process.env.DATA_DIR || __dirname, '.
 const { db, isDbRuntimeDegraded, getDbRuntimeDegradedReason } = require('./db/database');
 const fs = require('fs');
 const envConfig = require('./lib/env-config');
+
+function resolveWorkbenchRoot() {
+    const candidates = [
+        process.env.WORKBENCH_ROOT,
+        path.resolve(__dirname, '..', 'workbench'),
+        path.resolve(__dirname, '..', '..', 'workbench')
+    ].filter(Boolean);
+
+    return candidates.find((candidate) =>
+        fs.existsSync(path.join(candidate, 'server', 'routes', 'workbench.js'))
+    ) || candidates[0];
+}
+
+const WORKBENCH_ROOT = resolveWorkbenchRoot();
+
 const { authenticateToken, requireAdmin, resolveAuthenticatedUser, isSsoEnabled } = require('./middleware/auth');
 const { responseHelperMiddleware } = require('./middleware/response');
 const authRoutes = require('./routes/auth');
@@ -16,9 +31,9 @@ const configRoutes = require('./routes/config');
 const analyticsRoutes = require('./routes/analytics');
 const logsRoutes = require('./routes/logs');
 const createWorkbenchPermissionsRouter = require('./routes/workbench-permissions');
-const { createWorkbenchRouter } = require('../../workbench/server/routes/workbench');
-const { openWorkbenchDb } = require('../../workbench/db/workbench-db');
-const { requireMonitorPortalAccess } = require('../../workbench/lib/permissions');
+const { createWorkbenchRouter } = require(path.join(WORKBENCH_ROOT, 'server', 'routes', 'workbench'));
+const { openWorkbenchDb } = require(path.join(WORKBENCH_ROOT, 'db', 'workbench-db'));
+const { requireMonitorPortalAccess } = require(path.join(WORKBENCH_ROOT, 'lib', 'permissions'));
 const collectorRoutes = require('./routes/collector');
 const createTgUserRouter = require('./routes/tg-user');
 const createTeamsRouter = require('./routes/teams');
@@ -30,7 +45,6 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 const STARTED_AT = new Date();
 const SLOW_API_LOG_MS = Math.max(0, Number(process.env.SLOW_API_LOG_MS || 1200));
-const WORKBENCH_ROOT = path.resolve(__dirname, '..', '..', 'workbench');
 
 function resolveWorkbenchDbPath() {
     if (process.env.WORKBENCH_DB_PATH) return process.env.WORKBENCH_DB_PATH;
