@@ -334,7 +334,7 @@ button {
 .topbar {
   height: var(--topbar-height);
   display: grid;
-  grid-template-columns: 180px auto auto minmax(190px, 260px) 168px 138px minmax(240px, 1fr);
+  grid-template-columns: 180px 112px auto auto minmax(190px, 250px) 156px 128px minmax(220px, 1fr);
   align-items: center;
   gap: 12px;
   padding: 10px 16px;
@@ -360,6 +360,28 @@ button {
   text-overflow: ellipsis;
   color: var(--muted);
   font-size: 12px;
+}
+
+.monitor-button {
+  height: 38px;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 14px;
+  color: var(--accent-strong);
+  background: var(--accent-soft);
+  font-size: 13px;
+  font-weight: 720;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.monitor-button:hover {
+  border-color: rgba(15, 118, 110, 0.28);
+  background: rgba(15, 118, 110, 0.1);
 }
 
 .segmented {
@@ -1371,10 +1393,10 @@ button {
   }
 
   .topbar {
-    grid-template-columns: 150px auto auto minmax(220px, 1fr) 138px;
+    grid-template-columns: 150px 112px auto auto minmax(220px, 1fr) 138px;
     grid-template-areas:
-      "title platforms scope account sync"
-      "title label search search search";
+      "title monitor platforms scope account sync"
+      "title monitor label search search search";
     align-content: center;
   }
 
@@ -1384,6 +1406,10 @@ button {
 
   .platform-tabs {
     grid-area: platforms;
+  }
+
+  .monitor-button {
+    grid-area: monitor;
   }
 
   .scope-tabs {
@@ -1530,6 +1556,7 @@ button {
   }
 
   .toolbar-title,
+  .monitor-button,
   .platform-tabs,
   .scope-tabs,
   .account-select,
