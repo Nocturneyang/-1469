@@ -31,7 +31,8 @@ const router = useRouter()
 const authStore = useAuthStore()
 const checking = ref(false)
 const error = ref('')
-const loggedOut = computed(() => authStore.ssoLoggedOut || route.query.logged_out === '1')
+const hasSsoToken = computed(() => ['token', 'satoken', 'access_token'].some((key) => typeof route.query[key] === 'string'))
+const loggedOut = computed(() => !hasSsoToken.value && (authStore.ssoLoggedOut || route.query.logged_out === '1'))
 const copyText = computed(() => {
   if (loggedOut.value) {
     return '你已退出当前本地会话。为避免 SSO 有效会话自动回登，请点击“打开统一认证”重新授权。'
@@ -54,7 +55,7 @@ const checkAuth = async () => {
   try {
     const user = await authStore.hydrateSsoUser()
     if (user) {
-      const destination = await authStore.resolvePortalDestination(targetPath())
+      const destination = await authStore.resolvePortalDestination(targetPath(), { preferLanding: true })
       if (destination.startsWith('/workbench')) {
         window.location.assign(destination)
       } else {

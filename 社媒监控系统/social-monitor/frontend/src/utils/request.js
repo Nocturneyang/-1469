@@ -33,8 +33,19 @@ api.interceptors.response.use(
     const silentError = Boolean(error.config?.silentError)
 
     if (error.response) {
-      if (error.response.status === 401 && isSsoEnabled() && redirectToSsoLogin()) {
-        authStore.logout()
+      if (error.response.status === 401 && isSsoEnabled()) {
+        const wasSsoLoggedOut = authStore.ssoLoggedOut
+        const currentPath = `${window.location.pathname}${window.location.search}${window.location.hash}`
+        authStore.logout(wasSsoLoggedOut ? { manualSsoLogout: true } : {})
+        if (!wasSsoLoggedOut && redirectToSsoLogin({
+          redirectTo: `${window.location.origin}/sso-pending?from=${encodeURIComponent(currentPath || '/')}`
+        })) {
+          return Promise.reject(error)
+        }
+        router.push({
+          name: 'SsoPending',
+          query: wasSsoLoggedOut ? { logged_out: '1', from: '/entry' } : { from: currentPath || '/' }
+        })
       } else if (error.response.status === 401 || error.response.status === 403) {
         authStore.logout()
         router.push('/login')

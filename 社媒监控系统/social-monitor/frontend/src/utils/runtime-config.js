@@ -35,17 +35,23 @@ function withRedirectParam(baseUrl, redirectTo, configuredParam = '') {
   return url.toString()
 }
 
-export function redirectToSsoLogin(options = {}) {
+export function buildSsoLoginUrl(options = {}) {
   const loginUrl = getSsoLoginUrl()
-  if (!loginUrl) return false
+  if (!loginUrl) return ''
 
   try {
     const configuredRedirectParam = getRuntimeConfig().ssoRedirectParam || import.meta.env.VITE_SSO_REDIRECT_PARAM || ''
-    window.location.assign(withRedirectParam(loginUrl, options.redirectTo || window.location.href, configuredRedirectParam))
+    return withRedirectParam(loginUrl, options.redirectTo || window.location.href, configuredRedirectParam)
   } catch (_) {
-    window.location.assign(loginUrl)
+    return loginUrl
   }
+}
 
+export function redirectToSsoLogin(options = {}) {
+  const loginUrl = buildSsoLoginUrl(options)
+  if (!loginUrl) return false
+
+  window.location.assign(loginUrl)
   return true
 }
 

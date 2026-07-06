@@ -186,12 +186,13 @@ router.beforeEach(async (to, from, next) => {
         return next({ name: 'SsoPending', query: { logged_out: '1', from: to.fullPath } })
       }
       try {
+        const freshSsoLogin = hasSsoTokenQuery(to) || !authStore.user
         const user = await authStore.hydrateSsoUser()
         if (!user) {
           next({ name: 'SsoPending', query: { from: to.fullPath } })
         } else if (to.name !== 'PortalEntry') {
           const requestedPath = portalRequestedPath(to)
-          const destination = await authStore.resolvePortalDestination(requestedPath)
+          const destination = await authStore.resolvePortalDestination(requestedPath, { preferLanding: freshSsoLogin })
           if (redirectToPortalDestination(destination, requestedPath, next)) return
           if (to.meta.requiresAdmin && authStore.user?.role !== 'admin') {
             next({ name: 'Home' })
@@ -219,7 +220,7 @@ router.beforeEach(async (to, from, next) => {
     next({ name: 'Home' })
   } else if (!to.meta.public && to.name !== 'PortalEntry') {
     const requestedPath = portalRequestedPath(to)
-    const destination = await authStore.resolvePortalDestination(requestedPath)
+    const destination = await authStore.resolvePortalDestination(requestedPath, { preferLanding: !authStore.user })
     if (redirectToPortalDestination(destination, requestedPath, next)) return
     if (to.meta.requiresWorkbenchSuperAdmin && !(await authStore.hydrateWorkbenchAccess()).is_super_admin) {
       next({ name: 'Home' })

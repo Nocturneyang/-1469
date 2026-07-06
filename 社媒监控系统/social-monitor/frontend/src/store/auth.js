@@ -181,29 +181,38 @@ export const useAuthStore = defineStore('auth', {
       return this.workbenchAccessPromise
     },
 
-    async resolvePortalDestination(requestedPath = '/') {
+    async resolvePortalDestination(requestedPath = '/', options = {}) {
       const accessPayload = await this.hydrateWorkbenchAccess()
       const portalAccess = accessPayload?.portal_access || {}
       const canMonitor = Boolean(portalAccess.can_monitor)
       const canWorkbench = Boolean(portalAccess.can_workbench)
       const landing = portalAccess.landing || '/entry'
+      const defaultEntry = portalAccess.default_entry || 'auto'
+      const preferLanding = Boolean(options.preferLanding)
       const portalChoice = this.portalChoice || sessionStorage.getItem('portal_choice') || ''
       const requested = typeof requestedPath === 'string' && requestedPath.startsWith('/') && !requestedPath.startsWith('//')
         ? requestedPath
         : '/'
 
+      const landingDestination = () => {
+        if (landing === '/workbench/' || landing === '/workbench') return '/workbench/'
+        if (landing === '/') return '/'
+        if (canMonitor && canWorkbench) return '/entry'
+        if (canWorkbench) return '/workbench/'
+        if (canMonitor) return '/'
+        return '/entry'
+      }
+
+      if (preferLanding && !portalChoice && (defaultEntry !== 'auto' || (canMonitor && canWorkbench))) {
+        return landingDestination()
+      }
       if (requested.startsWith('/workbench')) return canWorkbench ? requested : (canMonitor ? '/' : '/entry')
       if (requested === '/' && portalChoice === 'monitor' && canMonitor) return '/'
       if (requested !== '/' && requested !== '/entry') {
         if (canMonitor) return requested
         if (canWorkbench) return '/workbench/'
       }
-      if (landing === '/workbench/' || landing === '/workbench') return '/workbench/'
-      if (landing === '/') return '/'
-      if (canMonitor && canWorkbench) return '/entry'
-      if (canWorkbench) return '/workbench/'
-      if (canMonitor) return '/'
-      return '/entry'
+      return landingDestination()
     }
   }
 })
