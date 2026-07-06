@@ -1,7 +1,7 @@
 <template>
   <div class="view-enter">
     <!-- 只读模式提示 -->
-    <div v-if="!authStore.isAdmin" class="alert-error">
+    <div v-if="!canWriteConfig" class="alert-error">
       🔒 只读模式：您当前以游客身份访问，只能查看配置，无法修改
     </div>
 
@@ -57,7 +57,7 @@
       :regionWebhooks="regionWebhooks"
       :loading="loading"
       :availableRegions="availableRegions"
-      :readonly="!authStore.isAdmin"
+      :readonly="!canWriteConfig"
       @save-env="handleSaveWebhookEnv"
       @clear-env="handleClearEnv"
       @delete-region-wh="handleDeleteRegionWh"
@@ -69,7 +69,7 @@
     <AiEnvConfig
       :envConfig="envConfig"
       :loading="loading"
-      :readonly="!authStore.isAdmin"
+      :readonly="!canWriteConfig"
       @save-env="handleSaveAiEnv"
       @delete-env="handleDeleteAiEnv"
       @test-ai="testAiConfig"
@@ -79,7 +79,7 @@
       :valueLabels="valueLabels"
       :labelOverrides="labelOverrides"
       :loading="loading"
-      :readonly="!authStore.isAdmin"
+      :readonly="!canWriteConfig"
       @refresh="fetchConfig"
     />
 
@@ -107,7 +107,7 @@
     <div class="panel">
       <div class="panel-title">
         <span class="title-text"><span class="panel-icon">🗺️</span> 区域账号映射</span>
-        <button class="btn-primary" @click="openRegionModal()" :disabled="!authStore.isAdmin">+ 新增映射</button>
+        <button class="btn-primary" @click="openRegionModal()" :disabled="!canWriteConfig">+ 新增映射</button>
       </div>
       <p style="font-size:13px;color:var(--t3);margin-bottom:16px;line-height:1.7">
         告警路由与日报区域分组依赖此配置。新增 WhatsApp/Telegram 账号后，在此绑定区域负责人即可自动路由 @。
@@ -148,8 +148,8 @@
               <td style="padding:14px 16px">{{ item.owner_dingtalk_id || '-' }}</td>
               <td style="padding:14px 16px;max-width:200px;overflow:hidden;text-overflow:ellipsis">{{ item.description || '-' }}</td>
               <td style="padding:14px 16px;text-align:center">
-                <button class="el-btn" @click="editRegion(item)" :disabled="!authStore.isAdmin">编辑</button>
-                <button class="el-btn danger" @click="deleteRegion(item.account)" :disabled="!authStore.isAdmin">删除</button>
+                <button class="el-btn" @click="editRegion(item)" :disabled="!canWriteConfig">编辑</button>
+                <button class="el-btn danger" @click="deleteRegion(item.account)" :disabled="!canWriteConfig">删除</button>
               </td>
             </tr>
           </tbody>
@@ -208,7 +208,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, onMounted } from 'vue'
+import { computed, ref, reactive, onMounted } from 'vue'
 import { Refresh } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import api from '@/utils/request'
@@ -218,6 +218,7 @@ import AiEnvConfig from '@/components/admin/AiEnvConfig.vue'
 import ValueLabelConfig from '@/components/admin/ValueLabelConfig.vue'
 
 const authStore = useAuthStore()
+const canWriteConfig = computed(() => authStore.hasPermission('monitor:config:write'))
 
 const loading = ref(true)
 const envConfig = ref({})

@@ -338,11 +338,38 @@ async function authenticateToken(req, res, next) {
 }
 
 function requireAdmin(req, res, next) {
-    if (req.user && req.user.role === 'admin') {
+    if (
+        (req.user && req.user.role === 'admin') ||
+        hasAnyAttachedPermission(req, ['admin:access:manage', 'admin:users:manage'])
+    ) {
         next();
     } else {
         res.status(403).json({ success: false, error: 'Forbidden (Admin access required)' });
     }
+}
+
+function attachedPermissions(req) {
+    const permissions = req?.access?.permissions;
+    if (!Array.isArray(permissions)) return new Set();
+    return new Set(permissions);
+}
+
+function hasAttachedPermission(req, permission) {
+    return attachedPermissions(req).has(permission);
+}
+
+function hasAnyAttachedPermission(req, permissions = []) {
+    const set = attachedPermissions(req);
+    return permissions.some((permission) => set.has(permission));
+}
+
+function requireAttachedPermission(permission) {
+    return (req, res, next) => {
+        if ((req.user && req.user.role === 'admin') || hasAttachedPermission(req, permission)) {
+            return next();
+        }
+        return res.status(403).json({ success: false, error: `Forbidden (Permission required: ${permission})` });
+    };
 }
 
 module.exports = {
@@ -351,5 +378,8 @@ module.exports = {
     isLocalDevAuthBypass,
     resolveAuthenticatedUser,
     authenticateToken,
+    hasAttachedPermission,
+    hasAnyAttachedPermission,
+    requireAttachedPermission,
     requireAdmin
 };

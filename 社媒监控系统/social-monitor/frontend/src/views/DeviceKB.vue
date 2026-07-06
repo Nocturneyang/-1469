@@ -3,7 +3,7 @@
     <div class="panel">
       <div class="panel-title">
         <span class="title-text"><span class="panel-icon">🔧</span> 设备知识库</span>
-        <div v-if="authStore.isAdmin" class="export-group">
+        <div v-if="authStore.hasPermission('monitor:assets:write')" class="export-group">
           <button class="btn-export" @click="toggleExportMenu" :class="{ active: showExportMenu }">
             ⬇ 下载
             <span class="export-arrow">▾</span>

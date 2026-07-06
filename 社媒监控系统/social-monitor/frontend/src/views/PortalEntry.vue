@@ -31,19 +31,21 @@
           <em>服务账号、分组会话、消息回复和坐席协作</em>
         </button>
 
-        <div v-if="!portalAccess.can_monitor && !portalAccess.can_workbench" class="entry-denied">
+        <button
+          v-if="portalAccess.can_admin"
+          type="button"
+          class="entry-card admin"
+          @click="goAdmin"
+        >
+          <span>管</span>
+          <strong>管理后台</strong>
+          <em>用户、角色、权限、数据范围和系统配置</em>
+        </button>
+
+        <div v-if="!portalAccess.can_monitor && !portalAccess.can_workbench && !portalAccess.can_admin" class="entry-denied">
           当前账号还没有配置可访问入口，请联系 1469 超级管理员配置权限。
         </div>
       </div>
-
-      <button
-        v-if="authStore.isWorkbenchSuperAdmin"
-        type="button"
-        class="entry-admin"
-        @click="goPermissions"
-      >
-        工作台权限管理
-      </button>
     </section>
   </div>
 </template>
@@ -73,8 +75,9 @@ function goWorkbench() {
   window.location.assign('/workbench/')
 }
 
-function goPermissions() {
-  router.replace('/admin/workbench-permissions')
+function goAdmin() {
+  authStore.setPortalChoice('admin')
+  router.replace('/admin/users')
 }
 </script>
 
@@ -168,6 +171,10 @@ function goPermissions() {
   background: #0f766e;
 }
 
+.entry-card.admin span {
+  background: #7c3aed;
+}
+
 .entry-card strong {
   color: #0f172a;
   font-size: 20px;
@@ -175,15 +182,6 @@ function goPermissions() {
 
 .entry-card em {
   line-height: 1.6;
-}
-
-.entry-admin {
-  margin-top: 18px;
-  border: 0;
-  background: transparent;
-  color: #0f766e;
-  font-weight: 700;
-  cursor: pointer;
 }
 
 .entry-denied {

@@ -24,10 +24,51 @@ CREATE TABLE IF NOT EXISTS operator_portal_access (
   operator_id TEXT PRIMARY KEY,
   can_monitor INTEGER NOT NULL DEFAULT 0,
   can_workbench INTEGER NOT NULL DEFAULT 0,
+  can_admin INTEGER NOT NULL DEFAULT 0,
   default_entry TEXT NOT NULL DEFAULT 'auto',
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE TABLE IF NOT EXISTS access_permissions (
+  code TEXT PRIMARY KEY,
+  category TEXT NOT NULL,
+  name TEXT NOT NULL,
+  description TEXT,
+  is_system INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS access_roles (
+  code TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  description TEXT,
+  is_system INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS access_role_permissions (
+  role_code TEXT NOT NULL,
+  permission_code TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (role_code, permission_code),
+  FOREIGN KEY(role_code) REFERENCES access_roles(code) ON DELETE CASCADE,
+  FOREIGN KEY(permission_code) REFERENCES access_permissions(code) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS operator_roles (
+  operator_id TEXT NOT NULL,
+  role_code TEXT NOT NULL,
+  assigned_by TEXT,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (operator_id, role_code),
+  FOREIGN KEY(role_code) REFERENCES access_roles(code) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_operator_roles_operator
+  ON operator_roles(operator_id);
 
 CREATE TABLE IF NOT EXISTS outbound_messages (
   id INTEGER PRIMARY KEY AUTOINCREMENT,

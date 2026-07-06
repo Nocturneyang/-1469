@@ -4,8 +4,6 @@ const bcrypt = require('bcryptjs');
 const { db } = require('../db/database');
 const { JWT_SECRET, authenticateToken, requireAdmin } = require('../middleware/auth');
 
-const router = express.Router();
-
 function envFlag(name) {
     return ['1', 'true', 'yes', 'on'].includes(String(process.env[name] || '').trim().toLowerCase());
 }
@@ -24,6 +22,10 @@ function normalizeSsoAdminInput(body = {}) {
     const note = String(body.note || '').trim();
     return { identity, displayName, note };
 }
+
+function createAuthRouter(options = {}) {
+const router = express.Router();
+const requireUserManage = options.requireUserManage || requireAdmin;
 
 router.post('/login', (req, res) => {
     const { username, password } = req.body;
@@ -101,7 +103,7 @@ router.get('/me', authenticateToken, (req, res) => {
     res.json({ success: true, user: req.user });
 });
 
-router.get('/users', authenticateToken, requireAdmin, (req, res) => {
+router.get('/users', authenticateToken, requireUserManage, (req, res) => {
     try {
         const users = db.prepare("SELECT id, username, role, created_at, last_login FROM users").all();
         res.json({ success: true, data: users });
@@ -111,7 +113,7 @@ router.get('/users', authenticateToken, requireAdmin, (req, res) => {
     }
 });
 
-router.get('/sso-admins', authenticateToken, requireAdmin, (req, res) => {
+router.get('/sso-admins', authenticateToken, requireUserManage, (req, res) => {
     try {
         const rows = db.prepare(`
             SELECT id, identity, display_name, note, created_by, created_at, updated_at
@@ -125,7 +127,7 @@ router.get('/sso-admins', authenticateToken, requireAdmin, (req, res) => {
     }
 });
 
-router.post('/sso-admins', authenticateToken, requireAdmin, (req, res) => {
+router.post('/sso-admins', authenticateToken, requireUserManage, (req, res) => {
     const { identity, displayName, note } = normalizeSsoAdminInput(req.body);
     if (!identity) {
         return res.status(400).json({ success: false, error: '请输入钉钉身份标识' });
@@ -147,7 +149,7 @@ router.post('/sso-admins', authenticateToken, requireAdmin, (req, res) => {
     }
 });
 
-router.delete('/sso-admins/:id', authenticateToken, requireAdmin, (req, res) => {
+router.delete('/sso-admins/:id', authenticateToken, requireUserManage, (req, res) => {
     try {
         const result = db.prepare('DELETE FROM sso_admins WHERE id = ?').run(req.params.id);
         if (!result.changes) {
@@ -160,7 +162,7 @@ router.delete('/sso-admins/:id', authenticateToken, requireAdmin, (req, res) => 
     }
 });
 
-router.post('/users', authenticateToken, requireAdmin, (req, res) => {
+router.post('/users', authenticateToken, requireUserManage, (req, res) => {
     const { username, password, role } = req.body;
     if (!username || !password || !role) {
         return res.status(400).json({ success: false, error: '请输入用户名、密码和角色' });
@@ -184,7 +186,7 @@ router.post('/users', authenticateToken, requireAdmin, (req, res) => {
     }
 });
 
-router.put('/users/:id/password', authenticateToken, requireAdmin, (req, res) => {
+router.put('/users/:id/password', authenticateToken, requireUserManage, (req, res) => {
     const { id } = req.params;
     const { password } = req.body;
     if (!password) {
@@ -204,7 +206,7 @@ router.put('/users/:id/password', authenticateToken, requireAdmin, (req, res) =>
     }
 });
 
-router.put('/users/:id/role', authenticateToken, requireAdmin, (req, res) => {
+router.put('/users/:id/role', authenticateToken, requireUserManage, (req, res) => {
     const { id } = req.params;
     const { role } = req.body;
     if (!role) {
@@ -221,7 +223,7 @@ router.put('/users/:id/role', authenticateToken, requireAdmin, (req, res) => {
     }
 });
 
-router.delete('/users/:id', authenticateToken, requireAdmin, (req, res) => {
+router.delete('/users/:id', authenticateToken, requireUserManage, (req, res) => {
     const { id } = req.params;
 
     try {
@@ -243,4 +245,7 @@ router.delete('/users/:id', authenticateToken, requireAdmin, (req, res) => {
     }
 });
 
-module.exports = router;
+return router;
+}
+
+module.exports = createAuthRouter;

@@ -15,7 +15,8 @@ const {
 const aiClient = require('../lib/ai-client');
 const { shanghaiDateString, shanghaiDateStartMs, shanghaiISOString } = require('../lib/time');
 const { isSqliteStorageError } = require('../lib/storage-health');
-const { requireAdmin } = require('../middleware/auth');
+const { requireAttachedPermission } = require('../middleware/auth');
+const requireAssetWrite = requireAttachedPermission('monitor:assets:write');
 
 const ANALYTICS_PATH = path.join(process.env.DATA_DIR || path.join(__dirname, '..'), 'db', 'analytics.sqlite');
 const SOURCE_DB_PATH = path.join(process.env.DATA_DIR || path.join(__dirname, '..'), 'db', 'database.sqlite');
@@ -4237,7 +4238,7 @@ router.get('/knowledge-assets', (req, res) => {
     }
 });
 
-router.get('/knowledge-assets/export', requireAdmin, (req, res) => {
+router.get('/knowledge-assets/export', requireAssetWrite, (req, res) => {
     try {
         const adb = getAnalyticsDb();
         if (!adb || !tableExists(adb, 'knowledge_asset_candidates')) {
@@ -4438,7 +4439,7 @@ router.get('/knowledge-assets/formal/:assetUid', (req, res) => {
     }
 });
 
-router.post('/knowledge-assets/formal/:assetUid/usage', requireAdmin, (req, res) => {
+router.post('/knowledge-assets/formal/:assetUid/usage', requireAssetWrite, (req, res) => {
     let db = null;
     try {
         db = openWritableAnalyticsDb();
@@ -4477,7 +4478,7 @@ router.post('/knowledge-assets/formal/:assetUid/usage', requireAdmin, (req, res)
     }
 });
 
-router.post('/knowledge-assets/:dedupeKey/promote', requireAdmin, (req, res) => {
+router.post('/knowledge-assets/:dedupeKey/promote', requireAssetWrite, (req, res) => {
     let db = null;
     try {
         db = openWritableAnalyticsDb();
@@ -4530,7 +4531,7 @@ router.get('/knowledge-assets/:dedupeKey/sources', (req, res) => {
     }
 });
 
-router.patch('/knowledge-assets/:dedupeKey/contact-side', requireAdmin, (req, res) => {
+router.patch('/knowledge-assets/:dedupeKey/contact-side', requireAssetWrite, (req, res) => {
     const side = String(req.body?.side || '').trim();
     if (!['internal', 'external'].includes(side)) {
         return res.status(400).json({ success: false, error: 'side 只能是 internal 或 external' });
@@ -4628,7 +4629,7 @@ router.patch('/knowledge-assets/:dedupeKey/contact-side', requireAdmin, (req, re
     }
 });
 
-router.patch('/knowledge-assets/review-batch', requireAdmin, (req, res) => {
+router.patch('/knowledge-assets/review-batch', requireAssetWrite, (req, res) => {
     const allowed = new Set(['pending_review', 'confirmed', 'rejected', 'merged']);
     const status = String(req.body?.status || '').trim();
     const keys = Array.isArray(req.body?.dedupeKeys)
@@ -4704,7 +4705,7 @@ router.get('/knowledge-assets/:dedupeKey', (req, res) => {
     }
 });
 
-router.patch('/knowledge-assets/:dedupeKey/review', requireAdmin, (req, res) => {
+router.patch('/knowledge-assets/:dedupeKey/review', requireAssetWrite, (req, res) => {
     const allowed = new Set(['pending_review', 'confirmed', 'rejected', 'merged']);
     const status = String(req.body?.status || '').trim();
     if (!allowed.has(status)) return res.status(400).json({ success: false, error: 'review_status 无效' });
@@ -4781,7 +4782,7 @@ router.get('/knowledge-base', (req, res) => {
 });
 
 // ─── QA 知识库导出（支持 json / jsonl / csv）────────────────────
-router.get('/knowledge-base/export', requireAdmin, (req, res) => {
+router.get('/knowledge-base/export', requireAssetWrite, (req, res) => {
     try {
         const adb = getAnalyticsDb();
         if (!adb) return res.status(503).json({ success: false, error: '数据库不可用' });
@@ -5312,7 +5313,7 @@ router.get('/device-kb/categories', (req, res) => {
 });
 
 // ─── 设备知识库导出（支持 json / jsonl / csv）─────────────────────
-router.get('/device-kb/export', requireAdmin, (req, res) => {
+router.get('/device-kb/export', requireAssetWrite, (req, res) => {
     try {
         const adb = getAnalyticsDb();
         if (!adb) return res.status(503).json({ success: false, error: '数据库不可用' });

@@ -22,10 +22,18 @@ const routes = [
     component: () => import('@/views/PortalEntry.vue')
   },
   {
+    path: '/monitor',
+    redirect: '/'
+  },
+  {
     path: '/',
     name: 'Dashboard',
     component: () => import('@/views/Layout.vue'),
     children: [
+      {
+        path: 'admin',
+        redirect: '/admin/users'
+      },
       {
         path: '',
         name: 'Home',
@@ -40,37 +48,49 @@ const routes = [
         path: 'feed',
         name: 'Feed',
         component: () => import('@/views/Feed.vue'),
-        meta: { requiresAdmin: true }
+        meta: { requiresPermission: 'monitor:raw:view' }
       },
       {
         path: 'admin/accounts',
         name: 'AdminAccounts',
         component: () => import('@/views/Admin.vue'),
-        meta: { requiresAdmin: true }
+        meta: { requiresPermission: 'monitor:accounts:manage' }
       },
       {
         path: 'admin/config',
         name: 'AdminConfig',
         component: () => import('@/views/AdminConfig.vue'),
-        meta: { requiresAdmin: true }
+        meta: { requiresPermission: 'monitor:config:write' }
       },
       {
         path: 'admin/users',
         name: 'UserManagement',
         component: () => import('@/views/UserManagement.vue'),
-        meta: { requiresAdmin: true }
+        meta: { requiresPermission: 'admin:users:manage' }
+      },
+      {
+        path: 'admin/roles',
+        name: 'RoleManagement',
+        component: () => import('@/views/RoleManagement.vue'),
+        meta: { requiresPermission: 'admin:access:manage' }
+      },
+      {
+        path: 'admin/permissions',
+        name: 'PermissionManagement',
+        component: () => import('@/views/PermissionManagement.vue'),
+        meta: { requiresPermission: 'admin:access:manage' }
       },
       {
         path: 'admin/workbench-permissions',
         name: 'WorkbenchPermissions',
         component: () => import('@/views/WorkbenchPermissions.vue'),
-        meta: { requiresAdmin: true, requiresWorkbenchSuperAdmin: true }
+        meta: { requiresPermission: 'admin:access:manage' }
       },
       {
         path: 'admin/logs',
         name: 'SystemLogs',
         component: () => import('@/views/SystemLogs.vue'),
-        meta: { requiresAdmin: true }
+        meta: { requiresPermission: 'monitor:logs:view' }
       },
       {
         path: 'knowledge',
@@ -171,9 +191,10 @@ function redirectToPortalDestination(destination, currentPath, next) {
 }
 
 async function hasRequiredRouteAccess(to, authStore) {
-  if (to.meta.requiresWorkbenchSuperAdmin) {
+  if (to.meta.requiresWorkbenchSuperAdmin || to.meta.requiresPermission) {
     const access = await authStore.hydrateWorkbenchAccess()
-    if (!access?.is_super_admin) return false
+    if (to.meta.requiresWorkbenchSuperAdmin && !access?.is_super_admin) return false
+    if (to.meta.requiresPermission && !authStore.hasPermission(to.meta.requiresPermission)) return false
     return true
   }
   if (to.meta.requiresAdmin && !authStore.isAdmin) return false

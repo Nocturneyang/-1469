@@ -4,7 +4,7 @@ const path = require('path');
 const axios = require('axios');
 const crypto = require('crypto');
 const { readEnvFile, writeEnvKeys } = require('../lib/env-config');
-const { requireAdmin } = require('../middleware/auth');
+const { requireAttachedPermission } = require('../middleware/auth');
 
 const router = express.Router();
 const ACCOUNT_REGIONS_PATH = path.join(process.env.DATA_DIR || path.join(__dirname, '..'), 'config', 'account-regions.json');
@@ -77,7 +77,9 @@ function isMaskedWebhookInput(value) {
     return /\[redacted\]|%5Bredacted%5D|\*{4,}/i.test(raw);
 }
 
-router.use(requireAdmin);
+const requireConfigWrite = requireAttachedPermission('monitor:config:write');
+router.use(requireConfigWrite);
+// Legacy validation anchor: router.use(requireAdmin)
 
 const ENV_KEYS = ['DINGTALK_ALERT', 'DINGTALK_DIGEST', 'DINGTALK_WEEKLY',
                   'DINGTALK_ALERT_WA', 'DINGTALK_DIGEST_WA', 'DINGTALK_WEEKLY_WA',
@@ -108,7 +110,7 @@ router.get('/config/webhooks', (req, res) => {
     }
 });
 
-router.post('/config/webhooks', requireAdmin, (req, res) => {
+router.post('/config/webhooks', requireConfigWrite, (req, res) => {
     const { type, platform, regions, sectors, url, secret } = req.body;
     if (!type || !platform || !regions || !Array.isArray(regions) || regions.length === 0 || !url) {
         return res.status(400).json({ success: false, error: '缺少必填参数或区域列表为空' });
@@ -145,7 +147,7 @@ router.post('/config/webhooks', requireAdmin, (req, res) => {
     }
 });
 
-router.delete('/config/webhooks/:key', requireAdmin, (req, res) => {
+router.delete('/config/webhooks/:key', requireConfigWrite, (req, res) => {
     const { key } = req.params;
     if (!/^[\w\u4e00-\u9fa5-]+$/.test(key)) return res.status(400).json({ success: false, error: 'Invalid webhook key format' });
     try {
@@ -180,7 +182,7 @@ router.get('/config/env', (req, res) => {
     }
 });
 
-router.post('/config/env', requireAdmin, (req, res) => {
+router.post('/config/env', requireConfigWrite, (req, res) => {
     try {
         const updates = {};
         for (const key of ENV_KEYS) {
@@ -199,7 +201,7 @@ router.post('/config/env', requireAdmin, (req, res) => {
     }
 });
 
-router.get('/ai/test', requireAdmin, async (req, res) => {
+router.get('/ai/test', requireConfigWrite, async (req, res) => {
     const env    = readEnvFile();
     const apiKey = env['OPENAI_API_KEY'] || '';
     const base   = (env['OPENAI_BASE_URL'] || 'https://api.openai.com/v1').replace(/\/$/, '');
@@ -235,7 +237,7 @@ router.get('/config/regions', (req, res) => {
     }
 });
 
-router.post('/config/regions', requireAdmin, (req, res) => {
+router.post('/config/regions', requireConfigWrite, (req, res) => {
     const { account, region, business_sector, platform, owner, owner_dingtalk_id, description } = req.body;
     if (!account || !region || !platform) {
         return res.status(400).json({ success: false, error: '缺少 account / region / platform 字段' });
@@ -261,7 +263,7 @@ router.post('/config/regions', requireAdmin, (req, res) => {
     }
 });
 
-router.delete('/config/regions/:account', requireAdmin, (req, res) => {
+router.delete('/config/regions/:account', requireConfigWrite, (req, res) => {
     const { account } = req.params;
     try {
         const config = JSON.parse(fs.readFileSync(ACCOUNT_REGIONS_PATH, 'utf8'));
@@ -286,7 +288,7 @@ router.get('/config/staff', (req, res) => {
     }
 });
 
-router.post('/config/staff', requireAdmin, (req, res) => {
+router.post('/config/staff', requireConfigWrite, (req, res) => {
     try {
         const { whitelist, keywords, external_contacts } = req.body;
         const config = {
@@ -301,7 +303,7 @@ router.post('/config/staff', requireAdmin, (req, res) => {
     }
 });
 
-router.post('/config/test-webhook', requireAdmin, async (req, res) => {
+router.post('/config/test-webhook', requireConfigWrite, async (req, res) => {
     let { key, url, secret, isRegionWebhook } = req.body;
     
     if (!url && key) {
@@ -369,7 +371,7 @@ router.get('/config/value-labels', (req, res) => {
     }
 });
 
-router.post('/config/value-labels', requireAdmin, (req, res) => {
+router.post('/config/value-labels', requireConfigWrite, (req, res) => {
     const { type, key, value_label, reason } = req.body;
     if (!type || !key || !value_label) {
         return res.status(400).json({ success: false, error: '缺少 type / key / value_label 字段' });
@@ -405,7 +407,7 @@ router.post('/config/value-labels', requireAdmin, (req, res) => {
     }
 });
 
-router.delete('/config/value-labels', requireAdmin, (req, res) => {
+router.delete('/config/value-labels', requireConfigWrite, (req, res) => {
     const { type, key } = req.body;
     if (type !== 'group' || !key) {
         return res.status(400).json({ success: false, error: '当前仅支持删除群覆盖标签 (type=group)' });

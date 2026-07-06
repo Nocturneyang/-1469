@@ -46,10 +46,12 @@ api.interceptors.response.use(
           name: 'SsoPending',
           query: wasSsoLoggedOut ? { logged_out: '1', from: '/entry' } : { from: currentPath || '/' }
         })
-      } else if (error.response.status === 401 || error.response.status === 403) {
+      } else if (error.response.status === 401) {
         authStore.logout()
         router.push('/login')
         if (!silentError) ElMessage.error(error.response.data?.error || '登录态失效或没有权限,请重新登录')
+      } else if (error.response.status === 403) {
+        if (!silentError) ElMessage.error(error.response.data?.error || '没有权限访问此功能')
       } else {
         if (!silentError) ElMessage.error(error.response.data?.error || '接口请求错误')
       }

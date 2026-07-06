@@ -70,7 +70,7 @@ const navSections = computed(() => {
       title: "实时监控",
       items: [
         { path: "/", label: "全盘态势", icon: "📊" },
-        { path: "/feed", label: "原始数据流", icon: "💬", adminOnly: true },
+        { path: "/feed", label: "原始数据流", icon: "💬", permission: "monitor:raw:view" },
         { path: "/analytics", label: "数据看板", icon: "📈" },
         { path: "/daily-digest", label: "日报汇总", icon: "📋" },
       ]
@@ -95,11 +95,13 @@ const navSections = computed(() => {
     sections.push({
       title: "系统管理",
       items: [
-        { path: "/admin/config", label: "系统配置", icon: "⚙️", adminOnly: true },
-        { path: "/admin/accounts", label: "帐号管理", icon: "👥", adminOnly: true },
-        { path: "/admin/workbench-permissions", label: "工作台权限", icon: "▦", workbenchSuperOnly: true },
-        { path: "/admin/users", label: "权限管理", icon: "🔐", adminOnly: true },
-        { path: "/admin/logs", label: "系统日志", icon: "📋", adminOnly: true },
+        { path: "/admin/config", label: "系统配置", icon: "⚙️", permission: "monitor:config:write" },
+        { path: "/admin/accounts", label: "帐号管理", icon: "👥", permission: "monitor:accounts:manage" },
+        { path: "/admin/users", label: "用户管理", icon: "🔐", permission: "admin:users:manage" },
+        { path: "/admin/roles", label: "角色管理", icon: "▣", permission: "admin:access:manage" },
+        { path: "/admin/permissions", label: "权限项", icon: "☷", permission: "admin:access:manage" },
+        { path: "/admin/workbench-permissions", label: "数据范围", icon: "▦", permission: "admin:access:manage" },
+        { path: "/admin/logs", label: "系统日志", icon: "📋", permission: "monitor:logs:view" },
       ]
     })
   }
@@ -108,7 +110,8 @@ const navSections = computed(() => {
     ...section,
     items: section.items.filter(item => (
       (!item.adminOnly || authStore.isAdmin) &&
-      (!item.workbenchSuperOnly || authStore.isWorkbenchSuperAdmin)
+      (!item.workbenchSuperOnly || authStore.isWorkbenchSuperAdmin) &&
+      (!item.permission || authStore.hasPermission(item.permission))
     ))
   }))
 })
@@ -138,7 +141,9 @@ const titleMap = {
   '/admin/accounts': '帐号管理 Accounts',
   '/admin/config': '系统配置 Config',
   '/admin/workbench-permissions': '工作台权限 Workbench Access',
-  '/admin/users': '权限管理 Access',
+  '/admin/users': '用户管理 Users',
+  '/admin/roles': '角色管理 Roles',
+  '/admin/permissions': '权限项 Permissions',
   '/knowledge': 'QA 知识库',
   '/profiles': '供应商画像 Supplier Profiles',
   '/devicekb': '设备知识库 Device KB',

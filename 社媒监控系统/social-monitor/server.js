@@ -22,18 +22,26 @@ function resolveWorkbenchRoot() {
 
 const WORKBENCH_ROOT = resolveWorkbenchRoot();
 
-const { authenticateToken, requireAdmin, resolveAuthenticatedUser, isSsoEnabled, isLocalDevAuthBypass } = require('./middleware/auth');
+const { authenticateToken, resolveAuthenticatedUser, isSsoEnabled, isLocalDevAuthBypass } = require('./middleware/auth');
 const { responseHelperMiddleware } = require('./middleware/response');
-const authRoutes = require('./routes/auth');
+const createAuthRouter = require('./routes/auth');
 const dataRoutes = require('./routes/data');
 const createAccountsRouter = require('./routes/accounts');
 const configRoutes = require('./routes/config');
 const analyticsRoutes = require('./routes/analytics');
 const logsRoutes = require('./routes/logs');
 const createWorkbenchPermissionsRouter = require('./routes/workbench-permissions');
+const createAccessControlRouter = require('./routes/access-control');
 const { createWorkbenchRouter } = require(path.join(WORKBENCH_ROOT, 'server', 'routes', 'workbench'));
-const { openWorkbenchDb } = require(path.join(WORKBENCH_ROOT, 'db', 'workbench-db'));
-const { requireMonitorPortalAccess } = require(path.join(WORKBENCH_ROOT, 'lib', 'permissions'));
+const { ensureOperator, openWorkbenchDb } = require(path.join(WORKBENCH_ROOT, 'db', 'workbench-db'));
+const workbenchAccessControl = require(path.join(WORKBENCH_ROOT, 'lib', 'access-control'));
+const workbenchPermissions = require(path.join(WORKBENCH_ROOT, 'lib', 'permissions'));
+const {
+    attachAccessContext,
+    requireMonitorPortalAccess,
+    requirePermission,
+    requireWorkbenchPortalAccess
+} = workbenchPermissions;
 const collectorRoutes = require('./routes/collector');
 const createTgUserRouter = require('./routes/tg-user');
 const createTeamsRouter = require('./routes/teams');
@@ -66,6 +74,9 @@ function resolveWorkbenchOutboxDir() {
 const sharedWorkbenchDb = openWorkbenchDb(resolveWorkbenchDbPath());
 const sharedWorkbenchRawDbPath = resolveWorkbenchRawDbPath();
 const sharedWorkbenchOutboxDir = resolveWorkbenchOutboxDir();
+const authRoutes = createAuthRouter({
+    requireUserManage: requirePermission(sharedWorkbenchDb, 'admin:users:manage')
+});
 
 function envFlag(name) {
     return ['1', 'true', 'yes', 'on'].includes(String(process.env[name] || '').trim().toLowerCase());
@@ -90,7 +101,11 @@ function viewerRawDataAllowed() {
 }
 
 function requireRawDataAccess(req, res, next) {
-    if (req.user?.role === 'admin' || viewerRawDataAllowed()) {
+    if (
+        req.user?.role === 'admin' ||
+        viewerRawDataAllowed() ||
+        (req.access?.permissions || []).includes('monitor:raw:view')
+    ) {
         return next();
     }
     return res.status(403).json({ success: false, error: 'Forbidden (Admin access required)' });
@@ -423,10 +438,11 @@ app.get(['/token/userinfo', '/api/token/userinfo'], async (req, res) => {
 // ─── 统一 API 鉴权 ────────────────────────────────────────────────
 // 所有 /api 请求（除 /api/auth 已在上面处理）都需要 JWT/SSO 认证
 app.use('/api', authenticateToken);
+app.use('/api', attachAccessContext(sharedWorkbenchDb));
 
 // ─── 路由挂载（按权限分层）─────────────────────────────────────────
 // 工作台接口和权限配置接口使用同一份 SSO 身份，但不要求进入监控系统页面权限
-app.use('/api/workbench', createWorkbenchRouter({
+app.use('/api/workbench', requireWorkbenchPortalAccess(sharedWorkbenchDb), createWorkbenchRouter({
     workbenchDb: sharedWorkbenchDb,
     rawDbPath: sharedWorkbenchRawDbPath,
     outboxDir: sharedWorkbenchOutboxDir
@@ -434,6 +450,12 @@ app.use('/api/workbench', createWorkbenchRouter({
 app.use('/api/admin/workbench-permissions', createWorkbenchPermissionsRouter({
     workbenchDb: sharedWorkbenchDb,
     rawDbPath: sharedWorkbenchRawDbPath
+}));
+app.use('/api/admin/access-control', createAccessControlRouter({
+    workbenchDb: sharedWorkbenchDb,
+    ensureOperator,
+    accessControl: workbenchAccessControl,
+    permissions: workbenchPermissions
 }));
 
 // 监控系统接口需要拥有“监控系统”入口权限
@@ -491,7 +513,8 @@ function normalizeSupplierProfile(row) {
     };
 }
 
-app.get('/api/config/value-labels', requireAdmin, (req, res) => {
+// Legacy validation anchor: app.get('/api/config/value-labels', requireAdmin
+app.get('/api/config/value-labels', requirePermission(sharedWorkbenchDb, 'monitor:config:write'), (req, res) => {
     try {
         const config = readRegionConfig();
         res.json({
@@ -507,7 +530,7 @@ app.get('/api/config/value-labels', requireAdmin, (req, res) => {
     }
 });
 
-app.post('/api/config/value-labels', requireAdmin, (req, res) => {
+app.post('/api/config/value-labels', requirePermission(sharedWorkbenchDb, 'monitor:config:write'), (req, res) => {
     const { type, key, value_label, reason } = req.body || {};
     if (!/^L[0-3]$/.test(value_label || '')) {
         return res.status(400).json({ success: false, error: 'value_label 必须为 L0-L3' });
@@ -531,7 +554,7 @@ app.post('/api/config/value-labels', requireAdmin, (req, res) => {
     }
 });
 
-app.delete('/api/config/value-labels', requireAdmin, (req, res) => {
+app.delete('/api/config/value-labels', requirePermission(sharedWorkbenchDb, 'monitor:config:write'), (req, res) => {
     const { type, key } = req.body || {};
     if (type !== 'group' || !key) return res.status(400).json({ success: false, error: '仅支持删除群级覆盖' });
 
@@ -715,7 +738,7 @@ app.get(/^(?!\/api|\/media).*$/, (req, res) => {
 });
 
 // Serve media files route
-app.use('/media', authenticateMediaRequest, requireRawDataAccess, express.static(path.join(process.env.DATA_DIR || __dirname, 'media')));
+app.use('/media', authenticateMediaRequest, attachAccessContext(sharedWorkbenchDb), requireRawDataAccess, express.static(path.join(process.env.DATA_DIR || __dirname, 'media')));
 
 // ─── 安全写入 ecosystem.config.js（备份 + 验证 + 回滚）─────────────
 const ECO_PATH = path.join(process.env.DATA_DIR || __dirname, 'ecosystem.config.js');
@@ -747,20 +770,20 @@ function safeWriteEcosystem(newContent) {
         throw new Error(`ecosystem.config.js 验证失败，已回滚: ${verifyErr.message}`);
     }
 }
-// 以下接口需要 admin 权限
-app.use('/api/accounts', requireAdmin, createAccountsRouter({ safeWriteEcosystem }));
+// 以下接口需要细粒度管理权限；旧 admin 由 RBAC 兼容为 super_admin。
+app.use('/api/accounts', requirePermission(sharedWorkbenchDb, 'monitor:accounts:manage'), createAccountsRouter({ safeWriteEcosystem }));
 app.use('/api', configRoutes);
-app.use('/api', requireAdmin, logsRoutes);
-app.use('/api/tg-user', requireAdmin, createTgUserRouter({ safeWriteEcosystem }));
-app.use('/api/accounts/create-tg-user', requireAdmin, (req, res, next) => {
+app.use('/api', requirePermission(sharedWorkbenchDb, 'monitor:logs:view'), logsRoutes);
+app.use('/api/tg-user', requirePermission(sharedWorkbenchDb, 'monitor:accounts:manage'), createTgUserRouter({ safeWriteEcosystem }));
+app.use('/api/accounts/create-tg-user', requirePermission(sharedWorkbenchDb, 'monitor:accounts:manage'), (req, res, next) => {
     req.url = '/create';
     createTgUserRouter({ safeWriteEcosystem })(req, res, next);
 });
 // Teams 管理路由（需要管理员认证）
 const teamsRouter = createTeamsRouter({ safeWriteEcosystem });
 
-app.use('/api/teams', requireAdmin, teamsRouter);
-app.use('/api/accounts/create-teams', requireAdmin, (req, res, next) => {
+app.use('/api/teams', requirePermission(sharedWorkbenchDb, 'monitor:accounts:manage'), teamsRouter);
+app.use('/api/accounts/create-teams', requirePermission(sharedWorkbenchDb, 'monitor:accounts:manage'), (req, res, next) => {
     req.url = '/create';
     teamsRouter(req, res, next);
 });

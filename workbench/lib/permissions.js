@@ -1,5 +1,10 @@
 const { ensureOperator } = require('../db/workbench-db');
 const { accountScopeContains, normalizePlatform } = require('../db/raw-messages');
+const {
+  listOperatorRoles,
+  normalizePermissionCode,
+  permissionCodes,
+} = require('./access-control');
 
 const ALL_GROUPS = '*';
 const UNGROUPED_GROUP = '__ungrouped__';
@@ -8,6 +13,7 @@ const DEFAULT_SUPER_ADMIN_IDENTITIES = ['1469', '杨杰'];
 const DEFAULT_PORTAL_ACCESS = {
   can_monitor: false,
   can_workbench: false,
+  can_admin: false,
   default_entry: 'auto',
   landing: '/entry',
 };
@@ -125,6 +131,125 @@ function requireWorkbenchSuperAdmin(db) {
   };
 }
 
+function legacyRoleCodes(operator = {}) {
+  if (operator.is_super_admin || isWorkbenchSuperAdmin(nullSafeDb(operator), operator)) return ['super_admin'];
+  const role = String(operator.user && operator.user.role || operator.role || '').trim().toLowerCase();
+  if (role === 'admin' || role === 'administrator' || role === 'owner') return ['super_admin'];
+  if (role === 'viewer' || role === 'view' || role === 'readonly' || role === 'read_only' || role === 'user') {
+    return ['monitor_viewer'];
+  }
+  if (['super_admin', 'monitor_admin', 'monitor_viewer', 'workbench_manager', 'agent'].includes(role)) {
+    return [role];
+  }
+  return [];
+}
+
+function nullSafeDb(operator) {
+  return operator && operator.__db ? operator.__db : null;
+}
+
+function operatorRoleCodes(db, operator = {}) {
+  if (!operator || !operator.id) return [];
+  const withDb = { ...operator, __db: db };
+  const roles = new Set(legacyRoleCodes(withDb));
+  try {
+    const identities = operatorIdentities(operator);
+    identities.forEach((identity) => {
+      listOperatorRoles(db, identity).forEach((roleCode) => roles.add(roleCode));
+    });
+  } catch (_) {
+    // Keep legacy permissions available if the RBAC tables are temporarily unavailable.
+  }
+  if (operator.is_super_admin || isWorkbenchSuperAdmin(db, operator)) roles.add('super_admin');
+  return [...roles].filter(Boolean).sort();
+}
+
+function operatorPermissionSet(db, operator = {}) {
+  const roles = operatorRoleCodes(db, operator);
+  const allCodes = permissionCodes();
+  if (roles.includes('super_admin')) return new Set(allCodes);
+  if (!roles.length) return new Set();
+  try {
+    const placeholders = roles.map((_, index) => `@role${index}`).join(', ');
+    const params = Object.fromEntries(roles.map((roleCode, index) => [`role${index}`, roleCode]));
+    const rows = db.prepare(`
+      SELECT DISTINCT permission_code
+      FROM access_role_permissions
+      WHERE role_code IN (${placeholders})
+    `).all(params);
+    return new Set(rows.map((row) => row.permission_code).filter(Boolean));
+  } catch (_) {
+    return new Set();
+  }
+}
+
+function operatorHasPermission(db, operator, permission) {
+  const code = normalizePermissionCode(permission);
+  if (!code) return false;
+  return operatorPermissionSet(db, operator).has(code);
+}
+
+function operatorHasAnyPermission(db, operator, permissions = []) {
+  const set = operatorPermissionSet(db, operator);
+  return permissions.some((permission) => set.has(permission));
+}
+
+function hasAdminPermission(permissionSet) {
+  return [...permissionSet].some((permission) => String(permission).startsWith('admin:'));
+}
+
+function attachAccessContext(db) {
+  return (req, res, next) => {
+    try {
+      const operator = resolveWorkbenchOperator(db, req);
+      const roles = operatorRoleCodes(db, operator);
+      const permissions = [...operatorPermissionSet(db, operator)].sort();
+      const portalAccess = loadPortalAccess(db, operator);
+      req.workbenchOperator = operator;
+      req.access = {
+        operator,
+        roles,
+        permissions,
+        portal_access: portalAccess,
+        is_super_admin: operator.is_super_admin || roles.includes('super_admin'),
+      };
+    } catch (err) {
+      console.warn('[access] failed to attach access context:', err.message);
+    }
+    next();
+  };
+}
+
+function requirePermission(db, permission) {
+  return (req, res, next) => {
+    const operator = req.workbenchOperator || resolveWorkbenchOperator(db, req);
+    const permissions = operatorPermissionSet(db, operator);
+    const code = normalizePermissionCode(permission);
+    req.workbenchOperator = operator;
+    req.access = {
+      ...(req.access || {}),
+      operator,
+      roles: operatorRoleCodes(db, operator),
+      permissions: [...permissions].sort(),
+      portal_access: loadPortalAccess(db, operator),
+      is_super_admin: operator.is_super_admin || permissions.size === permissionCodes().length,
+    };
+    if (code && permissions.has(code)) return next();
+    return res.status(403).json({ success: false, ok: false, error: `Permission required: ${permission}` });
+  };
+}
+
+function requireAnyPermission(db, permissions = []) {
+  return (req, res, next) => {
+    const operator = req.workbenchOperator || resolveWorkbenchOperator(db, req);
+    if (operatorHasAnyPermission(db, operator, permissions)) {
+      req.workbenchOperator = operator;
+      return next();
+    }
+    return res.status(403).json({ success: false, ok: false, error: `Permission required: ${permissions.join(' or ')}` });
+  };
+}
+
 function loadOperatorScopes(db, operatorId) {
   return db.prepare(`
     SELECT *
@@ -135,7 +260,7 @@ function loadOperatorScopes(db, operatorId) {
 
 function normalizeDefaultEntry(value) {
   const normalized = String(value || '').trim().toLowerCase();
-  if (['monitor', 'workbench', 'chooser', 'auto'].includes(normalized)) return normalized;
+  if (['monitor', 'workbench', 'admin', 'chooser', 'auto'].includes(normalized)) return normalized;
   return 'auto';
 }
 
@@ -156,9 +281,17 @@ function loadPortalAccess(db, operator = {}) {
     return resolvePortalLanding({
       can_monitor: true,
       can_workbench: true,
+      can_admin: true,
       default_entry: 'chooser',
     });
   }
+
+  const permissions = operatorPermissionSet(db, operator);
+  const derived = {
+    can_monitor: permissions.has('monitor:view'),
+    can_workbench: permissions.has('workbench:view') || hasAnyWorkbenchScope(db, operator.id),
+    can_admin: hasAdminPermission(permissions),
+  };
 
   const row = db.prepare(`
     SELECT *
@@ -168,16 +301,18 @@ function loadPortalAccess(db, operator = {}) {
 
   if (row) {
     return resolvePortalLanding({
-      can_monitor: Number(row.can_monitor) === 1,
-      can_workbench: Number(row.can_workbench) === 1,
+      can_monitor: Number(row.can_monitor) === 1 || derived.can_monitor,
+      can_workbench: Number(row.can_workbench) === 1 || derived.can_workbench,
+      can_admin: Number(row.can_admin) === 1 || derived.can_admin,
       default_entry: normalizeDefaultEntry(row.default_entry),
     });
   }
 
   const userRole = String(operator.user && operator.user.role || operator.role || '').trim().toLowerCase();
   return resolvePortalLanding({
-    can_monitor: ['admin', 'viewer', 'view', 'user'].includes(userRole),
-    can_workbench: hasAnyWorkbenchScope(db, operator.id),
+    can_monitor: derived.can_monitor || ['admin', 'viewer', 'view', 'user'].includes(userRole),
+    can_workbench: derived.can_workbench,
+    can_admin: derived.can_admin || ['admin'].includes(userRole),
     default_entry: 'auto',
   });
 }
@@ -185,18 +320,23 @@ function loadPortalAccess(db, operator = {}) {
 function resolvePortalLanding(access) {
   const canMonitor = Boolean(access.can_monitor);
   const canWorkbench = Boolean(access.can_workbench);
+  const canAdmin = Boolean(access.can_admin);
   const defaultEntry = normalizeDefaultEntry(access.default_entry);
   let landing = '/entry';
-  if (canWorkbench && !canMonitor) landing = '/workbench/';
-  else if (canMonitor && !canWorkbench) landing = '/';
-  else if (canMonitor && canWorkbench) {
+  const allowedCount = [canMonitor, canWorkbench, canAdmin].filter(Boolean).length;
+  if (allowedCount === 1 && canWorkbench) landing = '/workbench/';
+  else if (allowedCount === 1 && canMonitor) landing = '/';
+  else if (allowedCount === 1 && canAdmin) landing = '/admin/users';
+  else if (allowedCount > 1) {
     if (defaultEntry === 'workbench') landing = '/workbench/';
     else if (defaultEntry === 'monitor') landing = '/';
+    else if (defaultEntry === 'admin') landing = '/admin/users';
     else landing = '/entry';
   }
   return {
     can_monitor: canMonitor,
     can_workbench: canWorkbench,
+    can_admin: canAdmin,
     default_entry: defaultEntry,
     landing,
   };
@@ -204,11 +344,31 @@ function resolvePortalLanding(access) {
 
 function requireMonitorPortalAccess(db) {
   return (req, res, next) => {
-    const operator = resolveWorkbenchOperator(db, req);
+    const operator = req.workbenchOperator || resolveWorkbenchOperator(db, req);
     req.workbenchOperator = operator;
     const access = loadPortalAccess(db, operator);
     if (access.can_monitor) return next();
     return res.status(403).json({ success: false, ok: false, error: 'Monitor access is not allowed for this operator' });
+  };
+}
+
+function requireWorkbenchPortalAccess(db) {
+  return (req, res, next) => {
+    const operator = req.workbenchOperator || resolveWorkbenchOperator(db, req);
+    req.workbenchOperator = operator;
+    const access = loadPortalAccess(db, operator);
+    if (access.can_workbench) return next();
+    return res.status(403).json({ success: false, ok: false, error: 'Workbench access is not allowed for this operator' });
+  };
+}
+
+function requireAdminPortalAccess(db) {
+  return (req, res, next) => {
+    const operator = req.workbenchOperator || resolveWorkbenchOperator(db, req);
+    req.workbenchOperator = operator;
+    const access = loadPortalAccess(db, operator);
+    if (access.can_admin) return next();
+    return res.status(403).json({ success: false, ok: false, error: 'Admin access is not allowed for this operator' });
   };
 }
 
@@ -361,6 +521,7 @@ module.exports = {
   ALL_GROUPS,
   UNGROUPED_GROUP,
   allowedAccountScope,
+  attachAccessContext,
   capabilitySummary,
   conversationCapabilities,
   conversationHasCapability,
@@ -368,9 +529,17 @@ module.exports = {
   isWorkbenchSuperAdmin,
   loadPortalAccess,
   nativeGroupIdsForConversation,
+  operatorHasAnyPermission,
+  operatorHasPermission,
   operatorIdentities,
+  operatorPermissionSet,
+  operatorRoleCodes,
+  requireAdminPortalAccess,
+  requireAnyPermission,
   requireConversationCapability,
   requireMonitorPortalAccess,
+  requirePermission,
+  requireWorkbenchPortalAccess,
   requireWorkbenchSuperAdmin,
   resolveWorkbenchOperator,
   resolvePortalLanding,

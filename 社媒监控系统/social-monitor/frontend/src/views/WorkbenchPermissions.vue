@@ -96,11 +96,13 @@
           </div>
           <el-checkbox v-model="portalDraft.can_monitor">监控系统</el-checkbox>
           <el-checkbox v-model="portalDraft.can_workbench">客服工作台</el-checkbox>
+          <el-checkbox v-model="portalDraft.can_admin">管理后台</el-checkbox>
           <el-select v-model="portalDraft.default_entry" size="small" class="default-entry-select">
             <el-option label="自动判断" value="auto" />
             <el-option label="显示选择页" value="chooser" />
             <el-option label="默认进监控系统" value="monitor" />
             <el-option label="默认进工作台" value="workbench" />
+            <el-option label="默认进管理后台" value="admin" />
           </el-select>
         </div>
 
@@ -182,6 +184,7 @@ const scopeDraft = reactive({})
 const portalDraft = reactive({
   can_monitor: false,
   can_workbench: false,
+  can_admin: false,
   default_entry: 'auto'
 })
 const newOperator = reactive({ id: '', name: '' })
@@ -263,6 +266,7 @@ function selectNewOperator() {
 function resetPortalDraft(access) {
   portalDraft.can_monitor = Boolean(access && Number(access.can_monitor) === 1)
   portalDraft.can_workbench = Boolean(access && Number(access.can_workbench) === 1)
+  portalDraft.can_admin = Boolean(access && Number(access.can_admin) === 1)
   portalDraft.default_entry = normalizeDefaultEntry(access && access.default_entry)
 }
 
@@ -368,12 +372,13 @@ function normalizedPortalDraft() {
   return {
     can_monitor: portalDraft.can_monitor,
     can_workbench: portalDraft.can_workbench,
+    can_admin: portalDraft.can_admin,
     default_entry: normalizeDefaultEntry(portalDraft.default_entry)
   }
 }
 
 function normalizeDefaultEntry(value) {
-  return ['auto', 'chooser', 'monitor', 'workbench'].includes(value) ? value : 'auto'
+  return ['auto', 'chooser', 'monitor', 'workbench', 'admin'].includes(value) ? value : 'auto'
 }
 
 function draftList() {

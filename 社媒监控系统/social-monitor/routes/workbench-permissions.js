@@ -30,7 +30,9 @@ const {
     ALL_GROUPS,
     UNGROUPED_GROUP,
     loadPortalAccess,
-    requireWorkbenchSuperAdmin,
+    operatorPermissionSet,
+    operatorRoleCodes,
+    requirePermission,
     resolveWorkbenchOperator
 } = require(path.join(WORKBENCH_ROOT, 'lib', 'permissions'));
 
@@ -46,12 +48,14 @@ function createWorkbenchPermissionsRouter(options = {}) {
             data: {
                 operator: mapOperator(operator),
                 is_super_admin: operator.is_super_admin,
+                roles: operatorRoleCodes(workbenchDb, operator),
+                permissions: [...operatorPermissionSet(workbenchDb, operator)].sort(),
                 portal_access: loadPortalAccess(workbenchDb, operator)
             }
         });
     });
 
-    router.use(requireWorkbenchSuperAdmin(workbenchDb));
+    router.use(requirePermission(workbenchDb, 'admin:access:manage'));
 
     router.get('/operators', (req, res) => {
         const search = String(req.query.search || '').trim();
@@ -234,6 +238,7 @@ function loadStoredPortalAccess(db, operatorId) {
             operator_id: operatorId,
             can_monitor: 0,
             can_workbench: 0,
+            can_admin: 0,
             default_entry: 'auto'
         };
     }
@@ -256,21 +261,23 @@ function loadEffectivePortalAccess(db, operatorId) {
 
 function upsertPortalAccess(db, operatorId, access) {
     db.prepare(`
-        INSERT INTO operator_portal_access (
-            operator_id, can_monitor, can_workbench, default_entry, updated_at
+            INSERT INTO operator_portal_access (
+            operator_id, can_monitor, can_workbench, can_admin, default_entry, updated_at
         )
         VALUES (
-            @operatorId, @canMonitor, @canWorkbench, @defaultEntry, CURRENT_TIMESTAMP
+            @operatorId, @canMonitor, @canWorkbench, @canAdmin, @defaultEntry, CURRENT_TIMESTAMP
         )
         ON CONFLICT(operator_id) DO UPDATE SET
             can_monitor = excluded.can_monitor,
             can_workbench = excluded.can_workbench,
+            can_admin = excluded.can_admin,
             default_entry = excluded.default_entry,
             updated_at = CURRENT_TIMESTAMP
     `).run({
         operatorId,
         canMonitor: access.can_monitor,
         canWorkbench: access.can_workbench,
+        canAdmin: access.can_admin,
         defaultEntry: access.default_entry
     });
 }
@@ -280,7 +287,8 @@ function normalizePortalAccess(access) {
     return {
         can_monitor: truthy(access.can_monitor ?? access.canMonitor) ? 1 : 0,
         can_workbench: truthy(access.can_workbench ?? access.canWorkbench) ? 1 : 0,
-        default_entry: ['auto', 'monitor', 'workbench', 'chooser'].includes(defaultEntry) ? defaultEntry : 'auto'
+        can_admin: truthy(access.can_admin ?? access.canAdmin) ? 1 : 0,
+        default_entry: ['auto', 'monitor', 'workbench', 'admin', 'chooser'].includes(defaultEntry) ? defaultEntry : 'auto'
     };
 }
 

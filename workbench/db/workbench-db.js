@@ -1,6 +1,11 @@
 const fs = require('fs');
 const path = require('path');
 const Database = require('better-sqlite3');
+const {
+  migrateAccessControlSchema,
+  seedAccessControl,
+  setOperatorRoles,
+} = require('../lib/access-control');
 
 const DEFAULT_WORKBENCH_DB_PATH =
   process.env.WORKBENCH_DB_PATH || path.join(__dirname, 'workbench.sqlite');
@@ -16,6 +21,8 @@ function openWorkbenchDb(dbPath = DEFAULT_WORKBENCH_DB_PATH) {
   db.pragma('journal_mode = WAL');
   db.pragma('busy_timeout = 5000');
   db.exec(fs.readFileSync(schemaPath, 'utf8'));
+  migrateAccessControlSchema(db);
+  seedAccessControl(db);
   migrateLegacyLabels(db);
   seedDefaultSuperAdmin(db);
   seedDefaultOperator(db);
@@ -73,14 +80,15 @@ function seedDefaultSuperAdmin(db) {
     ON CONFLICT(identity) DO NOTHING
   `);
   const insertPortalAccess = db.prepare(`
-    INSERT INTO operator_portal_access (operator_id, can_monitor, can_workbench, default_entry)
-    VALUES (?, 1, 1, 'chooser')
+    INSERT INTO operator_portal_access (operator_id, can_monitor, can_workbench, can_admin, default_entry)
+    VALUES (?, 1, 1, 1, 'chooser')
     ON CONFLICT(operator_id) DO NOTHING
   `);
 
   defaults.forEach((identity) => {
     insertSuperAdmin.run(identity, identity);
     insertPortalAccess.run(identity);
+    setOperatorRoles(db, identity, ['super_admin'], 'system');
   });
 }
 

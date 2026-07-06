@@ -5,7 +5,7 @@ const path = require('path');
 const fs = require('fs');
 const { getShanghaiParts } = require('../lib/time');
 const { isMediaUploadDisabled } = require('../lib/media-policy');
-const { requireAdmin } = require('../middleware/auth');
+const { hasAttachedPermission, requireAdmin } = require('../middleware/auth');
 
 const router = express.Router();
 
@@ -43,7 +43,7 @@ function rawMessageViewerAllowed() {
 }
 
 function requireRawMessageAccess(req, res, next) {
-    if (req.user?.role === 'admin' || rawMessageViewerAllowed()) {
+    if (req.user?.role === 'admin' || rawMessageViewerAllowed() || hasAttachedPermission(req, 'monitor:raw:view')) {
         return next();
     }
     return requireAdmin(req, res, next);

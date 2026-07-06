@@ -17,10 +17,18 @@ export const useAuthStore = defineStore('auth', {
     isAuthenticated: (state) => !!state.token,
     isAdmin: (state) => state.user?.role === 'admin',
     isWorkbenchSuperAdmin: (state) => Boolean(state.workbenchAccess?.is_super_admin),
-    canAccessAdminShell: (state) => state.user?.role === 'admin' || Boolean(state.workbenchAccess?.is_super_admin),
+    permissions: (state) => state.workbenchAccess?.permissions || [],
+    roles: (state) => state.workbenchAccess?.roles || [],
+    canAccessAdminShell: (state) => state.user?.role === 'admin' ||
+      Boolean(state.workbenchAccess?.is_super_admin) ||
+      Boolean(state.workbenchAccess?.portal_access?.can_admin),
+    hasPermission: (state) => (permission) => state.user?.role === 'admin' ||
+      Boolean(state.workbenchAccess?.is_super_admin) ||
+      (state.workbenchAccess?.permissions || []).includes(permission),
     portalAccess: (state) => state.workbenchAccess?.portal_access || {
       can_monitor: false,
       can_workbench: false,
+      can_admin: false,
       default_entry: 'auto',
       landing: '/entry'
     },
@@ -82,7 +90,7 @@ export const useAuthStore = defineStore('auth', {
     },
 
     setPortalChoice(choice) {
-      const normalized = ['monitor', 'workbench'].includes(choice) ? choice : ''
+      const normalized = ['monitor', 'workbench', 'admin'].includes(choice) ? choice : ''
       this.portalChoice = normalized
       if (normalized) {
         sessionStorage.setItem('portal_choice', normalized)
@@ -197,6 +205,7 @@ export const useAuthStore = defineStore('auth', {
       const portalAccess = accessPayload?.portal_access || {}
       const canMonitor = Boolean(portalAccess.can_monitor)
       const canWorkbench = Boolean(portalAccess.can_workbench)
+      const canAdmin = Boolean(portalAccess.can_admin)
       const landing = portalAccess.landing || '/entry'
       const defaultEntry = portalAccess.default_entry || 'auto'
       const preferLanding = Boolean(options.preferLanding)
@@ -207,17 +216,21 @@ export const useAuthStore = defineStore('auth', {
 
       const landingDestination = () => {
         if (landing === '/workbench/' || landing === '/workbench') return '/workbench/'
+        if (landing === '/admin/users' || landing === '/admin') return '/admin/users'
         if (landing === '/') return '/'
-        if (canMonitor && canWorkbench) return '/entry'
+        const allowedCount = [canMonitor, canWorkbench, canAdmin].filter(Boolean).length
+        if (allowedCount > 1) return '/entry'
+        if (canAdmin) return '/admin/users'
         if (canWorkbench) return '/workbench/'
         if (canMonitor) return '/'
         return '/entry'
       }
 
-      if (preferLanding && !portalChoice && (defaultEntry !== 'auto' || (canMonitor && canWorkbench))) {
+      if (preferLanding && !portalChoice && (defaultEntry !== 'auto' || [canMonitor, canWorkbench, canAdmin].filter(Boolean).length > 1)) {
         return landingDestination()
       }
       if (requested.startsWith('/workbench')) return canWorkbench ? requested : (canMonitor ? '/' : '/entry')
+      if (requested.startsWith('/admin')) return canAdmin ? requested : (canMonitor ? '/' : '/entry')
       if (requested === '/' && portalChoice === 'monitor' && canMonitor) return '/'
       if (requested !== '/' && requested !== '/entry') {
         if (canMonitor) return requested
