@@ -300,16 +300,85 @@ function requestOrigin(req) {
     return `${proto}://${host}`;
 }
 
-function safeSsoReturnUrl(req, requested) {
-    const origin = requestOrigin(req);
+function readCookie(req, name) {
+    const cookieHeader = req.headers.cookie;
+    if (!cookieHeader) return '';
+    const target = `${name}=`;
+    for (const part of String(cookieHeader).split(';')) {
+        const item = part.trim();
+        if (item.startsWith(target)) return decodeURIComponent(item.slice(target.length));
+    }
+    return '';
+}
+
+function getRequestSsoToken(req) {
+    const authHeader = String(req.headers.authorization || '');
+    if (authHeader.startsWith('Bearer ')) return authHeader.slice(7).trim();
+    return String(req.headers.satoken || req.headers['x-sso-token'] || readCookie(req, 'satoken') || '').trim();
+}
+
+function ssoTokenLogoutUrl() {
+    if (process.env.SSO_TOKEN_LOGOUT_URL) return process.env.SSO_TOKEN_LOGOUT_URL;
+    if (process.env.SSO_USERINFO_URL) {
+        try {
+            const url = new URL(process.env.SSO_USERINFO_URL);
+            url.pathname = '/token/logout';
+            url.search = '';
+            return url.toString();
+        } catch (_) {
+            return '';
+        }
+    }
+    const loginUrl = process.env.SSO_LOGIN_URL || '';
+    if (loginUrl.includes('skyline-ark-sso.tyhark.com')) {
+        return 'https://skyline-ark-sso.tyhark.com/token/logout';
+    }
+    return '';
+}
+
+async function revokeSsoToken(req) {
+    const token = getRequestSsoToken(req);
+    const logoutUrl = ssoTokenLogoutUrl();
+    if (!isSsoEnabled() || !logoutUrl || typeof fetch !== 'function') return;
+    const headers = {};
+    if (token) {
+        headers.Authorization = `Bearer ${token}`;
+        headers.satoken = token;
+    }
+    if (req.headers.cookie) headers.Cookie = req.headers.cookie;
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), Number(process.env.SSO_LOGOUT_TIMEOUT_MS || 3000));
     try {
-        const target = requested ? new URL(String(requested), origin) : new URL('/entry', origin);
+        await fetch(logoutUrl, { method: 'GET', headers, signal: controller.signal });
+    } catch (err) {
+        console.warn('[auth] SSO token logout failed:', err.message);
+    } finally {
+        clearTimeout(timeout);
+    }
+}
+
+function clearSsoCookies(res) {
+    const options = [
+        { path: '/' },
+        { path: '/', domain: '.tyhark.com', sameSite: 'lax', secure: true },
+    ];
+    for (const opts of options) {
+        res.clearCookie('satoken', opts);
+    }
+}
+
+function safeSsoReturnUrl(req, requested, fallbackPath = '/entry') {
+    const origin = requestOrigin(req);
+    const fallbackUrl = () => new URL(fallbackPath, origin).toString();
+    try {
+        const target = requested ? new URL(String(requested), origin) : new URL(fallbackPath, origin);
         const current = new URL(origin);
-        if (target.hostname !== current.hostname) return new URL('/entry', origin).toString();
-        if (target.pathname.match(/\/login\b/)) return new URL('/entry', origin).toString();
+        if (target.hostname !== current.hostname) return fallbackUrl();
+        if (target.pathname.match(/\/login\b/)) return fallbackUrl();
         return target.toString();
     } catch (_) {
-        return new URL('/entry', origin).toString();
+        return fallbackUrl();
     }
 }
 
@@ -335,6 +404,13 @@ app.get('/auth/sso/start', (req, res) => {
     const url = new URL(loginUrl);
     url.searchParams.set(redirectParam, redirectTo);
     res.redirect(302, url.toString());
+});
+app.get('/auth/sso/logout', async (req, res) => {
+    const fallbackPath = `/sso-pending?logged_out=1&from=${encodeURIComponent('/entry')}`;
+    const redirectTo = safeSsoReturnUrl(req, req.query.redirect || fallbackPath, fallbackPath);
+    await revokeSsoToken(req);
+    clearSsoCookies(res);
+    res.redirect(302, redirectTo);
 });
 app.get(['/token/userinfo', '/api/token/userinfo'], async (req, res) => {
     const result = await resolveAuthenticatedUser(req);

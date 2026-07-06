@@ -58,7 +58,7 @@
 import { computed, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useAuthStore } from '@/store/auth'
-import { buildSsoLoginUrl, isSsoEnabled, redirectToSsoLogout } from '@/utils/runtime-config'
+import { isSsoEnabled } from '@/utils/runtime-config'
 
 const router = useRouter()
 const route = useRoute()
@@ -150,15 +150,11 @@ const pageTitle = computed(() => titleMap[route.path] || 'Dashboard')
 const handleLogout = () => {
   if (isSsoEnabled()) {
     const loggedOutPath = `/sso-pending?logged_out=1&from=${encodeURIComponent('/entry')}`
-    const loginReturnPath = '/entry'
-    const loginUrl = buildSsoLoginUrl({ redirectTo: `${window.location.origin}${loginReturnPath}` })
+    const loggedOutUrl = `${window.location.origin}${loggedOutPath}`
+    const logoutUrl = new URL('/auth/sso/logout', window.location.origin)
+    logoutUrl.searchParams.set('redirect', loggedOutUrl)
     authStore.logout({ manualSsoLogout: true })
-    if (redirectToSsoLogout({ redirectTo: loginUrl || `${window.location.origin}${loggedOutPath}` })) return
-    if (loginUrl) {
-      window.location.assign(loginUrl)
-      return
-    }
-    router.replace(loggedOutPath)
+    window.location.assign(logoutUrl.toString())
     return
   }
   authStore.logout()
