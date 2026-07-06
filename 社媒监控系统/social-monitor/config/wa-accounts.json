@@ -45,5 +45,7 @@
       "reason": "Production/local split keeps non-recommended WA collectors stopped by default."
     }
   ],
-  "deletedAccounts": []
+  "deletedAccounts": [
+    "ceshi_test"
+  ]
 }

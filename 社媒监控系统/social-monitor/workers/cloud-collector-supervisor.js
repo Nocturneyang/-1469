@@ -17,6 +17,7 @@ const { parseShanghaiDate } = require('../lib/time');
 const INTERVAL_MS = Number(process.env.CLOUD_COLLECTOR_SUPERVISOR_INTERVAL_MS || 30000);
 const STALE_SECONDS = Number(process.env.CLOUD_COLLECTOR_HEARTBEAT_STALE_SECONDS || 90);
 const RESTART_STALE_SECONDS = Number(process.env.CLOUD_COLLECTOR_RESTART_STALE_SECONDS || 300);
+const NO_HEARTBEAT_REAPPLY_SECONDS = Number(process.env.CLOUD_COLLECTOR_NO_HEARTBEAT_REAPPLY_SECONDS || 600);
 
 function secondsSince(value) {
     if (!value) return null;
@@ -77,6 +78,14 @@ async function reconcileSpec(orchestrator, spec) {
     if (spec.desired_state !== 'running') return;
 
     if (!hb) {
+        const lastApplyAge = secondsSince(spec.last_applied_at || spec.updated_at);
+        if (lastApplyAge !== null && lastApplyAge < NO_HEARTBEAT_REAPPLY_SECONDS) {
+            updateAccountRuntime(spec.account_id, {
+                orchestratorState: 'starting',
+                lastRestartReason: `No heartbeat yet; last deployment ensured ${lastApplyAge}s ago`
+            });
+            return;
+        }
         await orchestrator.ensureRuntime(spec.account_id, { migrationSource: spec.migration_source || 'supervisor' });
         updateAccountRuntime(spec.account_id, {
             orchestratorState: 'starting',

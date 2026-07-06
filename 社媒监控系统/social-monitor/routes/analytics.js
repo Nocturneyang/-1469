@@ -26,6 +26,8 @@ const ACCOUNT_REGION_CONFIG_PATH = path.join(process.env.DATA_DIR || path.join(_
 let _analyticsDb = null;
 let _sourceDb = null;
 const PERF_CACHE_TTL_MS = positiveNumber('ANALYTICS_PERF_CACHE_TTL_MS', 60 * 1000);
+const ANALYTICS_DASHBOARD_CACHE_TTL_MS = positiveNumber('ANALYTICS_DASHBOARD_CACHE_TTL_MS', 2 * 60 * 1000);
+const DAILY_DIGEST_CACHE_TTL_MS = positiveNumber('DAILY_DIGEST_CACHE_TTL_MS', 5 * 60 * 1000);
 const INTELLIGENCE_CACHE_TTL_MS = positiveNumber('ANALYTICS_INTELLIGENCE_CACHE_TTL_MS', 2 * 60 * 1000);
 const FORMAL_LIBRARY_CACHE_TTL_MS = positiveNumber('FORMAL_LIBRARY_CACHE_TTL_MS', 5 * 60 * 1000);
 const SUPPLIER_COVERAGE_CACHE_TTL_MS = positiveNumber('SUPPLIER_COVERAGE_CACHE_TTL_MS', 2 * 60 * 1000);
@@ -581,6 +583,18 @@ function emptyEntityGraph() {
 
 function emptyFormalKnowledgeAssetSummary() {
     return { ready: false, total: 0, active: 0, byType: [], bySector: [], top: [] };
+}
+
+function emptyDailyDigestResponse() {
+    return {
+        digests: [],
+        trend: null,
+        regions: [],
+        sectors: [],
+        accounts: [],
+        dates: [],
+        selectedDate: null,
+    };
 }
 
 function relatedValue(asset, type) {
@@ -3557,14 +3571,15 @@ function buildEntityGraph(assets, centerId = '', view = 'resource') {
 
 router.get('/analytics/dashboard', (req, res) => {
     const days = Math.max(1, Math.min(30, Number(req.query.days || 7)));
-    const adb = getAnalyticsDb();
-    const sdb = getSourceDb();
-    const sinceMs = Date.now() - days * 24 * 60 * 60 * 1000;
-    const last24Ms = Date.now() - 24 * 60 * 60 * 1000;
-    const prev24Ms = Date.now() - 48 * 60 * 60 * 1000;
-    const accountMap = getAccountRegionMap();
-
     try {
+        const data = cachedPerfValue('analytics-dashboard-response', { days }, () => {
+        const adb = getAnalyticsDb();
+        const sdb = getSourceDb();
+        const sinceMs = Date.now() - days * 24 * 60 * 60 * 1000;
+        const last24Ms = Date.now() - 24 * 60 * 60 * 1000;
+        const prev24Ms = Date.now() - 48 * 60 * 60 * 1000;
+        const accountMap = getAccountRegionMap();
+
         const last24Messages = metricValue(sdb, 'SELECT COUNT(*) AS c FROM messages WHERE timestamp >= ?', [last24Ms]);
         const prev24Messages = metricValue(sdb, 'SELECT COUNT(*) AS c FROM messages WHERE timestamp >= ? AND timestamp < ?', [prev24Ms, last24Ms]);
         const activeGroups24h = metricValue(sdb, `
@@ -3800,9 +3815,7 @@ router.get('/analytics/dashboard', (req, res) => {
             ORDER BY day ASC
         `, [Date.now() - Math.min(days, 14) * 24 * 60 * 60 * 1000]);
 
-        res.json({
-            success: true,
-            data: {
+        return {
                 ready: !!adb || !!sdb,
                 generated_at: shanghaiISOString(),
                 scope: { days },
@@ -3842,7 +3855,12 @@ router.get('/analytics/dashboard', (req, res) => {
                 digest,
                 reliability,
                 message_trend: messageTrend,
-            },
+            };
+        }, ANALYTICS_DASHBOARD_CACHE_TTL_MS);
+
+        res.json({
+            success: true,
+            data,
         });
     } catch (err) {
         console.error('Analytics dashboard error:', err);
@@ -5431,9 +5449,12 @@ router.get('/content-templates/customers', (req, res) => {
 router.get('/daily-digest', (req, res) => {
     try {
         const adb = getAnalyticsDb();
-        if (!adb) return res.json({ success: true, data: { digests: [], trend: null, regions: [], sectors: [] } });
+        if (!adb || !tableExists(adb, 'daily_digests')) {
+            return res.json({ success: true, data: emptyDailyDigestResponse() });
+        }
 
         const { date, region, sector, account } = req.query;
+        const data = cachedPerfValue('daily-digest-response', { date, region, sector, account }, () => {
         
         // Helper function to normalize date format to match database format (YYYY-M-D)
         function normalizeDate(dateStr) {
@@ -5560,9 +5581,7 @@ router.get('/daily-digest', (req, res) => {
             return (yearB * 10000 + monthB * 100 + dayB) - (yearA * 10000 + monthA * 100 + dayA);
         }).slice(0, 7);
         
-        res.json({
-            success: true,
-            data: {
+        return {
                 digests: parsedDigests,
                 trend,
                 regions,
@@ -5570,11 +5589,16 @@ router.get('/daily-digest', (req, res) => {
                 accounts,
                 dates,
                 selectedDate: targetDate || dates[0] || null
-            }
+            };
+        }, DAILY_DIGEST_CACHE_TTL_MS);
+
+        res.json({
+            success: true,
+            data,
         });
     } catch (err) {
         console.error('Daily digest API error:', err);
-        res.status(500).json({ success: false, error: err.message });
+        res.json({ success: true, data: emptyDailyDigestResponse(), warning: err.message });
     }
 });
 
