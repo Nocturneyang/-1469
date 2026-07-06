@@ -12,17 +12,28 @@
       <nav class="nav">
         <template v-for="(section, i) in navSections" :key="i">
           <div class="nav-section">{{ section.title }}</div>
-          <router-link
-            v-for="item in section.items"
-            :key="item.path"
-            :to="item.path"
-            class="nav-item"
-            :class="{ active: isActive(item.path) }"
-          >
-            <span class="nav-icon">{{ item.icon }}</span>
-            <span>{{ item.label }}</span>
-            <span v-if="item.badge" class="nav-badge">{{ item.badge }}</span>
-          </router-link>
+          <template v-for="item in section.items" :key="item.key || item.path || item.href">
+            <a
+              v-if="item.href"
+              :href="item.href"
+              class="nav-item"
+              @click="handleExternalNav(item)"
+            >
+              <span class="nav-icon">{{ item.icon }}</span>
+              <span>{{ item.label }}</span>
+              <span v-if="item.badge" class="nav-badge">{{ item.badge }}</span>
+            </a>
+            <router-link
+              v-else
+              :to="item.path"
+              class="nav-item"
+              :class="{ active: isActive(item.path) }"
+            >
+              <span class="nav-icon">{{ item.icon }}</span>
+              <span>{{ item.label }}</span>
+              <span v-if="item.badge" class="nav-badge">{{ item.badge }}</span>
+            </router-link>
+          </template>
         </template>
       </nav>
       <div class="sidebar-footer">
@@ -65,7 +76,32 @@ const route = useRoute()
 const authStore = useAuthStore()
 
 const navSections = computed(() => {
-  const sections = [
+  const sections = []
+  const portalAccess = authStore.portalAccess || {}
+  const portalCount = [
+    portalAccess.can_monitor,
+    portalAccess.can_workbench,
+    portalAccess.can_admin
+  ].filter(Boolean).length
+  const portalItems = []
+
+  if (portalCount > 1) {
+    portalItems.push({ path: "/entry", label: "入口选择", icon: "↔", key: "portal-entry" })
+  }
+  if (portalAccess.can_workbench) {
+    portalItems.push({
+      href: "/workbench/",
+      label: "客服工作台",
+      icon: "☏",
+      key: "workbench",
+      portalChoice: "workbench"
+    })
+  }
+  if (portalItems.length) {
+    sections.push({ title: "业务入口", items: portalItems })
+  }
+
+  sections.push(
     {
       title: "实时监控",
       items: [
@@ -89,7 +125,7 @@ const navSections = computed(() => {
         { path: "/profiles", label: "供应商画像", icon: "🏷️" },
       ]
     }
-  ]
+  )
 
   if (authStore.canAccessAdminShell) {
     sections.push({
@@ -125,6 +161,12 @@ onMounted(() => {
 const isActive = (path) => {
   if (path === '/') return route.path === '/'
   return route.path.startsWith(path)
+}
+
+const handleExternalNav = (item) => {
+  if (item.portalChoice) {
+    authStore.setPortalChoice(item.portalChoice)
+  }
 }
 
 const titleMap = {
