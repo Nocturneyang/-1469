@@ -10,6 +10,7 @@
 const path = require('path');
 const Database = require('better-sqlite3');
 const { saveMessage } = require('../db/database');
+const { configureSqlite } = require('./sqlite-runtime');
 const { SHANGHAI_TIME_ZONE, shanghaiDateStartMs, shanghaiDateString } = require('./time');
 
 const analyticsDbPath = path.join(process.env.DATA_DIR || path.join(__dirname, '..'), 'db', 'analytics.sqlite');
@@ -19,7 +20,7 @@ let analyticsDb = null;
 function getDb() {
     if (!analyticsDb) {
         analyticsDb = new Database(analyticsDbPath);
-        analyticsDb.pragma('journal_mode = WAL');
+        configureSqlite(analyticsDb, { label: 'analytics.sqlite' });
         initSchema();
     }
     return analyticsDb;

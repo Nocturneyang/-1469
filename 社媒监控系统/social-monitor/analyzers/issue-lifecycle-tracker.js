@@ -21,16 +21,17 @@ const path = require('path');
 const Database = require('better-sqlite3');
 const dingtalk = require('../lib/dingtalk');
 const { getRegionInfo } = require('../lib/region-config');
+const { configureSqlite } = require('../lib/sqlite-runtime');
 const { formatShanghai } = require('../lib/time');
 
 const ROOT = process.env.DATA_DIR || path.resolve(__dirname, '..');
 
 // ─── 数据库连接 ──────────────────────────────────────────────────
 const sourceDb = new Database(path.join(ROOT, 'db', 'database.sqlite'), { readonly: true });
-sourceDb.pragma('journal_mode = WAL');
+configureSqlite(sourceDb, { label: 'source database.sqlite', readonly: true });
 
 const analyticsDb = new Database(path.join(ROOT, 'db', 'analytics.sqlite'));
-analyticsDb.pragma('journal_mode = WAL');
+configureSqlite(analyticsDb, { label: 'analytics.sqlite' });
 
 // ─── 闭环词 ──────────────────────────────────────────────────────
 const CLOSE_PATTERNS = [

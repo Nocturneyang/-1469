@@ -19,12 +19,13 @@ const Database = require('better-sqlite3');
 const cron = require('node-cron');
 const dingtalk = require('../lib/dingtalk');
 const aiClient = require('../lib/ai-client');
+const { configureSqlite } = require('../lib/sqlite-runtime');
 const { shanghaiDateStartMs, shanghaiDateString, shanghaiWeekday } = require('../lib/time');
 
 const ROOT = process.env.DATA_DIR || path.resolve(__dirname, '..');
 
 const analyticsDb = new Database(path.join(ROOT, 'db', 'analytics.sqlite'));
-analyticsDb.pragma('journal_mode = WAL');
+configureSqlite(analyticsDb, { label: 'analytics.sqlite' });
 
 const insertSnapshot = analyticsDb.prepare(`
   INSERT INTO reliability_snapshots (

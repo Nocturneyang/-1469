@@ -24,6 +24,7 @@ const cron = require('node-cron');
 const dingtalk = require('../lib/dingtalk');
 const aiClient = require('../lib/ai-client');
 const { readEnvFile } = require('../lib/env-config');
+const { configureSqlite } = require('../lib/sqlite-runtime');
 const { formatShanghai, shanghaiDateStartMs, shanghaiDateString } = require('../lib/time');
 
 const ROOT = process.env.DATA_DIR || path.resolve(__dirname, '..');
@@ -52,10 +53,10 @@ function getReportPublicBaseUrl() {
 
 // ─── 数据库连接 ──────────────────────────────────────────────────
 const sourceDb = new Database(path.join(ROOT, 'db', 'database.sqlite'), { readonly: true });
-sourceDb.pragma('journal_mode = WAL');
+configureSqlite(sourceDb, { label: 'source database.sqlite', readonly: true });
 
 const analyticsDb = new Database(path.join(ROOT, 'db', 'analytics.sqlite'));
-analyticsDb.pragma('journal_mode = WAL');
+configureSqlite(analyticsDb, { label: 'analytics.sqlite' });
 
 const insertDigestStmt = analyticsDb.prepare(`
   INSERT INTO daily_digests (

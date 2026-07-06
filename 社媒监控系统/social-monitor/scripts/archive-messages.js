@@ -5,6 +5,7 @@ const fs = require('fs');
 const path = require('path');
 const Database = require('better-sqlite3');
 const { shanghaiISOString, shanghaiMonthKey } = require('../lib/time');
+const { configureSqlite } = require('../lib/sqlite-runtime');
 
 const ROOT = process.env.DATA_DIR || path.join(__dirname, '..');
 const DB_DIR = path.join(ROOT, 'db');
@@ -77,6 +78,7 @@ function getCursorGate(maxEligibleId) {
     }
 
     const analyticsDb = new Database(ANALYTICS_DB_PATH, { readonly: true, fileMustExist: true });
+    configureSqlite(analyticsDb, { label: 'analytics.sqlite', readonly: true });
     try {
         const table = analyticsDb.prepare(`
             SELECT name
@@ -164,7 +166,7 @@ function archiveMonth(sourceDb, columns, archiveDir, cutoffTs, month, maxRows) {
     fs.mkdirSync(archiveDir, { recursive: true });
     const archivePath = path.join(archiveDir, `database-archive-${month}.sqlite`);
     const archiveDb = new Database(archivePath);
-    archiveDb.pragma('journal_mode = WAL');
+    configureSqlite(archiveDb, { label: `archive ${month}` });
 
     try {
         ensureArchiveSchema(sourceDb, archiveDb);
@@ -222,6 +224,7 @@ function runArchive(options) {
         readonly: !execute,
         fileMustExist: true
     });
+    configureSqlite(sourceDb, { label: 'database.sqlite', readonly: !execute });
 
     try {
         const summary = summarizeEligible(sourceDb, cutoffTs, maxRows);

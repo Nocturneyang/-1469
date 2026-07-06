@@ -4,6 +4,7 @@ const Database = require('better-sqlite3');
 const path = require('path');
 const fs = require('fs');
 const { getShanghaiParts } = require('../lib/time');
+const { configureSqlite } = require('../lib/sqlite-runtime');
 const { isMediaUploadDisabled } = require('../lib/media-policy');
 const { hasAttachedPermission, requireAdmin } = require('../middleware/auth');
 
@@ -54,8 +55,8 @@ function getAnalyticsDb() {
     if (analyticsDb) return analyticsDb;
     if (!fs.existsSync(analyticsDbPath)) return null;
     try {
-        analyticsDb = new Database(analyticsDbPath, { fileMustExist: true });
-        try { analyticsDb.pragma('busy_timeout = 5000'); } catch (_) {}
+        analyticsDb = new Database(analyticsDbPath, { readonly: true, fileMustExist: true });
+        configureSqlite(analyticsDb, { label: 'analytics.sqlite', readonly: true });
         return analyticsDb;
     } catch (err) {
         console.error('Analytics DB open error:', err.message);

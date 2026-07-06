@@ -25,6 +25,7 @@ const Database = require('better-sqlite3');
 const dingtalk = require('../lib/dingtalk');
 const aiClient = require('../lib/ai-client');
 const { getRegionInfo, getValueLabel } = require('../lib/region-config');
+const { configureSqlite } = require('../lib/sqlite-runtime');
 const { formatShanghai, shanghaiDateString } = require('../lib/time');
 
 // 向后兼容别名
@@ -34,10 +35,10 @@ const ROOT = process.env.DATA_DIR || path.resolve(__dirname, '..');
 
 // ─── 数据库连接 ──────────────────────────────────────────────────
 const sourceDb = new Database(path.join(ROOT, 'db', 'database.sqlite'), { readonly: true });
-sourceDb.pragma('journal_mode = WAL');
+configureSqlite(sourceDb, { label: 'source database.sqlite', readonly: true });
 
 const analyticsDb = new Database(path.join(ROOT, 'db', 'analytics.sqlite'));
-analyticsDb.pragma('journal_mode = WAL');
+configureSqlite(analyticsDb, { label: 'analytics.sqlite' });
 
 analyticsDb.exec(`
   CREATE TABLE IF NOT EXISTS analyzer_runtime_state (

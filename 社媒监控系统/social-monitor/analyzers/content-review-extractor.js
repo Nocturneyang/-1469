@@ -14,14 +14,15 @@ require('dotenv').config();
 const path = require('path');
 const fs = require('fs');
 const Database = require('better-sqlite3');
+const { configureSqlite } = require('../lib/sqlite-runtime');
 
 const ROOT = process.env.DATA_DIR || path.resolve(__dirname, '..');
 
 const sourceDb = new Database(path.join(ROOT, 'db', 'database.sqlite'), { readonly: true });
-sourceDb.pragma('journal_mode = WAL');
+configureSqlite(sourceDb, { label: 'source database.sqlite', readonly: true });
 
 const analyticsDb = new Database(path.join(ROOT, 'db', 'analytics.sqlite'));
-analyticsDb.pragma('journal_mode = WAL');
+configureSqlite(analyticsDb, { label: 'analytics.sqlite' });
 
 const CONTENT_CHECK_TRIGGERS = [
   /check this content/i, 

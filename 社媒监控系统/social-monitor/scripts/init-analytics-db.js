@@ -12,6 +12,7 @@
 const path = require('path');
 const fs = require('fs');
 const Database = require('better-sqlite3');
+const { configureSqlite } = require('../lib/sqlite-runtime');
 
 const ROOT = process.env.DATA_DIR || path.resolve(__dirname, '..');
 const ANALYTICS_DB_PATH = path.join(ROOT, 'db', 'analytics.sqlite');
@@ -29,7 +30,7 @@ const schemaSql = fs.readFileSync(SCHEMA_PATH, 'utf8');
 
 // 打开/创建 analytics.sqlite
 const db = new Database(ANALYTICS_DB_PATH);
-db.pragma('journal_mode = WAL');
+configureSqlite(db, { label: 'analytics.sqlite' });
 db.pragma('foreign_keys = ON');
 
 // 执行 DDL（事务保证原子性）

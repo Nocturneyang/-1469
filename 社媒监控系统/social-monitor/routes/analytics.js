@@ -13,6 +13,7 @@ const {
     targetLibraryForAsset,
 } = require('../lib/knowledge-assets');
 const aiClient = require('../lib/ai-client');
+const { configureSqlite } = require('../lib/sqlite-runtime');
 const { shanghaiDateString, shanghaiDateStartMs, shanghaiISOString } = require('../lib/time');
 const { isSqliteStorageError } = require('../lib/storage-health');
 const { requireAttachedPermission } = require('../middleware/auth');
@@ -207,7 +208,7 @@ function getAnalyticsDb() {
     try {
         const Database = require('better-sqlite3');
         _analyticsDb = new Database(ANALYTICS_PATH, { readonly: true, fileMustExist: true });
-        _analyticsDb.pragma('busy_timeout = 5000');
+        configureSqlite(_analyticsDb, { label: 'analytics.sqlite', readonly: true });
         return _analyticsDb;
     } catch (e) {
         console.error('[server] 无法打开 analytics.sqlite:', e.message);
@@ -223,7 +224,7 @@ function getSourceDb() {
     try {
         const Database = require('better-sqlite3');
         _sourceDb = new Database(SOURCE_DB_PATH, { readonly: true, fileMustExist: true });
-        _sourceDb.pragma('busy_timeout = 5000');
+        configureSqlite(_sourceDb, { label: 'source database.sqlite', readonly: true });
         return _sourceDb;
     } catch (e) {
         console.error('[server] 无法打开 database.sqlite:', e.message);
@@ -237,8 +238,7 @@ function openWritableAnalyticsDb() {
     if (!fs.existsSync(ANALYTICS_PATH)) return null;
     const Database = require('better-sqlite3');
     const db = new Database(ANALYTICS_PATH);
-    db.pragma('journal_mode = WAL');
-    db.pragma('busy_timeout = 5000');
+    configureSqlite(db, { label: 'analytics.sqlite' });
     return db;
 }
 

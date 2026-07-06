@@ -3,6 +3,7 @@ const path = require('path');
 const fs = require('fs');
 const { shanghaiISOString } = require('../lib/time');
 const { CLOUD_RUNTIME_PROVIDER } = require('../lib/cloud-runtime-provider');
+const { configureSqlite } = require('../lib/sqlite-runtime');
 
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '..');
 const dbPath = path.join(DATA_DIR, 'db', 'database.sqlite');
@@ -55,28 +56,18 @@ if (COLLECTOR_REMOTE_ONLY) {
     }
 }
 
-function safePragma(database, statement, label) {
-    try {
-        return database.pragma(statement);
-    } catch (err) {
-        console.warn(`[DB] ${label || statement} failed, continuing in degraded mode: ${err.message}`);
-        return null;
-    }
-}
-
-// Enable WAL mode for better concurrency performance. If the persisted DB is
-// already in a bad I/O state, do not crash the UI server before health routes
-// can report the problem.
+// Configure SQLite conservatively for the current storage. Production /data is
+// backed by shared NAS, where WAL can surface as disk I/O errors under multiple
+// PM2 processes.
 if (COLLECTOR_REMOTE_ONLY) {
     console.warn('[DB] COLLECTOR_REMOTE_ONLY enabled; local SQLite writes are disabled in this collector process');
 } else if (dbRuntimeDegraded) {
     console.warn(`[DB] SQLite access is disabled for this process: ${dbRuntimeDegradedReason}`);
 } else if (DB_READONLY_MODE) {
     console.warn('[DB] DB_READONLY_MODE enabled; database.sqlite opened read-only and schema migrations are skipped');
-    safePragma(db, 'busy_timeout = 5000', 'set busy timeout');
+    configureSqlite(db, { label: 'database.sqlite', readonly: true, logger: console });
 } else {
-    safePragma(db, 'journal_mode = WAL', 'enable WAL');
-    safePragma(db, 'busy_timeout = 5000', 'set busy timeout');
+    configureSqlite(db, { label: 'database.sqlite', logger: console });
 }
 
 // ... [schema setup] ...
