@@ -102,6 +102,13 @@ function platformEnv(parts, extraEnv = {}) {
         envValue('PUPPETEER_SKIP_DOWNLOAD', 'true'),
         envValue('PUPPETEER_EXECUTABLE_PATH', process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium'),
         envValue('PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH', process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH || '/usr/bin/chromium'),
+        envValue('ENABLE_WORKBENCH', process.env.ENABLE_WORKBENCH || '1'),
+        envValue('ENABLE_WORKBENCH_SEND', process.env.ENABLE_WORKBENCH_SEND || '1'),
+        envValue('ENABLE_WORKBENCH_SYNC', process.env.ENABLE_WORKBENCH_SYNC || '1'),
+        envValue('WORKBENCH_SEND_ACCOUNTS', parts.accountId),
+        envValue('WORKBENCH_SYNC_ACCOUNTS', parts.accountId),
+        envValue('WORKBENCH_DB_PATH', process.env.WORKBENCH_DB_PATH || '/data/db/workbench.sqlite'),
+        envValue('WORKBENCH_OUTBOX_DIR', process.env.WORKBENCH_OUTBOX_DIR || '/data/workbench-outbox'),
         secretEnv('COLLECTOR_TOKEN'),
         secretEnv('ACCOUNT_SESSION_ENCRYPTION_KEY')
     ];

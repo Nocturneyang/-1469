@@ -25,6 +25,8 @@ metadata:
 subjects:
   - kind: ServiceAccount
     name: social-monitor
+  - kind: ServiceAccount
+    name: default
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
