@@ -45,7 +45,7 @@ const {
 const collectorRoutes = require('./routes/collector');
 const createTgUserRouter = require('./routes/tg-user');
 const createTeamsRouter = require('./routes/teams');
-const { getAnalyticsDb } = require('./routes/analytics');
+const { getAnalyticsDb, scheduleWarmUp, registerWarmUpDashboard } = require('./routes/analytics');
 const { shanghaiISOString } = require('./lib/time');
 const { checkStorageWatermark: readStorageWatermark } = require('./lib/storage-health');
 
@@ -791,6 +791,30 @@ app.use('/api/accounts/create-teams', requirePermission(sharedWorkbenchDb, 'moni
 const server = app.listen(PORT, () => {
     console.log(`🌐 Social Monitor UI Server listening on http://localhost:${PORT}`);
 });
+
+// 部署到生产后预热 dashboard：第一次请求不需等待 57s
+try {
+    const jwt = require('jsonwebtoken');
+    const JWT_SECRET = process.env.JWT_SECRET;
+    if (JWT_SECRET) {
+        registerWarmUpDashboard(() => {
+            const token = jwt.sign({ id: '__warmup__', username: '__warmup__', role: 'admin' }, JWT_SECRET, { expiresIn: '5m' });
+            const http = require('http');
+            const paths = ['/api/analytics/dashboard?days=7'];
+            for (const p of paths) {
+                http.get(
+                    { host: 'localhost', port: PORT, path: p, headers: { authorization: `Bearer ${token}` } },
+                    (res) => { res.resume(); console.log(`[warmup] ${p} → ${res.statusCode}`); }
+                ).on('error', (e) => console.warn(`[warmup] ${p} failed: ${e.message}`));
+            }
+        });
+        scheduleWarmUp();
+    } else {
+        console.warn('[warmup] JWT_SECRET not set, skipping dashboard pre-heat');
+    }
+} catch (e) {
+    console.warn('[warmup] setup failed:', e.message);
+}
 
 // ─── 全局错误处理 ──────────────────────────────────────────────
 app.use((err, req, res, next) => {

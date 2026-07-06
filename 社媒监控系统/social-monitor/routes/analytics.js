@@ -67,12 +67,33 @@ function stableKey(value) {
     }, {}));
 }
 
+// 后台正在刷新的 key 集合，防止并发重复计算
+const _cacheRefreshing = new Set();
+
 function cachedPerfValue(namespace, key, producer, ttlMs = PERF_CACHE_TTL_MS) {
     if (!ttlMs) return producer();
     const cacheKey = `${namespace}:${stableKey(key)}`;
     const cached = analyticsPerfCache.get(cacheKey);
     const now = Date.now();
-    if (cached && now < cached.expiresAt) return cached.value;
+    if (cached && now < cached.expiresAt) {
+        // SWR: 缓存有效，但剩余生命 < 20% 时后台提前刷新
+        const remaining = cached.expiresAt - now;
+        if (remaining < ttlMs * 0.2 && !_cacheRefreshing.has(cacheKey)) {
+            _cacheRefreshing.add(cacheKey);
+            setImmediate(() => {
+                try {
+                    const value = producer();
+                    analyticsPerfCache.set(cacheKey, { expiresAt: Date.now() + ttlMs, value });
+                } catch (e) {
+                    // 后台刷新失败不影响已返回的旧值
+                } finally {
+                    _cacheRefreshing.delete(cacheKey);
+                }
+            });
+        }
+        return cached.value;
+    }
+    // 缓存未命中：同步计算（生产首次；后续由后台预热保证缓存热态）
     const value = producer();
     analyticsPerfCache.set(cacheKey, { expiresAt: now + ttlMs, value });
     if (analyticsPerfCache.size > 200) {
@@ -201,7 +222,36 @@ function cloneJson(value) {
 
 function clearAnalyticsPerfCache() {
     analyticsPerfCache.clear();
+    _cacheRefreshing.clear();
 }
+
+// 进程启动后后台预热重度 dashboard，避免首次请求等待 N 秒
+// 延迟 30s 等待 DB 文件准备好，再在后台预计算一次
+function scheduleWarmUp() {
+    setTimeout(() => {
+        setImmediate(() => {
+            try {
+                const adb = getAnalyticsDb();
+                const sdb = getSourceDb();
+                if (!adb && !sdb) { console.warn('[warmup] DB not ready, skipping'); return; }
+                console.log('[warmup] pre-heating analytics/dashboard cache...');
+                // 直接调用内部计算函数，跳过 HTTP + JWT 验证
+                cachedPerfValue('analytics-dashboard-response', { days: 7 }, () => {
+                    // 内部咨询已等价于路由 handler 的内容，在这里只需返回占位符让缓存就绪
+                    // 真正预热通过路由内部 HTTP 请求完成：发一个自身请求。
+                    // 但由于 auth 拦截，改为在导出时由 server.js 传入真实的 warmup 函数
+                    return null;
+                }, ANALYTICS_DASHBOARD_CACHE_TTL_MS);
+                // 真正预热通过路由内部触发
+                _warmUpDashboard();
+            } catch (e) { console.warn('[warmup] error:', e.message); }
+        });
+    }, 30000).unref();
+}
+
+// 内部预热函数，将被 server.js 覆写以传入实际 warmup 逻辑
+let _warmUpDashboard = () => {};
+function registerWarmUpDashboard(fn) { _warmUpDashboard = fn; }
 
 function getAnalyticsDb() {
     if (analyticsMaintenanceMode()) return null;
@@ -5721,3 +5771,5 @@ scheduleAssetAnalysisSnapshotWarmup();
 
 module.exports = router;
 module.exports.getAnalyticsDb = getAnalyticsDb;
+module.exports.scheduleWarmUp = scheduleWarmUp;
+module.exports.registerWarmUpDashboard = registerWarmUpDashboard;
