@@ -4,6 +4,10 @@ function envFlag(value) {
   return ['1', 'true', 'yes', 'on'].includes(String(value || '').trim().toLowerCase());
 }
 
+function envFlagConfigured(value) {
+  return String(value || '').trim() !== '';
+}
+
 function normalizeJournalMode(value) {
   const mode = String(value || '').trim().toUpperCase();
   if (!mode) return '';
@@ -27,6 +31,13 @@ function sqliteJournalMode() {
 function sqliteBusyTimeoutMs() {
   const raw = Number(process.env.SQLITE_BUSY_TIMEOUT_MS);
   return Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : 15000;
+}
+
+function configureJournalOnConnect() {
+  if (envFlagConfigured(process.env.SQLITE_CONFIGURE_JOURNAL_ON_CONNECT)) {
+    return envFlag(process.env.SQLITE_CONFIGURE_JOURNAL_ON_CONNECT);
+  }
+  return !isNasRuntime();
 }
 
 function safePragma(db, statement, label, logger = console) {
@@ -55,6 +66,16 @@ function configureSqlite(db, options = {}) {
     };
   }
 
+  const shouldConfigureJournal = options.configureJournal === undefined
+    ? configureJournalOnConnect()
+    : Boolean(options.configureJournal);
+  if (!shouldConfigureJournal) {
+    return {
+      journalMode: null,
+      busyTimeoutMs,
+    };
+  }
+
   const journalMode = normalizeJournalMode(options.journalMode) || sqliteJournalMode();
   if (journalMode !== 'WAL') {
     safePragma(db, 'wal_checkpoint(TRUNCATE)', `${label} wal_checkpoint`, logger);
@@ -62,7 +83,7 @@ function configureSqlite(db, options = {}) {
   const result = safePragma(db, `journal_mode = ${journalMode}`, `${label} journal_mode=${journalMode}`, logger);
   const appliedJournalMode = Array.isArray(result) && result[0] && result[0].journal_mode
     ? String(result[0].journal_mode).toUpperCase()
-    : journalMode;
+    : null;
 
   return {
     journalMode: appliedJournalMode,
@@ -72,6 +93,7 @@ function configureSqlite(db, options = {}) {
 
 module.exports = {
   configureSqlite,
+  configureJournalOnConnect,
   defaultJournalMode,
   isNasRuntime,
   normalizeJournalMode,

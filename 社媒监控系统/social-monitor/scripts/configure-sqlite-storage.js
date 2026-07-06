@@ -24,7 +24,7 @@ function configureFile(file) {
 
   const db = new Database(dbPath);
   try {
-    const result = configureSqlite(db, { label: file.name });
+    const result = configureSqlite(db, { label: file.name, configureJournal: true });
     console.log(`[sqlite-storage] ${file.name}: journal=${result.journalMode}, busy_timeout=${result.busyTimeoutMs}ms`);
   } finally {
     db.close();

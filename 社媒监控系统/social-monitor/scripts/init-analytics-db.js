@@ -30,7 +30,7 @@ const schemaSql = fs.readFileSync(SCHEMA_PATH, 'utf8');
 
 // 打开/创建 analytics.sqlite
 const db = new Database(ANALYTICS_DB_PATH);
-configureSqlite(db, { label: 'analytics.sqlite' });
+configureSqlite(db, { label: 'analytics.sqlite', configureJournal: true });
 db.pragma('foreign_keys = ON');
 
 // 执行 DDL（事务保证原子性）

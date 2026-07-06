@@ -15,6 +15,7 @@
 - 只读连接不再改 journal mode，仅设置 `busy_timeout` 和 `query_only=ON`。
 - analyzer、analytics writable API、TG 回溯队列、初始化脚本和归档脚本都改为使用统一 helper。
 - 新增 `scripts/configure-sqlite-storage.js`，并在 `docker-entrypoint.sh` 中于 PM2 启动前执行，先由单进程完成 `database.sqlite`、`analytics.sqlite` 的 journal mode 调整，减少 analyzer 并发启动时抢锁。
+- 生产 `DATA_DIR=/data` 下，普通运行时连接默认不再尝试修改 journal mode，避免多个 PM2 进程在启动时抢同一 SQLite 文件锁。
 
 ## 验证
 
