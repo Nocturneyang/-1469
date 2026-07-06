@@ -66,16 +66,22 @@ function seedDefaultOperator(db) {
 }
 
 function seedDefaultSuperAdmin(db) {
-  db.prepare(`
+  const defaults = ['1469', '杨杰'];
+  const insertSuperAdmin = db.prepare(`
     INSERT INTO workbench_super_admins (identity, display_name, status, created_by)
-    VALUES ('1469', '1469', 'active', 'system')
+    VALUES (?, ?, 'active', 'system')
     ON CONFLICT(identity) DO NOTHING
-  `).run();
-  db.prepare(`
+  `);
+  const insertPortalAccess = db.prepare(`
     INSERT INTO operator_portal_access (operator_id, can_monitor, can_workbench, default_entry)
-    VALUES ('1469', 1, 1, 'chooser')
+    VALUES (?, 1, 1, 'chooser')
     ON CONFLICT(operator_id) DO NOTHING
-  `).run();
+  `);
+
+  defaults.forEach((identity) => {
+    insertSuperAdmin.run(identity, identity);
+    insertPortalAccess.run(identity);
+  });
 }
 
 function ensureOperator(db, operatorId, displayName = operatorId) {

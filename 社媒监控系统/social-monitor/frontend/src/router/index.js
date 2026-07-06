@@ -170,6 +170,16 @@ function redirectToPortalDestination(destination, currentPath, next) {
   return true
 }
 
+async function hasRequiredRouteAccess(to, authStore) {
+  if (to.meta.requiresWorkbenchSuperAdmin) {
+    const access = await authStore.hydrateWorkbenchAccess()
+    if (!access?.is_super_admin) return false
+    return true
+  }
+  if (to.meta.requiresAdmin && !authStore.isAdmin) return false
+  return true
+}
+
 router.beforeEach(async (to, from, next) => {
   const authStore = useAuthStore()
 
@@ -194,16 +204,12 @@ router.beforeEach(async (to, from, next) => {
           const requestedPath = portalRequestedPath(to)
           const destination = await authStore.resolvePortalDestination(requestedPath, { preferLanding: freshSsoLogin })
           if (redirectToPortalDestination(destination, requestedPath, next)) return
-          if (to.meta.requiresAdmin && authStore.user?.role !== 'admin') {
-            next({ name: 'Home' })
-          } else if (to.meta.requiresWorkbenchSuperAdmin && !(await authStore.hydrateWorkbenchAccess()).is_super_admin) {
+          if (!(await hasRequiredRouteAccess(to, authStore))) {
             next({ name: 'Home' })
           } else {
             next()
           }
-        } else if (to.meta.requiresAdmin && authStore.user?.role !== 'admin') {
-          next({ name: 'Home' })
-        } else if (to.meta.requiresWorkbenchSuperAdmin && !(await authStore.hydrateWorkbenchAccess()).is_super_admin) {
+        } else if (!(await hasRequiredRouteAccess(to, authStore))) {
           next({ name: 'Home' })
         } else {
           next()
@@ -216,19 +222,13 @@ router.beforeEach(async (to, from, next) => {
     next({ name: 'Login' })
   } else if (to.name === 'Login' && authStore.isAuthenticated) {
     next({ name: 'Home' })
-  } else if (to.meta.requiresAdmin && !authStore.isAdmin) {
+  } else if (!(await hasRequiredRouteAccess(to, authStore))) {
     next({ name: 'Home' })
   } else if (!to.meta.public && to.name !== 'PortalEntry') {
     const requestedPath = portalRequestedPath(to)
     const destination = await authStore.resolvePortalDestination(requestedPath, { preferLanding: !authStore.user })
     if (redirectToPortalDestination(destination, requestedPath, next)) return
-    if (to.meta.requiresWorkbenchSuperAdmin && !(await authStore.hydrateWorkbenchAccess()).is_super_admin) {
-      next({ name: 'Home' })
-    } else {
-      next()
-    }
-  } else if (to.meta.requiresWorkbenchSuperAdmin && !(await authStore.hydrateWorkbenchAccess()).is_super_admin) {
-    next({ name: 'Home' })
+    next()
   } else {
     next()
   }

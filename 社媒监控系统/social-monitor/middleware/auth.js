@@ -22,6 +22,7 @@ if (!JWT_SECRET || JWT_SECRET.length < 32) {
 const SSO_USER_CACHE_TTL_MS = positiveNumber('SSO_USER_CACHE_TTL_MS', 30 * 60 * 1000);
 const SSO_USER_CACHE_MAX = positiveNumber('SSO_USER_CACHE_MAX', 1000);
 const SSO_ADMIN_CACHE_TTL_MS = positiveNumber('SSO_ADMIN_CACHE_TTL_MS', 60 * 60 * 1000);
+const DEFAULT_SUPER_ADMIN_IDENTITIES = ['1469', '杨杰'];
 const ssoUserCache = new Map();
 let ssoAdminCache = { expiresAt: 0, values: new Set() };
 
@@ -89,7 +90,7 @@ function normalizeRole(role) {
 
 function applyAdminPolicy(user) {
     const admins = [
-        '1469',
+        ...DEFAULT_SUPER_ADMIN_IDENTITIES,
         ...parseList(process.env.SSO_ADMIN_USERS),
         ...parseList(process.env.WORKBENCH_SUPER_ADMINS)
     ];

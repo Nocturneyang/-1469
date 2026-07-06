@@ -17,6 +17,7 @@ export const useAuthStore = defineStore('auth', {
     isAuthenticated: (state) => !!state.token,
     isAdmin: (state) => state.user?.role === 'admin',
     isWorkbenchSuperAdmin: (state) => Boolean(state.workbenchAccess?.is_super_admin),
+    canAccessAdminShell: (state) => state.user?.role === 'admin' || Boolean(state.workbenchAccess?.is_super_admin),
     portalAccess: (state) => state.workbenchAccess?.portal_access || {
       can_monitor: false,
       can_workbench: false,

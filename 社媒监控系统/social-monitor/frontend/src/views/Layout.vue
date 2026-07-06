@@ -91,15 +91,15 @@ const navSections = computed(() => {
     }
   ]
 
-  if (authStore.isAdmin) {
+  if (authStore.canAccessAdminShell) {
     sections.push({
       title: "系统管理",
       items: [
-        { path: "/admin/config", label: "系统配置", icon: "⚙️" },
-        { path: "/admin/accounts", label: "帐号管理", icon: "👥" },
+        { path: "/admin/config", label: "系统配置", icon: "⚙️", adminOnly: true },
+        { path: "/admin/accounts", label: "帐号管理", icon: "👥", adminOnly: true },
         { path: "/admin/workbench-permissions", label: "工作台权限", icon: "▦", workbenchSuperOnly: true },
-        { path: "/admin/users", label: "权限管理", icon: "🔐" },
-        { path: "/admin/logs", label: "系统日志", icon: "📋" },
+        { path: "/admin/users", label: "权限管理", icon: "🔐", adminOnly: true },
+        { path: "/admin/logs", label: "系统日志", icon: "📋", adminOnly: true },
       ]
     })
   }
@@ -114,7 +114,7 @@ const navSections = computed(() => {
 })
 
 onMounted(() => {
-  if (authStore.isAdmin) {
+  if (authStore.isAuthenticated) {
     authStore.hydrateWorkbenchAccess().catch(() => {})
   }
 })

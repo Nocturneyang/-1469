@@ -17,8 +17,8 @@
 ## 2026-07-03 权限入口增量
 
 - 新增 workbench 权限模块，SSO/JWT 用户会映射为 operator，生产优先使用 `req.user`，本地独立工作台仍兼容 `x-operator-id`。
-- `WORKBENCH_SUPER_ADMINS` 默认包含 `1469`，`workbench_super_admins` 表也会保留 `1469`，用于识别工作台超级管理员。
-- 主系统 SSO admin 策略同步识别 `WORKBENCH_SUPER_ADMINS`，因此 `1469` 可以进入账号用途配置和工作台权限配置。
+- `WORKBENCH_SUPER_ADMINS` 默认包含 `1469`、`杨杰`，`workbench_super_admins` 表也会保留这两个身份，用于识别工作台超级管理员。
+- 主系统 SSO admin 策略同步识别默认超级管理员和 `WORKBENCH_SUPER_ADMINS`，因此 `1469`、`杨杰` 可以进入账号用途配置和工作台权限配置。
 - 新增主系统后台入口 `工作台权限管理`，支持按坐席、服务账号、分组配置 `can_view`、`can_reply`、`can_assign`、`can_manage`。
 - Workbench API 对账号列表、分组列表、消息读取、回复、已读、认领、释放、出站取消和重试进行权限收口。
 - Workbench UI 根据会话返回的 `permissions` 禁用不可发送、不可认领、不可重试和不可取消的操作。

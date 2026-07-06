@@ -863,16 +863,20 @@ function initSchema() {
     }
 
     try {
-        const seedAdmins = String(process.env.SSO_BOOTSTRAP_ADMINS || process.env.SSO_ADMIN_USERS || '1469,杨杰')
-            .split(',')
-            .map(item => item.trim())
-            .filter(Boolean);
+        const seedAdmins = [
+            '1469',
+            '杨杰',
+            ...String(process.env.SSO_BOOTSTRAP_ADMINS || process.env.SSO_ADMIN_USERS || '')
+                .split(',')
+                .map(item => item.trim())
+                .filter(Boolean)
+        ];
         const stmt = db.prepare(`
             INSERT INTO sso_admins (identity, display_name, note, created_by)
             VALUES (?, ?, 'bootstrap', 'system')
             ON CONFLICT(identity) DO NOTHING
         `);
-        for (const identity of seedAdmins) {
+        for (const identity of [...new Set(seedAdmins)]) {
             stmt.run(identity, identity);
         }
     } catch (err) {

@@ -4,6 +4,7 @@ const { accountScopeContains, normalizePlatform } = require('../db/raw-messages'
 const ALL_GROUPS = '*';
 const UNGROUPED_GROUP = '__ungrouped__';
 const CAPABILITIES = ['can_view', 'can_reply', 'can_assign', 'can_manage'];
+const DEFAULT_SUPER_ADMIN_IDENTITIES = ['1469', '杨杰'];
 const DEFAULT_PORTAL_ACCESS = {
   can_monitor: false,
   can_workbench: false,
@@ -89,7 +90,7 @@ function isWorkbenchSuperAdmin(db, operator = {}) {
   const identities = operatorIdentities(operator);
   if (!identities.length) return false;
   const allowed = new Set([
-    '1469',
+    ...DEFAULT_SUPER_ADMIN_IDENTITIES,
     ...parseList(process.env.WORKBENCH_SUPER_ADMINS),
     ...loadDbSuperAdmins(db),
   ].map((item) => String(item).trim()).filter(Boolean));
