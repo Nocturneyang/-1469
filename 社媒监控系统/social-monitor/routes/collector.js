@@ -36,6 +36,21 @@ function databaseMaintenanceMode() {
         envFlag('COLLECTOR_WRITE_DISABLED');
 }
 
+// On NAS-backed storage SQLite writes take 1-4s (DELETE journal mode).
+// Heartbeat / events / account-status are idempotent fire-and-forget signals;
+// responding immediately and deferring the write removes NAS latency from the
+// critical API response path and prevents local collectors from timing out.
+const ASYNC_WRITES = !['0', 'false', 'no', 'off'].includes(
+    String(process.env.COLLECTOR_ASYNC_WRITES || '1').trim().toLowerCase()
+);
+function writeAsync(label, fn) {
+    if (!ASYNC_WRITES) { fn(); return; }
+    setImmediate(() => {
+        try { fn(); }
+        catch (err) { console.error(`[Collector API] async ${label} write failed:`, err.message); }
+    });
+}
+
 function databaseMaintenanceResponse(kind) {
     return {
         success: true,
@@ -156,54 +171,39 @@ function mediaDisabledResponse() {
 router.use(requireCollectorToken);
 
 router.post('/heartbeat', (req, res) => {
-    try {
-        const body = req.body || {};
-        if (!body.accountId || !body.collectorId) {
-            return res.status(400).json({ success: false, error: 'accountId and collectorId are required' });
-        }
-
-        if (databaseMaintenanceMode()) {
-            return res.json(databaseMaintenanceResponse('heartbeat'));
-        }
-
-        upsertCollectorHeartbeat(body);
-        res.json({ success: true });
-    } catch (err) {
-        console.error('[Collector API] heartbeat failed:', err.message);
-        res.status(500).json({ success: false, error: err.message });
+    const body = req.body || {};
+    if (!body.accountId || !body.collectorId) {
+        return res.status(400).json({ success: false, error: 'accountId and collectorId are required' });
     }
+    if (databaseMaintenanceMode()) {
+        return res.json(databaseMaintenanceResponse('heartbeat'));
+    }
+    res.json({ success: true });
+    writeAsync('heartbeat', () => upsertCollectorHeartbeat(body));
 });
 
 router.post('/events', (req, res) => {
-    try {
-        const body = req.body || {};
-        if (!body.accountId || !body.eventType) {
-            return res.status(400).json({ success: false, error: 'accountId and eventType are required' });
-        }
-
-        if (databaseMaintenanceMode()) {
-            return res.json(databaseMaintenanceResponse('event'));
-        }
-
-        recordRuntimeEvent(body);
-        res.json({ success: true });
-    } catch (err) {
-        console.error('[Collector API] event failed:', err.message);
-        res.status(500).json({ success: false, error: err.message });
+    const body = req.body || {};
+    if (!body.accountId || !body.eventType) {
+        return res.status(400).json({ success: false, error: 'accountId and eventType are required' });
     }
+    if (databaseMaintenanceMode()) {
+        return res.json(databaseMaintenanceResponse('event'));
+    }
+    res.json({ success: true });
+    writeAsync('events', () => recordRuntimeEvent(body));
 });
 
 router.post('/account-status', (req, res) => {
-    try {
-        const body = req.body || {};
-        if (!body.id || !body.platform || !body.status) {
-            return res.status(400).json({ success: false, error: 'id, platform and status are required' });
-        }
-
-        if (databaseMaintenanceMode()) {
-            return res.json(databaseMaintenanceResponse('account-status'));
-        }
-
+    const body = req.body || {};
+    if (!body.id || !body.platform || !body.status) {
+        return res.status(400).json({ success: false, error: 'id, platform and status are required' });
+    }
+    if (databaseMaintenanceMode()) {
+        return res.json(databaseMaintenanceResponse('account-status'));
+    }
+    res.json({ success: true });
+    writeAsync('account-status', () => {
         updateAccountStatus(body.id, body.platform, body.status, body.pushname || null, body.qrCode || null);
         if (body.chromeVersion) {
             db.prepare(`
@@ -212,11 +212,7 @@ router.post('/account-status', (req, res) => {
                 WHERE id = ?
             `).run(body.chromeVersion, body.id);
         }
-        res.json({ success: true });
-    } catch (err) {
-        console.error('[Collector API] account status failed:', err.message);
-        res.status(500).json({ success: false, error: err.message });
-    }
+    });
 });
 
 router.post('/messages', (req, res) => {

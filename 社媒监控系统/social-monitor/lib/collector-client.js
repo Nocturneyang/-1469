@@ -22,7 +22,7 @@ function positiveNumber(value, fallback) {
 }
 
 function defaultTimeoutMs() {
-    return positiveNumber(process.env.COLLECTOR_API_TIMEOUT_MS, 8000);
+    return positiveNumber(process.env.COLLECTOR_API_TIMEOUT_MS, 30000);
 }
 
 function endpointFileName(endpoint) {
