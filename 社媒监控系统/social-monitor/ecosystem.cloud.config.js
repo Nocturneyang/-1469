@@ -66,6 +66,9 @@ const apps = [
         CLOUD_COLLECTOR_API_URL: process.env.CLOUD_COLLECTOR_API_URL || "http://social-monitor/api/collector",
         CLOUD_COLLECTOR_SECRET_NAME: process.env.CLOUD_COLLECTOR_SECRET_NAME || "social-monitor-secrets",
         CLOUD_COLLECTOR_PVC: process.env.CLOUD_COLLECTOR_PVC || "social-monitor-sqlite-pvc",
+        DEPLOY_HUB_API_URL: process.env.DEPLOY_HUB_API_URL || "https://skyline-ark-deploy-hub-mcp.tyhark.com/mcp",
+        DEPLOY_HUB_NAMESPACE: process.env.DEPLOY_HUB_NAMESPACE || process.env.CLOUD_COLLECTOR_NAMESPACE || "g1469",
+        DEPLOY_HUB_TOKEN: process.env.DEPLOY_HUB_TOKEN || "",
         ACCOUNT_SESSION_ENCRYPTION_KEY: process.env.ACCOUNT_SESSION_ENCRYPTION_KEY || "",
         COLLECTOR_TOKEN: process.env.COLLECTOR_TOKEN || "",
         COLLECTOR_TOKEN_SHA256: process.env.COLLECTOR_TOKEN_SHA256 || COLLECTOR_TOKEN_SHA256_FALLBACK,
@@ -109,7 +112,11 @@ const apps = [
         CLOUD_COLLECTOR_API_URL: process.env.CLOUD_COLLECTOR_API_URL || "http://social-monitor/api/collector",
         CLOUD_COLLECTOR_SECRET_NAME: process.env.CLOUD_COLLECTOR_SECRET_NAME || "social-monitor-secrets",
         CLOUD_COLLECTOR_PVC: process.env.CLOUD_COLLECTOR_PVC || "social-monitor-sqlite-pvc",
-        ACCOUNT_SESSION_ENCRYPTION_KEY: process.env.ACCOUNT_SESSION_ENCRYPTION_KEY || ""
+        DEPLOY_HUB_API_URL: process.env.DEPLOY_HUB_API_URL || "https://skyline-ark-deploy-hub-mcp.tyhark.com/mcp",
+        DEPLOY_HUB_NAMESPACE: process.env.DEPLOY_HUB_NAMESPACE || process.env.CLOUD_COLLECTOR_NAMESPACE || "g1469",
+        DEPLOY_HUB_TOKEN: process.env.DEPLOY_HUB_TOKEN || "",
+        ACCOUNT_SESSION_ENCRYPTION_KEY: process.env.ACCOUNT_SESSION_ENCRYPTION_KEY || "",
+        COLLECTOR_TOKEN: process.env.COLLECTOR_TOKEN || ""
       }
     },
     {

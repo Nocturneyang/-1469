@@ -11,6 +11,7 @@ const {
     CloudCollectorOrchestrator,
     isCloudCollectorEnabled
 } = require('../lib/cloud-collector-orchestrator');
+const { CLOUD_RUNTIME_PROVIDER } = require('../lib/cloud-runtime-provider');
 
 function createTgUserRouter({ safeWriteEcosystem }) {
     const router = express.Router();
@@ -438,18 +439,18 @@ function createTgUserRouter({ safeWriteEcosystem }) {
                 const accountId = `tgu-${id}`;
                 db.prepare(`
                     INSERT INTO accounts (id, platform, status, health_status, runtime_provider, runtime_desired_state, updated_at)
-                    VALUES (?, 'telegram', 'idle', 'waiting_login', 'k8s', 'running', datetime('now', '+8 hours'))
+                    VALUES (?, 'telegram', 'idle', 'waiting_login', ?, 'running', datetime('now', '+8 hours'))
                     ON CONFLICT(id) DO UPDATE SET
                         status = excluded.status,
                         health_status = excluded.health_status,
                         runtime_provider = excluded.runtime_provider,
                         runtime_desired_state = excluded.runtime_desired_state,
                         updated_at = datetime('now', '+8 hours')
-                `).run(accountId);
+                `).run(accountId, CLOUD_RUNTIME_PROVIDER);
                 await new CloudCollectorOrchestrator({ logger: console }).ensureRuntime(accountId, { migrationSource: 'web-create' });
                 return res.json({
                     success: true,
-                    message: `TG 用户账号 ${accountId} 云端采集 Pod 已创建，请继续完成网页登录验证码流程。`
+                    message: `TG 用户账号 ${accountId} Deploy Hub 云端组件已创建，请继续完成网页登录验证码流程。`
                 });
             }
 

@@ -2,8 +2,9 @@
 
 const fs = require('fs');
 const path = require('path');
-const { K8sRuntimeAdapter } = require('./wa-runtime-adapters/k8s-runtime-adapter');
 const { createDeployHubAdapter } = require('./wa-runtime-adapters/deploy-hub-runtime-adapter');
+const { CLOUD_RUNTIME_PROVIDER } = require('./cloud-runtime-provider');
+const { readEnvFile } = require('./env-config');
 const {
     db,
     upsertCollectorRuntimeSpec,
@@ -23,7 +24,7 @@ function isCloudCollectorEnabled() {
     return envFlag('CLOUD_COLLECTOR_ENABLED');
 }
 
-function sanitizeK8sName(value) {
+function sanitizeRuntimeName(value) {
     return String(value || '')
         .toLowerCase()
         .replace(/[^a-z0-9.-]+/g, '-')
@@ -50,7 +51,7 @@ function accountParts(accountId, explicitPlatform = '') {
 }
 
 function deploymentNameFor(accountId) {
-    return sanitizeK8sName(`${process.env.CLOUD_COLLECTOR_DEPLOYMENT_PREFIX || 'sm-collector-'}${accountId}`);
+    return sanitizeRuntimeName(`${process.env.CLOUD_COLLECTOR_DEPLOYMENT_PREFIX || 'sm-collector-'}${accountId}`);
 }
 
 function defaultResources(collectorPlatform) {
@@ -76,6 +77,23 @@ function envValue(name, value) {
     return { name, value: String(value ?? '') };
 }
 
+function accountEnvKey(accountName) {
+    return String(accountName || '').toUpperCase().replace(/-/g, '_');
+}
+
+function configuredEnvValue(name) {
+    try {
+        return process.env[name] || readEnvFile()[name] || '';
+    } catch (_) {
+        return process.env[name] || '';
+    }
+}
+
+function pushConfiguredEnv(target, name) {
+    const value = configuredEnvValue(name);
+    if (value !== '') target.push(envValue(name, value));
+}
+
 function secretEnv(name, key = name) {
     return {
         name,
@@ -96,7 +114,7 @@ function platformEnv(parts, extraEnv = {}) {
         envValue('COLLECTOR_PLATFORM', parts.collectorPlatform),
         envValue('COLLECTOR_REMOTE_ONLY', 'true'),
         envValue('COLLECTOR_API_URL', process.env.CLOUD_COLLECTOR_API_URL || 'http://social-monitor/api/collector'),
-        envValue('COLLECTOR_ID', `k8s:${parts.accountId}`),
+        envValue('COLLECTOR_ID', `${CLOUD_RUNTIME_PROVIDER}:${parts.accountId}`),
         envValue('COLLECTOR_OUTBOX_DIR', `/data/collector-outbox/${parts.accountId}`),
         envValue('ACCOUNT_SESSION_DIR', '/data/collector-sessions'),
         envValue('DISABLE_MEDIA_UPLOAD', process.env.DISABLE_MEDIA_UPLOAD || '1'),
@@ -123,17 +141,52 @@ function platformEnv(parts, extraEnv = {}) {
             envValue('WA_INIT_HARD_TIMEOUT_MS', process.env.WA_INIT_HARD_TIMEOUT_MS || '360000')
         );
     } else if (parts.collectorPlatform === 'telegram-bot') {
+        const key = accountEnvKey(parts.accountName);
         base.push(
             envValue('TG_ACCOUNT_NAME', parts.accountName),
             envValue('TG_COLLECTOR_TYPE', 'bot')
         );
+        pushConfiguredEnv(base, `TG_BOT_TOKEN_${key}`);
+        pushConfiguredEnv(base, 'TG_BOT_TOKEN');
     } else if (parts.collectorPlatform === 'telegram-user') {
+        const key = accountEnvKey(parts.accountName);
         base.push(
             envValue('TG_ACCOUNT_NAME', parts.accountName),
             envValue('TG_COLLECTOR_TYPE', 'user')
         );
+        [
+            `TG_API_ID_${key}`,
+            `TG_API_HASH_${key}`,
+            `TG_USER_SESSION_${key}`,
+            `TG_WARMUP_SECONDS_${key}`,
+            `TG_DAILY_LIMIT_${key}`,
+            `TG_BATCH_SIZE_${key}`,
+            `TG_SLEEP_MIN_MS_${key}`,
+            `TG_SLEEP_MAX_MS_${key}`,
+            `TG_BACKFILL_DAYS_${key}`,
+            `TG_ENABLE_BACKFILL_${key}`,
+            `TG_WHITELIST_${key}`,
+            'TG_API_ID',
+            'TG_API_HASH',
+            'TG_WARMUP_SECONDS',
+            'TG_DAILY_LIMIT',
+            'TG_BATCH_SIZE',
+            'TG_SLEEP_MIN_MS',
+            'TG_SLEEP_MAX_MS',
+            'TG_BACKFILL_DAYS',
+            'TG_ENABLE_BACKFILL'
+        ].forEach(name => pushConfiguredEnv(base, name));
     } else if (parts.collectorPlatform === 'teams-graph') {
+        const key = accountEnvKey(parts.accountName);
         base.push(envValue('ACCOUNT_NAME', parts.accountName));
+        [
+            'MICROSOFT_GRAPH_CLIENT_ID',
+            'MICROSOFT_GRAPH_CLIENT_SECRET',
+            'MICROSOFT_GRAPH_REDIRECT_URI',
+            'TEAMS_AUTH_MODE',
+            'TEAMS_ACCOUNT_TYPE',
+            `TEAMS_WHITELIST_${key}`
+        ].forEach(name => pushConfiguredEnv(base, name));
     }
 
     for (const [key, value] of Object.entries(extraEnv || {})) {
@@ -222,20 +275,12 @@ class CloudCollectorOrchestrator {
     constructor({ logger = console } = {}) {
         this.logger = logger;
         this.image = process.env.CLOUD_COLLECTOR_IMAGE || process.env.IMAGE || '';
-
-        // 优先使用 Deploy Hub 适配器（不需要 K8s RBAC）；
-        // 当 DEPLOY_HUB_TOKEN 有值时自动启用。
-        if (process.env.DEPLOY_HUB_TOKEN) {
-            this.adapter = createDeployHubAdapter({ logger });
-            this.namespace = process.env.CLOUD_COLLECTOR_NAMESPACE ||
-                process.env.WA_K8S_NAMESPACE || 'g1469';
-            logger.log('[CloudOrchestrator] Using DeployHub adapter (no RBAC required)');
-        } else {
-            this.adapter = new K8sRuntimeAdapter({ logger });
-            this.namespace = process.env.CLOUD_COLLECTOR_NAMESPACE || this.adapter.namespace;
-            this.adapter.namespace = this.namespace;
-            logger.log('[CloudOrchestrator] Using K8s direct API adapter');
-        }
+        this.adapter = createDeployHubAdapter({ logger });
+        this.namespace = process.env.DEPLOY_HUB_NAMESPACE ||
+            process.env.CLOUD_COLLECTOR_NAMESPACE ||
+            'g1469';
+        this.adapter.namespace = this.namespace;
+        logger.log('[CloudOrchestrator] Using Deploy Hub adapter');
     }
 
     requireEnabled() {
@@ -243,7 +288,10 @@ class CloudCollectorOrchestrator {
             throw new Error('CLOUD_COLLECTOR_ENABLED is not enabled');
         }
         if (!this.image) {
-            throw new Error('CLOUD_COLLECTOR_IMAGE is required to create cloud collector deployments');
+            throw new Error('CLOUD_COLLECTOR_IMAGE is required to create Deploy Hub collector components');
+        }
+        if (!process.env.DEPLOY_HUB_TOKEN) {
+            throw new Error('DEPLOY_HUB_TOKEN is required to manage cloud collectors via Deploy Hub');
         }
     }
 
@@ -263,6 +311,7 @@ class CloudCollectorOrchestrator {
             image: options.image || this.image,
             resources,
             sessionDir: sessionRoot,
+            runtimeProvider: CLOUD_RUNTIME_PROVIDER,
             desiredState: options.desiredState || 'running',
             migrationSource: options.migrationSource || null,
             extraEnv: options.extraEnv || {}
@@ -282,14 +331,21 @@ class CloudCollectorOrchestrator {
             upsertCollectorRuntimeSpec(spec);
             db.prepare(`
                 INSERT INTO accounts (id, platform, status, runtime_provider, runtime_desired_state, deployment_name, updated_at)
-                VALUES (?, ?, ?, 'k8s', ?, ?, datetime('now', '+8 hours'))
+                VALUES (?, ?, ?, ?, ?, ?, datetime('now', '+8 hours'))
                 ON CONFLICT(id) DO UPDATE SET
-                    runtime_provider = 'k8s',
+                    runtime_provider = excluded.runtime_provider,
                     runtime_desired_state = excluded.runtime_desired_state,
                     deployment_name = excluded.deployment_name,
                     status = CASE WHEN status IN ('authenticated','monitoring','warmup','qr') THEN status ELSE excluded.status END,
                     updated_at = datetime('now', '+8 hours')
-            `).run(spec.accountId, spec.platform, spec.desiredState === 'stopped' ? 'stopped' : 'initializing', spec.desiredState, spec.deploymentName);
+            `).run(
+                spec.accountId,
+                spec.platform,
+                spec.desiredState === 'stopped' ? 'stopped' : 'initializing',
+                CLOUD_RUNTIME_PROVIDER,
+                spec.desiredState,
+                spec.deploymentName
+            );
             return spec;
         } catch (err) {
             upsertCollectorRuntimeSpec({ ...spec, lastError: err.message });
@@ -302,14 +358,9 @@ class CloudCollectorOrchestrator {
         if (!spec) {
             await this.ensureRuntime(accountId);
             spec = getCollectorRuntimeSpec(accountId);
+        } else {
+            await this.ensureRuntime(accountId, { desiredState: 'running', migrationSource: spec.migration_source || 'api-runtime-start' });
         }
-        await this.adapter.patchScale(spec.deployment_name, { spec: { replicas: 1 } }, [
-            'scale',
-            `deployment/${spec.deployment_name}`,
-            '--replicas=1',
-            '-n',
-            this.namespace
-        ]);
         return updateCollectorRuntimeDesiredState(accountId, 'running', { orchestratorState: 'starting' });
     }
 
@@ -329,23 +380,11 @@ class CloudCollectorOrchestrator {
     async restart(accountId) {
         const spec = getCollectorRuntimeSpec(accountId);
         if (!spec) throw new Error(`Runtime spec not found for ${accountId}`);
-        await this.adapter.patchDeployment(spec.deployment_name, {
-            spec: {
-                template: {
-                    metadata: {
-                        annotations: {
-                            'kubectl.kubernetes.io/restartedAt': new Date().toISOString()
-                        }
-                    }
-                }
-            }
-        }, [
-            'rollout',
-            'restart',
-            `deployment/${spec.deployment_name}`,
-            '-n',
-            this.namespace
-        ]);
+        await this.ensureRuntime(accountId, {
+            desiredState: 'running',
+            migrationSource: spec.migration_source || 'api-runtime-restart',
+            extraEnv: { COLLECTOR_RESTART_NONCE: new Date().toISOString() }
+        });
         return updateCollectorRuntimeDesiredState(accountId, 'running', { orchestratorState: 'restarting' });
     }
 

@@ -4,39 +4,6 @@ metadata:
   name: social-monitor
   namespace: g1469
 ---
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: social-monitor-wa-orchestrator
-  namespace: g1469
-rules:
-  - apiGroups: [""]
-    resources: ["pods"]
-    verbs: ["get", "list", "watch"]
-  - apiGroups: ["apps"]
-    resources: ["deployments"]
-    verbs: ["get", "list", "watch", "create", "delete", "patch", "update"]
-  - apiGroups: ["apps"]
-    resources: ["deployments/scale"]
-    verbs: ["get", "patch", "update"]
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: social-monitor-wa-orchestrator
-  namespace: g1469
-subjects:
-  - kind: ServiceAccount
-    name: social-monitor
-    namespace: g1469
-  - kind: ServiceAccount
-    name: default
-    namespace: g1469
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: Role
-  name: social-monitor-wa-orchestrator
----
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
@@ -137,6 +104,16 @@ spec:
               value: social-monitor-secrets
             - name: CLOUD_COLLECTOR_PVC
               value: social-monitor-sqlite-pvc
+            - name: DEPLOY_HUB_API_URL
+              value: "https://skyline-ark-deploy-hub-mcp.tyhark.com/mcp"
+            - name: DEPLOY_HUB_NAMESPACE
+              value: "g1469"
+            - name: DEPLOY_HUB_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: social-monitor-secrets
+                  key: DEPLOY_HUB_TOKEN
+                  optional: true
             - name: CLOUD_COLLECTOR_SUPERVISOR_INTERVAL_MS
               value: "30000"
             - name: ACCOUNT_SESSION_ENCRYPTION_KEY

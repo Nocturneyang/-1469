@@ -138,12 +138,12 @@
         v-if="acc.runtime_desired_state === 'stopped'"
         class="btn-secondary"
         @click="$emit('runtime-action', acc, 'start')"
-      >启动云端Pod</button>
+      >启动云端组件</button>
       <button
         v-else
         class="btn-secondary"
         @click="$emit('runtime-action', acc, 'stop')"
-      >停止云端Pod</button>
+      >停止云端组件</button>
       <button class="btn-secondary" @click="$emit('runtime-action', acc, 'restart')">滚动重启</button>
     </div>
 
@@ -203,11 +203,14 @@ defineEmits(['delete', 'restart', 'relogin', 'runtime-action', 'teams-backfill',
 const tguName = computed(() => props.acc.id.replace('tgu-', ''))
 const runtimeLabel = computed(() => {
   const provider = String(props.acc.runtime_provider || 'pm2').toLowerCase()
-  if (provider === 'k8s' || provider === 'kubernetes') return 'K8s'
-  if (provider === 'rainbond') return 'Rainbond'
+  if (['deploy-hub', 'deployhub', 'rainbond'].includes(provider)) return 'Deploy Hub'
+  if (provider === 'k8s' || provider === 'kubernetes') return 'Deploy Hub'
   return 'PM2'
 })
-const isCloudRuntime = computed(() => String(props.acc.runtime_provider || '').toLowerCase() === 'k8s')
+const isCloudRuntime = computed(() => {
+  const provider = String(props.acc.runtime_provider || '').toLowerCase()
+  return ['deploy-hub', 'deployhub', 'rainbond', 'k8s', 'kubernetes'].includes(provider)
+})
 const roleLabel = computed(() => {
   const role = props.acc.account_role || 'collector'
   if (role === 'service') return '服务'

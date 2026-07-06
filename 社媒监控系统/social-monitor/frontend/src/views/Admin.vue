@@ -417,7 +417,7 @@ const handleRelogin = async (acc, actionType) => {
 const handleRuntimeAction = async (acc, action) => {
   const labels = { start: '启动', stop: '停止', restart: '滚动重启', relogin: '重新登录' }
   try {
-    await ElMessageBox.confirm(`确定要${labels[action] || action}账号 ${acc.id} 的云端采集 Pod 吗？`, '云端运行时', { type: 'warning' })
+    await ElMessageBox.confirm(`确定要${labels[action] || action}账号 ${acc.id} 的 Deploy Hub 云端组件吗？`, '云端运行时', { type: 'warning' })
     const res = await accountRuntimeAction(acc.id, action)
     if (res.success) {
       ElMessage.success('云端运行时指令已发送')

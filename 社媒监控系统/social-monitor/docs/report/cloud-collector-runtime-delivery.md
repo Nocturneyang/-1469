@@ -2,10 +2,10 @@
 
 ## 交付内容
 
-- 新增 K8s 云端 collector 编排器、supervisor 和 runtime spec 表。
+- 新增 Deploy Hub 云端 collector 编排器、supervisor 和 runtime spec 表。
 - 新增 remote-only collector 保护，云端 worker 只通过 collector API 写入。
 - 新增 TG/Teams 加密会话存储。
-- 更新账号 API、前端账号卡片、容器入口和 Deploy Hub K8s 权限。
+- 更新账号 API、前端账号卡片、容器入口和 Deploy Hub API Token 注入。
 
 ## 风险
 

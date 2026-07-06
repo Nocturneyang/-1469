@@ -2,7 +2,7 @@
 
 ## GET `/api/accounts/:id/runtime`
 
-返回指定账号的云端 runtime spec 和 K8s Deployment 状态。
+返回指定账号的云端 runtime spec 和 Deploy Hub/Rainbond 组件状态。
 
 ```json
 {

@@ -8,11 +8,11 @@
 
 ## 集成场景
 
-- 创建 WA 测试账号，确认生成 K8s Deployment、账号卡片显示 QR、扫码后状态变为 authenticated。
+- 创建 WA 测试账号，确认生成 Deploy Hub/Rainbond collector 组件、账号卡片显示 QR、扫码后状态变为 authenticated。
 - 创建 TG Bot 测试账号，确认 token 从账号专属环境配置读取，群消息通过 collector API 入库。
 - 创建 TG 用户号，完成验证码和 2FA，确认 session 写入加密文件且 `.env` 不新增明文 session。
 - 创建 Teams 账号，完成 OAuth，确认 token 写入新加密路径且 collector 进入 authenticated。
-- 停止、启动、滚动重启、重新登录和删除账号，确认 Deployment 与数据库状态一致。
+- 停止、启动、滚动重启、重新登录和删除账号，确认 Deploy Hub 组件与数据库状态一致。
 
 ## 生产灰度
 

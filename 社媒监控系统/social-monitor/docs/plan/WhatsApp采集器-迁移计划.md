@@ -20,16 +20,16 @@
 - 状态变化写入 `wa_runtime_events`，前端/API 优先展示 orchestrator 的运行事实。
 - worker 初始化失败后默认进入驻留心跳模式，不再通过 `process.exit(1)` 触发 PM2 立即重启；orchestrator 等冷却结束后统一恢复。
 
-下一步继续保留 WA RuntimeAdapter 抽象，让同一套 orchestrator 既能管理当前 PM2 模式，也能在未来需要硬隔离时切回 Rainbond/Kubernetes collector。
+继续保留 WA RuntimeAdapter 抽象，让本地 collector 使用 PM2；云端硬隔离 collector 统一走 Deploy Hub/Rainbond，不再使用主 Pod 直连 Kubernetes API。
 
 ## 阶段 2.5：RuntimeAdapter 抽象（已落地 PM2 适配器）
 
 - 新增 `lib/wa-runtime-adapters/pm2-runtime-adapter.js`，封装本地 PM2 的列表、启动和重启操作。
-- 新增 `lib/wa-runtime-adapters/k8s-runtime-adapter.js`，支持通过集群内 Kubernetes API 管理线上 Kubernetes/Rainbond collector Deployment，必要时回退 `kubectl`。
+- 新增 `lib/wa-runtime-adapters/deploy-hub-runtime-adapter.js`，支持通过 Deploy Hub `rainbond_deploy_component` 管理线上 Rainbond collector 组件，不需要业务容器 RBAC。
 - `wa-supervisor` 只依赖 RuntimeAdapter 接口，不再在状态机中直接拼 PM2 命令。
 - 当前线上默认 `WA_RUNTIME_ADAPTER=pm2`，不依赖 Rainbond 管理端启动账号组件。
-- 前端运行时卡片已从固定 `PM2` 表述改为通用运行时字段，未来切到 K8s/Rainbond 时仍可复用。
-- 主系统 K8s manifest 保留最小 ServiceAccount/Role/RoleBinding，作为未来硬隔离 collector 的备用能力；当前 PM2 模式不依赖这些权限。
+- 前端运行时卡片已从固定 `PM2` 表述改为通用运行时字段，云端统一显示 Deploy Hub。
+- 主系统部署清单不再保留 collector 编排 RBAC；云端组件创建交给 Deploy Hub 平台权限完成。
 
 ## 阶段 3：Collector 协议
 
@@ -51,7 +51,7 @@
 - 根 `Dockerfile` 包含 Chromium，确保同一镜像里的 WA worker 可以启动 Chrome。
 - 新增 `.dockerignore`，避免把本地 session、SQLite、media、node_modules 打入主系统或 collector 镜像。
 - `.deployhub/k8s/app.yaml` 固化 App ID 58 的 10Gi PVC、当前主组件资源规格和 `LOCAL_WA_RUNTIME_ENABLED=false`。
-- 保留 `npm run wa:collector:manifest` 作为未来硬隔离方案工具，但当前 Deploy Hub 不再使用独立 collector manifest。
+- `npm run wa:collector:manifest` / `npm run tg:collector:manifest` 已作为旧 K8s manifest 工具默认禁用；仅在设置 `ALLOW_LEGACY_COLLECTOR_MANIFEST=1` 时用于历史排障。
 - 主系统已补齐 skyline-ark-sso 兼容：`sso: true`、`/token/userinfo`、运行时 `/runtime-config.js`、前端 401 统一登录跳转。
 
 ## 阶段 5：可替代通道

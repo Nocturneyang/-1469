@@ -3,13 +3,13 @@
 ## 架构
 
 - 主服务负责 API、分析器、账号编排和 collector receiver。
-- 每个账号由 `cloud-collector-orchestrator` 创建一个 K8s Deployment。
-- Deployment 复用当前镜像，通过 `COLLECTOR_PLATFORM` 分支启动 WA、TG Bot、TG 用户号或 Teams Graph worker。
+- 每个账号由 `cloud-collector-orchestrator` 调用 Deploy Hub `rainbond_deploy_component` 创建一个 Rainbond collector 组件。
+- collector 组件复用当前镜像，通过 `COLLECTOR_PLATFORM` 分支启动 WA、TG Bot、TG 用户号或 Teams Graph worker。
 - collector 通过 `/api/collector/*` 写入消息、心跳、事件和账号状态；本地 outbox 负责短暂故障重放。
 
 ## 数据与状态
 
-- `collector_runtime_specs` 保存账号到 K8s Deployment 的映射、期望状态、资源配置、session 目录和最后错误。
+- `collector_runtime_specs` 保存账号到 Deploy Hub/Rainbond 组件的映射、期望状态、资源配置、session 目录和最后错误，`runtime_provider` 新写入值统一为 `deploy-hub`。
 - `accounts` 扩展 `runtime_desired_state`、`deployment_name`、`session_status`。
 - `cloud-collector-supervisor` 周期读取 runtime specs 和 heartbeats，更新账号健康状态，并在心跳长期过期时滚动重启。
 
@@ -22,6 +22,6 @@
 
 ## 部署
 
-- `.deployhub/k8s/app.yaml` 赋予 ServiceAccount 创建、删除、更新 Deployment 的权限。
-- `CLOUD_COLLECTOR_IMAGE=__IMAGE__` 注入主服务，确保账号 Pod 使用同一镜像。
+- `.deployhub/k8s/app.yaml` 不再赋予主 Pod 编排 Deployment 的 RBAC；主服务只通过 `DEPLOY_HUB_API_URL` 和 `DEPLOY_HUB_TOKEN` 调用 Deploy Hub。
+- `CLOUD_COLLECTOR_IMAGE=__IMAGE__` 注入主服务，确保账号 collector 组件使用同一镜像。
 - `docker-entrypoint.sh` 根据 `COLLECTOR_PLATFORM` 作为 collector 启动。

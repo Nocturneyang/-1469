@@ -6,18 +6,18 @@
 
 ## 用户故事
 
-- 管理员新增 WA 账号后，系统自动创建云端 collector Pod，并在账号卡片中展示二维码。
+- 管理员新增 WA 账号后，系统通过 Deploy Hub 创建云端 collector 组件，并在账号卡片中展示二维码。
 - 管理员新增 TG 用户号后，在网站中输入 API ID/Hash、手机号、验证码和 2FA，云端 collector 使用加密 session 继续采集。
 - 管理员新增 Teams 账号后，通过 OAuth 授权，云端 `teams-graph` collector 自动检测 token 并采集群聊消息。
 - 管理员可以对任一云端账号执行启动、停止、滚动重启、重新登录和删除操作。
 
 ## 验收标准
 
-- 每个账号对应独立 K8s Deployment/Pod，主 `ui-server` 不直接运行采集 worker。
+- 每个账号对应独立 Deploy Hub/Rainbond collector 组件，主 `ui-server` 不直接运行采集 worker，也不直连 K8s API。
 - 云端 collector 设置 `COLLECTOR_REMOTE_ONLY=true`，不直接打开或写入主 `database.sqlite`。
 - TG 用户号 session 与 Teams token 使用固定 `ACCOUNT_SESSION_ENCRYPTION_KEY` 加密存储。
 - 旧本地 collector 上报链路继续兼容；同一账号迁移到云端前需要人工停掉旧 collector。
-- `GET /api/accounts` 返回云端 runtime provider、期望状态、deployment 名和 session 状态。
+- `GET /api/accounts` 返回云端 runtime provider（`deploy-hub`）、期望状态、组件名和 session 状态。
 
 ## 非目标
 

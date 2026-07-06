@@ -10,6 +10,7 @@ const {
     CloudCollectorOrchestrator,
     isCloudCollectorEnabled
 } = require('../lib/cloud-collector-orchestrator');
+const { CLOUD_RUNTIME_PROVIDER } = require('../lib/cloud-runtime-provider');
 
 function createTeamsRouter({ safeWriteEcosystem }) {
     const router = express.Router();
@@ -177,16 +178,16 @@ function createTeamsRouter({ safeWriteEcosystem }) {
             if (isCloudCollectorEnabled()) {
                 db.prepare(`
                     INSERT INTO accounts (id, platform, status, health_status, runtime_provider, runtime_desired_state, updated_at)
-                    VALUES (?, 'teams', 'qr', 'waiting_oauth', 'k8s', 'running', datetime('now', '+8 hours'))
+                    VALUES (?, 'teams', 'qr', 'waiting_oauth', ?, 'running', datetime('now', '+8 hours'))
                     ON CONFLICT(id) DO UPDATE SET
                         status = excluded.status,
                         health_status = excluded.health_status,
                         runtime_provider = excluded.runtime_provider,
                         runtime_desired_state = excluded.runtime_desired_state,
                         updated_at = datetime('now', '+8 hours')
-                `).run(accountKey);
+                `).run(accountKey, CLOUD_RUNTIME_PROVIDER);
                 await new CloudCollectorOrchestrator({ logger: console }).ensureRuntime(accountKey, { migrationSource: 'web-create' });
-                return res.json({ success: true, message: `账号 ${accountKey} 云端采集 Pod 已创建，请前往账号管理完成 OAuth 授权` });
+                return res.json({ success: true, message: `账号 ${accountKey} Deploy Hub 云端组件已创建，请前往账号管理完成 OAuth 授权` });
             }
 
             db.prepare(`INSERT OR REPLACE INTO accounts (id, platform, status) VALUES (?, 'teams', 'initializing')`).run(accountKey);

@@ -3,6 +3,11 @@ const path = require('path');
 
 require('dotenv').config({ path: path.join(process.env.DATA_DIR || path.join(__dirname, '..'), '.env') });
 
+function requireLegacyManifestOptIn() {
+    if (process.env.ALLOW_LEGACY_COLLECTOR_MANIFEST === '1') return;
+    throw new Error('Legacy K8s collector manifests are deprecated; use Deploy Hub cloud collector orchestration instead');
+}
+
 function parseArgs(argv) {
     const args = {};
     for (let i = 2; i < argv.length; i += 1) {
@@ -181,6 +186,7 @@ ${userEnv}
 }
 
 function main() {
+    requireLegacyManifestOptIn();
     const args = parseArgs(process.argv);
     const accountName = required(args, 'account-name', 'TG_ACCOUNT_NAME');
     const type = String(args.type || 'user').toLowerCase();

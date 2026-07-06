@@ -1,5 +1,10 @@
 const fs = require('fs');
 
+function requireLegacyManifestOptIn() {
+    if (process.env.ALLOW_LEGACY_COLLECTOR_MANIFEST === '1') return;
+    throw new Error('Legacy K8s collector manifests are deprecated; use Deploy Hub cloud collector orchestration instead');
+}
+
 function parseArgs(argv) {
     const args = {};
     for (let i = 2; i < argv.length; i += 1) {
@@ -137,6 +142,7 @@ spec:
 }
 
 function main() {
+    requireLegacyManifestOptIn();
     const args = parseArgs(process.argv);
     const options = {
         accountName: required(args, 'account-name', 'ACCOUNT_NAME'),

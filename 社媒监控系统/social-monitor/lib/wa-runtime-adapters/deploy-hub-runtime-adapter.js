@@ -3,14 +3,15 @@
 const https = require('https');
 const http = require('http');
 const { URL } = require('url');
+const { CLOUD_RUNTIME_PROVIDER } = require('../cloud-runtime-provider');
 
 /**
  * DeployHubRuntimeAdapter
  *
- * 通过 Deploy Hub MCP HTTP API 管理采集器 Pod 的生命周期，
- * 不依赖 K8s 直接 API 权限，不需要 RBAC 配置。
+ * 通过 Deploy Hub MCP HTTP API 管理采集器组件的生命周期，
+ * 不依赖主 Pod 直连 K8s API，也不需要业务容器持有编排 RBAC。
  *
- * 实现了与 K8sRuntimeAdapter 相同的接口供 CloudCollectorOrchestrator 使用：
+ * 实现云端 runtime adapter 接口供 CloudCollectorOrchestrator 使用：
  *   applyDeployment(manifest)
  *   deleteDeployment(deploymentName)
  *   patchScale(deploymentName, body, [kubectlArgs])
@@ -118,8 +119,18 @@ class DeployHubMcpClient {
 function envArrayToString(envArray) {
     if (!Array.isArray(envArray)) return '';
     return envArray
-        .filter(e => e && e.name && e.value !== undefined && !e.valueFrom)
-        .map(e => `${e.name}=${String(e.value !== null && e.value !== undefined ? e.value : '')}`)
+        .map(e => {
+            if (!e || !e.name) return null;
+            if (e.value !== undefined) {
+                return `${e.name}=${String(e.value !== null && e.value !== undefined ? e.value : '')}`;
+            }
+            const secretKey = e.valueFrom && e.valueFrom.secretKeyRef && e.valueFrom.secretKeyRef.key;
+            if (secretKey && process.env[secretKey]) {
+                return `${e.name}=${String(process.env[secretKey])}`;
+            }
+            return null;
+        })
+        .filter(Boolean)
         .join(',');
 }
 
@@ -129,6 +140,23 @@ function rainbondAppName(deploymentName) {
         .replace(/[^a-z0-9-]+/g, '-')
         .replace(/^-+|-+$/g, '')
         .slice(0, 63);
+}
+
+function deploymentNameForAccountId(accountId) {
+    return rainbondAppName(`${process.env.CLOUD_COLLECTOR_DEPLOYMENT_PREFIX || 'sm-collector-'}${accountId}`);
+}
+
+function runtimeSpecsByDeploymentName() {
+    try {
+        const { listCollectorRuntimeSpecs } = require('../../db/database');
+        return new Map((listCollectorRuntimeSpecs() || []).map(spec => [spec.deployment_name, spec]));
+    } catch (_) {
+        return new Map();
+    }
+}
+
+function readyPod(pod) {
+    return pod && (pod.ready === true || String(pod.ready).toLowerCase() === 'true');
 }
 
 class DeployHubRuntimeAdapter {
@@ -148,6 +176,10 @@ class DeployHubRuntimeAdapter {
         return rainbondAppName(deploymentName);
     }
 
+    workerName(accountName) {
+        return deploymentNameForAccountId(`wa-${accountName}`);
+    }
+
     async _findApp(appName) {
         let result;
         try { result = await this.client.call('rainbond_list_apps', {}); } catch (_) { return null; }
@@ -155,7 +187,30 @@ class DeployHubRuntimeAdapter {
         return list.find(a => ((a.app_name || a.name || '')).toLowerCase() === appName.toLowerCase()) || null;
     }
 
-    // --- K8sRuntimeAdapter compatible interface ---
+    _waEnvVars(accountName, extraEnv = {}) {
+        return envArrayToString([
+            { name: 'NODE_ENV', value: 'production' },
+            { name: 'DATA_DIR', value: '/data' },
+            { name: 'COLLECTOR_PLATFORM', value: 'whatsapp' },
+            { name: 'COLLECTOR_REMOTE_ONLY', value: 'true' },
+            { name: 'COLLECTOR_API_URL', value: process.env.CLOUD_COLLECTOR_API_URL || 'http://social-monitor/api/collector' },
+            { name: 'COLLECTOR_ID', value: `${CLOUD_RUNTIME_PROVIDER}:wa-${accountName}` },
+            { name: 'COLLECTOR_OUTBOX_DIR', value: `/data/collector-outbox/wa-${accountName}` },
+            { name: 'ACCOUNT_SESSION_DIR', value: '/data/collector-sessions' },
+            { name: 'ACCOUNT_NAME', value: accountName },
+            { name: 'WA_AUTH_DATA_PATH', value: '/data/collector-sessions/wa' },
+            { name: 'WA_ORCHESTRATOR_MANAGED_INIT', value: 'true' },
+            { name: 'DISABLE_MEDIA_UPLOAD', value: process.env.DISABLE_MEDIA_UPLOAD || '1' },
+            { name: 'PUPPETEER_SKIP_DOWNLOAD', value: 'true' },
+            { name: 'PUPPETEER_EXECUTABLE_PATH', value: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium' },
+            { name: 'PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH', value: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH || '/usr/bin/chromium' },
+            { name: 'COLLECTOR_TOKEN', value: process.env.COLLECTOR_TOKEN || '' },
+            { name: 'ACCOUNT_SESSION_ENCRYPTION_KEY', value: process.env.ACCOUNT_SESSION_ENCRYPTION_KEY || '' },
+            ...Object.entries(extraEnv).map(([name, value]) => ({ name, value }))
+        ]);
+    }
+
+    // --- Cloud runtime adapter compatible interface ---
 
     async applyDeployment(manifest) {
         const deploymentName = manifest && manifest.metadata && manifest.metadata.name;
@@ -217,30 +272,13 @@ class DeployHubRuntimeAdapter {
             return this.deleteDeployment(deploymentName);
         }
 
-        // 启动 = 更新/重建组件
-        const result = await this.client.call('rainbond_deploy_component', {
-            app_name: appName,
-            component_name: 'collector',
-            image: this.image,
-            namespace: this.namespace,
-            env_vars: '',
-            ports: ''
-        });
-        return result;
+        throw new Error('DeployHubAdapter patchScale cannot start without a full runtime manifest; call applyDeployment instead');
     }
 
     async patchDeployment(deploymentName, _body, _kubectlArgs) {
-        // 重启 = 触发 Deploy Hub 重新部署（滚动更新）
         const appName = this._appName(deploymentName);
         this.logger.log(`[DeployHubAdapter] patchDeployment (restart): app=${appName}`);
-        return this.client.call('rainbond_deploy_component', {
-            app_name: appName,
-            component_name: 'collector',
-            image: this.image,
-            namespace: this.namespace,
-            env_vars: '',
-            ports: ''
-        });
+        throw new Error('DeployHubAdapter patchDeployment cannot restart without a full runtime manifest; call applyDeployment instead');
     }
 
     async readDeployment(deploymentName) {
@@ -260,7 +298,7 @@ class DeployHubRuntimeAdapter {
             podStatus = (status && (status.pod_status || status.pods)) || [];
         } catch (_) {}
 
-        const ready = podStatus.some(p => p.ready === true);
+        const ready = podStatus.some(readyPod);
         const phase = ready ? 'Running' : (podStatus.length > 0 ? (podStatus[0].phase || 'Pending') : 'Unknown');
 
         return {
@@ -281,6 +319,7 @@ class DeployHubRuntimeAdapter {
 
         const list = Array.isArray(apps) ? apps : (apps && (apps.apps || apps.data) ? apps.apps || apps.data : []);
         const PREFIX = 'sm-collector-';
+        const specByDeploymentName = runtimeSpecsByDeploymentName();
         const map = new Map();
 
         for (const app of list) {
@@ -288,7 +327,10 @@ class DeployHubRuntimeAdapter {
             if (!appName.startsWith(PREFIX)) continue;
 
             const suffix = appName.slice(PREFIX.length); // e.g. "wa-test"
-            const accountId = suffix;
+            const spec = specByDeploymentName.get(appName);
+            const accountKey = spec
+                ? (spec.platform === 'whatsapp' ? spec.account_name : spec.account_id)
+                : suffix;
 
             let phase = 'Unknown';
             let ready = false;
@@ -297,15 +339,19 @@ class DeployHubRuntimeAdapter {
                     app_id: app.ID || app.id || app.app_id
                 });
                 const pods = (status && (status.pod_status || status.pods)) || [];
-                ready = pods.some(p => p.ready === true);
+                ready = pods.some(readyPod);
                 phase = pods.length > 0 ? (pods[0].phase || 'Unknown') : 'Unknown';
             } catch (_) {}
 
-            map.set(accountId, {
+            map.set(accountKey, {
                 status: ready ? 'online' : 'launching',
                 phase,
                 ready,
+                name: appName,
+                mode: 'deploy-hub',
+                pid: 0,
                 restartCount: 0,
+                uptimeSeconds: 0,
                 runtime: 'deploy-hub',
                 appName
             });
@@ -313,12 +359,34 @@ class DeployHubRuntimeAdapter {
 
         return map;
     }
+
+    async startCollector(accountName, extraEnv = {}) {
+        const appName = this.workerName(accountName);
+        return this.client.call('rainbond_deploy_component', {
+            app_name: appName,
+            component_name: 'collector',
+            image: this.image,
+            namespace: this.namespace,
+            env_vars: this._waEnvVars(accountName, extraEnv),
+            ports: ''
+        });
+    }
+
+    restartCollector(accountName) {
+        return this.startCollector(accountName, { COLLECTOR_RESTART_NONCE: new Date().toISOString() });
+    }
+
+    deleteCollector(accountName) {
+        return this.deleteDeployment(this.workerName(accountName));
+    }
 }
 
 function createDeployHubAdapter({ logger = console } = {}) {
     const apiUrl = process.env.DEPLOY_HUB_API_URL || 'https://skyline-ark-deploy-hub-mcp.tyhark.com/mcp';
     const token = process.env.DEPLOY_HUB_TOKEN || '';
-    const namespace = process.env.WA_K8S_NAMESPACE || process.env.CLOUD_COLLECTOR_NAMESPACE || 'g1469';
+    const namespace = process.env.DEPLOY_HUB_NAMESPACE ||
+        process.env.CLOUD_COLLECTOR_NAMESPACE ||
+        'g1469';
     const image = process.env.CLOUD_COLLECTOR_IMAGE || process.env.IMAGE || '';
     return new DeployHubRuntimeAdapter({ apiUrl, token, namespace, image, logger });
 }

@@ -2,6 +2,7 @@ const Database = require('better-sqlite3');
 const path = require('path');
 const fs = require('fs');
 const { shanghaiISOString } = require('../lib/time');
+const { CLOUD_RUNTIME_PROVIDER } = require('../lib/cloud-runtime-provider');
 
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '..');
 const dbPath = path.join(DATA_DIR, 'db', 'database.sqlite');
@@ -551,7 +552,7 @@ function initSchema() {
             account_id TEXT PRIMARY KEY,
             platform TEXT NOT NULL,
             account_name TEXT NOT NULL,
-            runtime_provider TEXT NOT NULL DEFAULT 'k8s',
+            runtime_provider TEXT NOT NULL DEFAULT 'deploy-hub',
             desired_state TEXT NOT NULL DEFAULT 'running',
             deployment_name TEXT,
             namespace TEXT,
@@ -832,7 +833,7 @@ function initSchema() {
                 account_id TEXT PRIMARY KEY,
                 platform TEXT NOT NULL,
                 account_name TEXT NOT NULL,
-                runtime_provider TEXT NOT NULL DEFAULT 'k8s',
+                runtime_provider TEXT NOT NULL DEFAULT 'deploy-hub',
                 desired_state TEXT NOT NULL DEFAULT 'running',
                 deployment_name TEXT,
                 namespace TEXT,
@@ -1114,7 +1115,7 @@ function normalizeRuntimeSpec(spec) {
         account_id: spec.accountId,
         platform: spec.platform,
         account_name: spec.accountName,
-        runtime_provider: spec.runtimeProvider || 'k8s',
+        runtime_provider: spec.runtimeProvider || CLOUD_RUNTIME_PROVIDER,
         desired_state: spec.desiredState || 'running',
         deployment_name: spec.deploymentName || null,
         namespace: spec.namespace || null,

@@ -18,6 +18,8 @@
 ```bash
 LOCAL_WA_RUNTIME_ENABLED=false
 COLLECTOR_TOKEN=生产端接收令牌
+DEPLOY_HUB_TOKEN=Deploy Hub API Token
+DEPLOY_HUB_API_URL=https://skyline-ark-deploy-hub-mcp.tyhark.com/mcp
 ```
 
 `LOCAL_WA_RUNTIME_ENABLED=false` 会让生产端新增 WA 时只登记账号，不修改生产 PM2，也不在生产 Pod 内启动 Chrome。
@@ -28,7 +30,7 @@ COLLECTOR_TOKEN=生产端接收令牌
 - `/readyz`：就绪检查，验证采集库 SQLite、`/data` 可读写和 PVC 剩余容量
 - `/api/health`：同 `/readyz`，方便平台或人工查看摘要
 
-K8s Deployment 已配置 `startupProbe`、`readinessProbe`、`livenessProbe`，避免服务未就绪时提前接流量。
+主服务 Deployment 已配置 `startupProbe`、`readinessProbe`、`livenessProbe`，避免服务未就绪时提前接流量。
 默认水位保护为 `STORAGE_MIN_FREE_MB=512` 和 `STORAGE_MIN_FREE_PERCENT=5`，低于任一阈值时 `/readyz` 返回 503，防止继续写入导致 SQLite 或媒体文件损坏。
 
 ### 媒体治理
@@ -115,7 +117,7 @@ npm run db:archive -- --execute
 
 根目录 `docker-entrypoint.sh` 会把随镜像发布的 `ecosystem.cloud.config.js` 同步到 `/data/ecosystem.config.js`。每次需要重置线上 PM2 基线时提升 `CLOUD_ECOSYSTEM_VERSION` 默认值；入口脚本会先备份旧配置再覆盖。
 
-镜像入口仍保留 `ACCOUNT_NAME` / `TG_ACCOUNT_NAME` 的单进程分流能力，作为未来硬隔离 collector 的备用方案，但当前 Deploy Hub 配置不再创建独立 collector Deployment。
+镜像入口仍保留 `ACCOUNT_NAME` / `TG_ACCOUNT_NAME` 的单进程分流能力；云端硬隔离 collector 由主服务通过 Deploy Hub `rainbond_deploy_component` 创建 Rainbond 组件，不再由主 Pod 直接调用 K8s API。
 
 ## 本地 WA Collector
 
@@ -164,32 +166,24 @@ WA_RUNTIME_ADAPTER=pm2
 WA_PM2_ECOSYSTEM_FILE=ecosystem.local-collectors.config.js
 ```
 
-如果未来重新采用硬隔离 collector，主系统的 `wa-supervisor` 可切到 Kubernetes/Rainbond 适配器：
+云端硬隔离 collector 统一通过 Deploy Hub 管理：
 
 ```bash
-WA_RUNTIME_ADAPTER=k8s
-WA_K8S_CLIENT=auto
-WA_K8S_NAMESPACE=g1469
-WA_K8S_LABEL_SELECTOR=app.kubernetes.io/part-of=social-monitor-wa
-WA_K8S_ACCOUNT_LABEL=wa-account
-WA_K8S_DEPLOYMENT_PREFIX=wa-collector-
+WA_RUNTIME_ADAPTER=deploy-hub
+DEPLOY_HUB_API_URL=https://skyline-ark-deploy-hub-mcp.tyhark.com/mcp
+DEPLOY_HUB_NAMESPACE=g1469
+DEPLOY_HUB_TOKEN=Deploy Hub API Token
+CLOUD_COLLECTOR_DEPLOYMENT_PREFIX=sm-collector-
 ```
 
-`WA_K8S_CLIENT=auto` 会优先使用 Pod 内 ServiceAccount 调 Kubernetes API，失败时再回退到 `kubectl`。主系统部署模板已包含最小 RBAC：只读 pods/deployments，并允许 patch/restart/scale collector Deployment。
+`WA_RUNTIME_ADAPTER=k8s` 已废弃；主系统不再需要 ServiceAccount 持有创建、删除、更新 Deployment 的 RBAC。
 
-collector Deployment 需要带上账号标签，例如：
-
-```yaml
-metadata:
-  labels:
-    app.kubernetes.io/part-of: social-monitor-wa
-    wa-account: nanya_wa
-```
-
-如果账号名无法直接映射到 Deployment 名，可以配置：
+collector 组件由 `cloud-collector-orchestrator` 注入账号环境变量，例如：
 
 ```bash
-WA_K8S_DEPLOYMENT_MAP={"nanya_wa":"wa-collector-nanya-wa"}
+COLLECTOR_PLATFORM=whatsapp
+COLLECTOR_ID=deploy-hub:wa-nanya_wa
+ACCOUNT_NAME=nanya_wa
 ```
 
 ## 迁移顺序

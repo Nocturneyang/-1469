@@ -19,6 +19,10 @@ const {
     CloudCollectorOrchestrator,
     isCloudCollectorEnabled
 } = require('../lib/cloud-collector-orchestrator');
+const {
+    CLOUD_RUNTIME_PROVIDER,
+    isCloudRuntimeProvider
+} = require('../lib/cloud-runtime-provider');
 const { getSessionStatus: getTgUserSessionStatus } = require('../lib/tg-session-store');
 const teamsTokenStore = require('../lib/teams-token-store');
 const puppeteer = require('puppeteer');
@@ -447,7 +451,7 @@ function getRuntimeSpec(accountId) {
 function shouldUseCloudRuntime(accountId) {
     if (isCloudCollectorEnabled()) return true;
     const spec = getRuntimeSpec(accountId);
-    return spec?.runtime_provider === 'k8s';
+    return isCloudRuntimeProvider(spec?.runtime_provider);
 }
 
 function createCloudOrchestrator() {
@@ -524,7 +528,7 @@ function createAccountsRouter({ safeWriteEcosystem }) {
                 acc.workbench_display_name = registry?.display_name || acc.display_name || acc.pushname || acc.id;
                 const runtimeSpec = runtimeSpecByAccount.get(acc.id);
                 if (runtimeSpec) {
-                    acc.runtime_provider = runtimeSpec.runtime_provider || acc.runtime_provider || 'k8s';
+                    acc.runtime_provider = runtimeSpec.runtime_provider || acc.runtime_provider || CLOUD_RUNTIME_PROVIDER;
                     acc.runtime_desired_state = runtimeSpec.desired_state;
                     acc.deployment_name = runtimeSpec.deployment_name;
                     acc.runtime_spec = {
@@ -754,8 +758,8 @@ function createAccountsRouter({ safeWriteEcosystem }) {
                 if (!getRuntimeSpec(id)) await orchestrator.ensureRuntime(id, { migrationSource: 'api-logout' });
                 if (id.startsWith('wa-')) orchestrator.clearSession(id);
                 await orchestrator.restart(id);
-                db.prepare(`UPDATE accounts SET status = 'disconnected', qr_code = NULL, runtime_provider = 'k8s', updated_at = datetime('now', '+8 hours') WHERE id = ?`).run(id);
-                return res.json({ success: true, message: 'Cloud collector session cleared and restarted.' });
+                db.prepare(`UPDATE accounts SET status = 'disconnected', qr_code = NULL, runtime_provider = ?, updated_at = datetime('now', '+8 hours') WHERE id = ?`).run(CLOUD_RUNTIME_PROVIDER, id);
+                return res.json({ success: true, message: 'Deploy Hub collector session cleared and restarted.' });
             }
 
             if (id.startsWith('wa-')) {
@@ -790,8 +794,8 @@ function createAccountsRouter({ safeWriteEcosystem }) {
                 const orchestrator = createCloudOrchestrator();
                 if (!getRuntimeSpec(id)) await orchestrator.ensureRuntime(id, { migrationSource: 'api-restart' });
                 await orchestrator.restart(id);
-                db.prepare(`UPDATE accounts SET runtime_provider = 'k8s', runtime_desired_state = 'running', orchestrator_state = 'restarting', updated_at = datetime('now', '+8 hours') WHERE id = ?`).run(id);
-                return res.json({ success: true, message: 'Cloud collector restart command sent.' });
+                db.prepare(`UPDATE accounts SET runtime_provider = ?, runtime_desired_state = 'running', orchestrator_state = 'restarting', updated_at = datetime('now', '+8 hours') WHERE id = ?`).run(CLOUD_RUNTIME_PROVIDER, id);
+                return res.json({ success: true, message: 'Deploy Hub collector restart command sent.' });
             }
 
             if (id.startsWith('wa-')) {
@@ -852,9 +856,9 @@ function createAccountsRouter({ safeWriteEcosystem }) {
                 const orchestrator = createCloudOrchestrator();
                 if (!getRuntimeSpec(id)) await orchestrator.ensureRuntime(id, { migrationSource: 'api-relogin' });
                 if (id.startsWith('wa-')) orchestrator.clearSession(id);
-                db.prepare(`UPDATE accounts SET status = 'initializing', qr_code = NULL, runtime_provider = 'k8s', runtime_desired_state = 'running', updated_at = datetime('now', '+8 hours') WHERE id = ?`).run(id);
+                db.prepare(`UPDATE accounts SET status = 'initializing', qr_code = NULL, runtime_provider = ?, runtime_desired_state = 'running', updated_at = datetime('now', '+8 hours') WHERE id = ?`).run(CLOUD_RUNTIME_PROVIDER, id);
                 await orchestrator.restart(id);
-                return res.json({ success: true, message: 'Cloud collector relogin command sent.' });
+                return res.json({ success: true, message: 'Deploy Hub collector relogin command sent.' });
             }
 
             if (id.startsWith('wa-')) {
@@ -1057,14 +1061,14 @@ function createAccountsRouter({ safeWriteEcosystem }) {
                 if (platform === 'whatsapp') {
                     db.prepare(`
                         INSERT INTO accounts (id, platform, status, health_status, runtime_provider, runtime_desired_state, updated_at)
-                        VALUES (?, 'whatsapp', 'initializing', 'starting', 'k8s', 'running', datetime('now', '+8 hours'))
+                        VALUES (?, 'whatsapp', 'initializing', 'starting', ?, 'running', datetime('now', '+8 hours'))
                         ON CONFLICT(id) DO UPDATE SET
                             status = 'initializing',
                             health_status = 'starting',
-                            runtime_provider = 'k8s',
+                            runtime_provider = excluded.runtime_provider,
                             runtime_desired_state = 'running',
                             updated_at = datetime('now', '+8 hours')
-                    `).run(accountId);
+                    `).run(accountId, CLOUD_RUNTIME_PROVIDER);
                     upsertChannelAccountRegistry({
                         account: accountId,
                         platform: 'wa',
@@ -1074,21 +1078,21 @@ function createAccountsRouter({ safeWriteEcosystem }) {
                         ...accountRolePatch,
                     });
                     await orchestrator.ensureRuntime(accountId, { migrationSource: 'web-create' });
-                    return res.json({ success: true, message: 'WhatsApp 云端采集 Pod 已创建，请稍后在列表中扫描二维码。' });
+                    return res.json({ success: true, message: 'WhatsApp Deploy Hub 云端组件已创建，请稍后在列表中扫描二维码。' });
                 }
 
                 if (platform === 'telegram') {
                     writeEnvKeys({ [`TG_BOT_TOKEN_${accountEnvKey(trimmedId)}`]: token });
                     db.prepare(`
                         INSERT INTO accounts (id, platform, status, health_status, runtime_provider, runtime_desired_state, updated_at)
-                        VALUES (?, 'telegram', 'initializing', 'starting', 'k8s', 'running', datetime('now', '+8 hours'))
+                        VALUES (?, 'telegram', 'initializing', 'starting', ?, 'running', datetime('now', '+8 hours'))
                         ON CONFLICT(id) DO UPDATE SET
                             status = 'initializing',
                             health_status = 'starting',
-                            runtime_provider = 'k8s',
+                            runtime_provider = excluded.runtime_provider,
                             runtime_desired_state = 'running',
                             updated_at = datetime('now', '+8 hours')
-                    `).run(accountId);
+                    `).run(accountId, CLOUD_RUNTIME_PROVIDER);
                     upsertChannelAccountRegistry({
                         account: accountId,
                         platform: 'tg',
@@ -1098,7 +1102,7 @@ function createAccountsRouter({ safeWriteEcosystem }) {
                         ...accountRolePatch,
                     });
                     await orchestrator.ensureRuntime(accountId, { migrationSource: 'web-create' });
-                    return res.json({ success: true, message: 'TG Bot 云端采集 Pod 已创建。' });
+                    return res.json({ success: true, message: 'TG Bot Deploy Hub 云端组件已创建。' });
                 }
             }
 
