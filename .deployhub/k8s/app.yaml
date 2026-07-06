@@ -99,7 +99,7 @@ spec:
             - name: CLOUD_COLLECTOR_IMAGE
               value: __IMAGE__
             - name: CLOUD_COLLECTOR_API_URL
-              value: http://social-monitor
+              value: https://social-monitor.tyhark.com
             - name: CLOUD_COLLECTOR_SECRET_NAME
               value: social-monitor-secrets
             - name: CLOUD_COLLECTOR_PVC

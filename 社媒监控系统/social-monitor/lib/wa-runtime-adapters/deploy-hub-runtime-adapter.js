@@ -146,6 +146,12 @@ function deploymentNameForAccountId(accountId) {
     return rainbondAppName(`${process.env.CLOUD_COLLECTOR_DEPLOYMENT_PREFIX || 'sm-collector-'}${accountId}`);
 }
 
+function defaultCollectorApiUrl() {
+    return process.env.CLOUD_COLLECTOR_API_URL ||
+        process.env.MEDIA_BASE_URL ||
+        'https://social-monitor.tyhark.com';
+}
+
 function runtimeSpecsByDeploymentName() {
     try {
         const { listCollectorRuntimeSpecs } = require('../../db/database');
@@ -224,7 +230,7 @@ class DeployHubRuntimeAdapter {
             { name: 'DATA_DIR', value: '/data' },
             { name: 'COLLECTOR_PLATFORM', value: 'whatsapp' },
             { name: 'COLLECTOR_REMOTE_ONLY', value: 'true' },
-            { name: 'COLLECTOR_API_URL', value: process.env.CLOUD_COLLECTOR_API_URL || 'http://social-monitor' },
+            { name: 'COLLECTOR_API_URL', value: defaultCollectorApiUrl() },
             { name: 'COLLECTOR_ID', value: `${CLOUD_RUNTIME_PROVIDER}:wa-${accountName}` },
             { name: 'COLLECTOR_OUTBOX_DIR', value: `/data/collector-outbox/wa-${accountName}` },
             { name: 'ACCOUNT_SESSION_DIR', value: '/data/collector-sessions' },
