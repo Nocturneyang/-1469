@@ -287,11 +287,11 @@ class CloudCollectorOrchestrator {
         if (!isCloudCollectorEnabled()) {
             throw new Error('CLOUD_COLLECTOR_ENABLED is not enabled');
         }
-        if (!this.image) {
-            throw new Error('CLOUD_COLLECTOR_IMAGE is required to create Deploy Hub collector components');
-        }
         if (!process.env.DEPLOY_HUB_TOKEN) {
             throw new Error('DEPLOY_HUB_TOKEN is required to manage cloud collectors via Deploy Hub');
+        }
+        if (!this.image && this.logger && this.logger.warn) {
+            this.logger.warn('[CloudOrchestrator] CLOUD_COLLECTOR_IMAGE is empty; Deploy Hub adapter will resolve the current component image');
         }
     }
 

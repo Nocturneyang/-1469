@@ -159,6 +159,11 @@ function readyPod(pod) {
     return pod && (pod.ready === true || String(pod.ready).toLowerCase() === 'true');
 }
 
+function isImagePlaceholder(image) {
+    const value = String(image || '').trim();
+    return !value || value === '__IMAGE__';
+}
+
 class DeployHubRuntimeAdapter {
     constructor({ apiUrl, token, namespace, image, logger = console }) {
         this.name = 'deploy-hub';
@@ -170,6 +175,8 @@ class DeployHubRuntimeAdapter {
         this.client = new DeployHubMcpClient({ apiUrl, token, logger });
         this.accountLabel = 'social-monitor.tyhark.com/account-id';
         this.labelSelector = 'app.kubernetes.io/component=collector';
+        this.mainAppName = process.env.DEPLOY_HUB_APP_NAME || process.env.DEPLOY_HUB_SERVICE_NAME || 'social-monitor';
+        this.mainComponentName = process.env.DEPLOY_HUB_COMPONENT_NAME || process.env.DEPLOY_HUB_SERVICE_NAME || 'social-monitor';
     }
 
     _appName(deploymentName) {
@@ -185,6 +192,30 @@ class DeployHubRuntimeAdapter {
         try { result = await this.client.call('rainbond_list_apps', {}); } catch (_) { return null; }
         const list = Array.isArray(result) ? result : (result && (result.apps || result.data) ? result.apps || result.data : []);
         return list.find(a => ((a.app_name || a.name || '')).toLowerCase() === appName.toLowerCase()) || null;
+    }
+
+    _componentImage(app, componentName) {
+        const components = Array.isArray(app && app.components) ? app.components : [];
+        const wanted = String(componentName || '').toLowerCase();
+        const component = components.find(c => String(c.name || c.service_cname || c.component_name || '').toLowerCase() === wanted);
+        return component && !isImagePlaceholder(component.image) ? component.image : '';
+    }
+
+    async _resolveImage(image) {
+        const configured = String(image || this.image || '').trim();
+        if (!isImagePlaceholder(configured)) return configured;
+
+        const app = await this._findApp(this.mainAppName);
+        const resolved = this._componentImage(app, this.mainComponentName);
+        if (resolved) {
+            this.logger.log(`[DeployHubAdapter] resolved collector image from ${this.mainAppName}/${this.mainComponentName}: ${resolved}`);
+            return resolved;
+        }
+
+        throw new Error(
+            `DeployHubAdapter cannot resolve collector image from ${configured || '<empty>'}; ` +
+            'set CLOUD_COLLECTOR_IMAGE or ensure Rainbond exposes the social-monitor component image'
+        );
     }
 
     _waEnvVars(accountName, extraEnv = {}) {
@@ -217,12 +248,13 @@ class DeployHubRuntimeAdapter {
         if (!deploymentName) throw new Error('DeployHubAdapter applyDeployment: missing deployment name');
 
         const appName = this._appName(deploymentName);
-        const image = (manifest.spec &&
+        const requestedImage = (manifest.spec &&
             manifest.spec.template &&
             manifest.spec.template.spec &&
             manifest.spec.template.spec.containers &&
             manifest.spec.template.spec.containers[0] &&
             manifest.spec.template.spec.containers[0].image) || this.image;
+        const image = await this._resolveImage(requestedImage);
         const envArray = (manifest.spec &&
             manifest.spec.template &&
             manifest.spec.template.spec &&
@@ -362,10 +394,11 @@ class DeployHubRuntimeAdapter {
 
     async startCollector(accountName, extraEnv = {}) {
         const appName = this.workerName(accountName);
+        const image = await this._resolveImage(this.image);
         return this.client.call('rainbond_deploy_component', {
             app_name: appName,
             component_name: 'collector',
-            image: this.image,
+            image,
             namespace: this.namespace,
             env_vars: this._waEnvVars(accountName, extraEnv),
             ports: ''
