@@ -113,7 +113,7 @@ function platformEnv(parts, extraEnv = {}) {
         envValue('DATA_DIR', '/data'),
         envValue('COLLECTOR_PLATFORM', parts.collectorPlatform),
         envValue('COLLECTOR_REMOTE_ONLY', 'true'),
-        envValue('COLLECTOR_API_URL', process.env.CLOUD_COLLECTOR_API_URL || 'http://social-monitor/api/collector'),
+        envValue('COLLECTOR_API_URL', process.env.CLOUD_COLLECTOR_API_URL || 'http://social-monitor'),
         envValue('COLLECTOR_ID', `${CLOUD_RUNTIME_PROVIDER}:${parts.accountId}`),
         envValue('COLLECTOR_OUTBOX_DIR', `/data/collector-outbox/${parts.accountId}`),
         envValue('ACCOUNT_SESSION_DIR', '/data/collector-sessions'),

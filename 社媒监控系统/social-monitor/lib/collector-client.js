@@ -10,7 +10,10 @@ const DURABLE_ENDPOINTS = new Set([
 ]);
 
 function normalizeBaseUrl(baseUrl) {
-    return String(baseUrl || '').replace(/\/+$/, '');
+    return String(baseUrl || '')
+        .trim()
+        .replace(/\/+$/, '')
+        .replace(/\/api\/collector$/i, '');
 }
 
 function endpointFileName(endpoint) {
@@ -122,5 +125,6 @@ function createCollectorClient({ baseUrl, token, timeoutMs = 8000, logger = cons
 }
 
 module.exports = {
-    createCollectorClient
+    createCollectorClient,
+    normalizeBaseUrl
 };

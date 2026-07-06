@@ -224,7 +224,7 @@ class DeployHubRuntimeAdapter {
             { name: 'DATA_DIR', value: '/data' },
             { name: 'COLLECTOR_PLATFORM', value: 'whatsapp' },
             { name: 'COLLECTOR_REMOTE_ONLY', value: 'true' },
-            { name: 'COLLECTOR_API_URL', value: process.env.CLOUD_COLLECTOR_API_URL || 'http://social-monitor/api/collector' },
+            { name: 'COLLECTOR_API_URL', value: process.env.CLOUD_COLLECTOR_API_URL || 'http://social-monitor' },
             { name: 'COLLECTOR_ID', value: `${CLOUD_RUNTIME_PROVIDER}:wa-${accountName}` },
             { name: 'COLLECTOR_OUTBOX_DIR', value: `/data/collector-outbox/wa-${accountName}` },
             { name: 'ACCOUNT_SESSION_DIR', value: '/data/collector-sessions' },
