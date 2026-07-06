@@ -150,7 +150,7 @@ const pageTitle = computed(() => titleMap[route.path] || 'Dashboard')
 const handleLogout = () => {
   if (isSsoEnabled()) {
     const loggedOutPath = `/sso-pending?logged_out=1&from=${encodeURIComponent('/entry')}`
-    const loginReturnPath = `/sso-pending?from=${encodeURIComponent('/entry')}`
+    const loginReturnPath = '/entry'
     const loginUrl = buildSsoLoginUrl({ redirectTo: `${window.location.origin}${loginReturnPath}` })
     authStore.logout({ manualSsoLogout: true })
     if (redirectToSsoLogout({ redirectTo: loginUrl || `${window.location.origin}${loggedOutPath}` })) return

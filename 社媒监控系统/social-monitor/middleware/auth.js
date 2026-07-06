@@ -48,6 +48,35 @@ function isSsoEnabled() {
     return truthy(process.env.SSO_ENABLED || process.env.SKYLINE_SSO_ENABLED);
 }
 
+function isLocalHostName(hostname) {
+    const normalized = String(hostname || '').trim().toLowerCase().replace(/^\[|\]$/g, '');
+    return ['localhost', '127.0.0.1', '::1', '0.0.0.0'].includes(normalized);
+}
+
+function isLocalRequest(req) {
+    const host = String(req.headers.host || '').split(':')[0];
+    const forwardedHost = String(req.headers['x-forwarded-host'] || '').split(',')[0].trim().split(':')[0];
+    const remoteAddress = String(req.socket?.remoteAddress || req.ip || '').replace(/^::ffff:/, '');
+    return isLocalHostName(host) || isLocalHostName(forwardedHost) || isLocalHostName(remoteAddress);
+}
+
+function isLocalDevAuthBypass(req) {
+    if (isSsoEnabled()) return false;
+    if (truthy(process.env.DISABLE_LOCAL_DEV_AUTH_BYPASS)) return false;
+    const explicitlyEnabled = truthy(process.env.LOCAL_DEV_AUTH_BYPASS);
+    const cloudDataDir = path.resolve(process.env.DATA_DIR || '') === '/data';
+    return (explicitlyEnabled || !cloudDataDir) && isLocalRequest(req);
+}
+
+function localDevUser() {
+    return {
+        id: '1469',
+        username: 'admin',
+        display_name: '本地开发管理员',
+        role: 'admin'
+    };
+}
+
 function trustSsoProxyHeaders() {
     return truthy(process.env.SSO_TRUST_PROXY_HEADERS);
 }
@@ -287,6 +316,10 @@ async function resolveAuthenticatedUser(req) {
     const ssoRemoteUser = await getSsoUserFromRemote(req, token);
     if (ssoRemoteUser) return { user: ssoRemoteUser, source: 'sso-remote' };
 
+    if (isLocalDevAuthBypass(req)) {
+        return { user: localDevUser(), source: 'local-dev' };
+    }
+
     return { user: null, source: null, hasToken: Boolean(bearerToken || token) };
 }
 
@@ -315,6 +348,7 @@ function requireAdmin(req, res, next) {
 module.exports = {
     JWT_SECRET,
     isSsoEnabled,
+    isLocalDevAuthBypass,
     resolveAuthenticatedUser,
     authenticateToken,
     requireAdmin

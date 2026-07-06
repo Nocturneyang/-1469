@@ -1,7 +1,7 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { useAuthStore } from '@/store/auth'
 import Login from '@/views/Login.vue'
-import { isSsoEnabled } from '@/utils/runtime-config'
+import { isLocalDevAuthBypass, isSsoEnabled, redirectToSsoLogin } from '@/utils/runtime-config'
 
 const routes = [
   {
@@ -183,7 +183,16 @@ async function hasRequiredRouteAccess(to, authStore) {
 router.beforeEach(async (to, from, next) => {
   const authStore = useAuthStore()
 
-  if (isSsoEnabled()) {
+  if (isLocalDevAuthBypass()) {
+    authStore.setLocalDevAuth()
+    if (to.name === 'Login' || to.name === 'SsoPending' || to.name === 'PortalEntry') {
+      next({ name: 'Home' })
+    } else if (!(await hasRequiredRouteAccess(to, authStore))) {
+      next({ name: 'Home' })
+    } else {
+      next()
+    }
+  } else if (isSsoEnabled()) {
     if (to.name === 'Login') {
       next({
         name: 'SsoPending',
@@ -199,6 +208,7 @@ router.beforeEach(async (to, from, next) => {
         const freshSsoLogin = hasSsoTokenQuery(to) || !authStore.user
         const user = await authStore.hydrateSsoUser()
         if (!user) {
+          if (redirectToSsoLogin({ redirectTo: `${window.location.origin}${to.fullPath || '/entry'}` })) return
           next({ name: 'SsoPending', query: { from: to.fullPath } })
         } else if (to.name !== 'PortalEntry') {
           const requestedPath = portalRequestedPath(to)
@@ -215,6 +225,7 @@ router.beforeEach(async (to, from, next) => {
           next()
         }
       } catch (_) {
+        if (redirectToSsoLogin({ redirectTo: `${window.location.origin}${to.fullPath || '/entry'}` })) return
         next({ name: 'SsoPending', query: { from: to.fullPath } })
       }
     }
@@ -224,11 +235,6 @@ router.beforeEach(async (to, from, next) => {
     next({ name: 'Home' })
   } else if (!(await hasRequiredRouteAccess(to, authStore))) {
     next({ name: 'Home' })
-  } else if (!to.meta.public && to.name !== 'PortalEntry') {
-    const requestedPath = portalRequestedPath(to)
-    const destination = await authStore.resolvePortalDestination(requestedPath, { preferLanding: !authStore.user })
-    if (redirectToPortalDestination(destination, requestedPath, next)) return
-    next()
   } else {
     next()
   }

@@ -22,7 +22,7 @@ function resolveWorkbenchRoot() {
 
 const WORKBENCH_ROOT = resolveWorkbenchRoot();
 
-const { authenticateToken, requireAdmin, resolveAuthenticatedUser, isSsoEnabled } = require('./middleware/auth');
+const { authenticateToken, requireAdmin, resolveAuthenticatedUser, isSsoEnabled, isLocalDevAuthBypass } = require('./middleware/auth');
 const { responseHelperMiddleware } = require('./middleware/response');
 const authRoutes = require('./routes/auth');
 const dataRoutes = require('./routes/data');
@@ -281,7 +281,8 @@ function sendRuntimeConfig(req, res) {
         ssoRedirectParam,
         ssoLogoutUrl,
         ssoLogoutRedirectParam: process.env.SSO_LOGOUT_REDIRECT_PARAM || '',
-        guestLoginEnabled: guestLoginEnabled()
+        guestLoginEnabled: guestLoginEnabled(),
+        localDevAuthBypass: isLocalDevAuthBypass(req)
     };
     const body = `window.__SOCIAL_MONITOR_CONFIG__ = ${JSON.stringify(config).replace(/</g, '\\u003c')};\n`;
     res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0');
@@ -290,6 +291,26 @@ function sendRuntimeConfig(req, res) {
     res.setHeader('Pragma', 'no-cache');
     res.setHeader('Expires', '0');
     res.type('application/javascript').send(body);
+}
+
+function requestOrigin(req) {
+    const host = String(req.headers['x-forwarded-host'] || req.headers.host || '').split(',')[0].trim();
+    let proto = String(req.headers['x-forwarded-proto'] || req.protocol || 'https').split(',')[0].trim();
+    if (host.endsWith('.tyhark.com')) proto = 'https';
+    return `${proto}://${host}`;
+}
+
+function safeSsoReturnUrl(req, requested) {
+    const origin = requestOrigin(req);
+    try {
+        const target = requested ? new URL(String(requested), origin) : new URL('/entry', origin);
+        const current = new URL(origin);
+        if (target.hostname !== current.hostname) return new URL('/entry', origin).toString();
+        if (target.pathname.match(/\/login\b/)) return new URL('/entry', origin).toString();
+        return target.toString();
+    } catch (_) {
+        return new URL('/entry', origin).toString();
+    }
 }
 
 function sendUserInfo(res, user, source) {
@@ -303,6 +324,18 @@ function sendUserInfo(res, user, source) {
 }
 
 app.get('/runtime-config.js', sendRuntimeConfig);
+app.get('/auth/sso/start', (req, res) => {
+    const loginUrl = process.env.SSO_LOGIN_URL || '';
+    if (!loginUrl) {
+        return res.status(500).json({ success: false, error: 'SSO_LOGIN_URL is not configured' });
+    }
+    const redirectParam = process.env.SSO_REDIRECT_PARAM ||
+        (loginUrl.includes('skyline-ark-sso.tyhark.com') ? 'redirect' : 'redirect');
+    const redirectTo = safeSsoReturnUrl(req, req.query.redirect);
+    const url = new URL(loginUrl);
+    url.searchParams.set(redirectParam, redirectTo);
+    res.redirect(302, url.toString());
+});
 app.get(['/token/userinfo', '/api/token/userinfo'], async (req, res) => {
     const result = await resolveAuthenticatedUser(req);
     if (!result.user) {

@@ -62,7 +62,7 @@ import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/store/auth'
 import { ElMessage } from 'element-plus'
 import api from '@/utils/request'
-import { isGuestLoginEnabled } from '@/utils/runtime-config'
+import { isGuestLoginEnabled, isLocalDevAuthBypass, isSsoEnabled } from '@/utils/runtime-config'
 
 const router = useRouter()
 const authStore = useAuthStore()
@@ -112,6 +112,10 @@ const handleViewLogin = async () => {
 }
 
 const routeAfterLogin = async (target) => {
+  if (!isSsoEnabled() || isLocalDevAuthBypass()) {
+    router.push(target)
+    return
+  }
   const destination = await authStore.resolvePortalDestination(target)
   if (destination.startsWith('/workbench')) {
     window.location.assign(destination)

@@ -16,6 +16,18 @@ export function isGuestLoginEnabled() {
   return boolValue(config.guestLoginEnabled ?? import.meta.env.VITE_ALLOW_GUEST_LOGIN)
 }
 
+function isLocalBrowserHost() {
+  return ['localhost', '127.0.0.1', '::1', '0.0.0.0'].includes(window.location.hostname)
+}
+
+export function isLocalDevAuthBypass() {
+  const config = getRuntimeConfig()
+  if (Object.prototype.hasOwnProperty.call(config, 'localDevAuthBypass')) {
+    return boolValue(config.localDevAuthBypass)
+  }
+  return !isSsoEnabled() && isLocalBrowserHost()
+}
+
 export function getSsoLoginUrl() {
   const config = getRuntimeConfig()
   return config.ssoLoginUrl || import.meta.env.VITE_SSO_LOGIN_URL || ''
@@ -47,7 +59,25 @@ export function buildSsoLoginUrl(options = {}) {
   }
 }
 
+export function buildSsoStartUrl(options = {}) {
+  try {
+    const url = new URL('/auth/sso/start', window.location.origin)
+    url.searchParams.set('redirect', options.redirectTo || window.location.href)
+    return url.toString()
+  } catch (_) {
+    return ''
+  }
+}
+
 export function redirectToSsoLogin(options = {}) {
+  if (options.viaServer !== false) {
+    const startUrl = buildSsoStartUrl(options)
+    if (startUrl) {
+      window.location.assign(startUrl)
+      return true
+    }
+  }
+
   const loginUrl = buildSsoLoginUrl(options)
   if (!loginUrl) return false
 

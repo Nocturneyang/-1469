@@ -38,7 +38,7 @@ api.interceptors.response.use(
         const currentPath = `${window.location.pathname}${window.location.search}${window.location.hash}`
         authStore.logout(wasSsoLoggedOut ? { manualSsoLogout: true } : {})
         if (!wasSsoLoggedOut && redirectToSsoLogin({
-          redirectTo: `${window.location.origin}/sso-pending?from=${encodeURIComponent(currentPath || '/')}`
+          redirectTo: `${window.location.origin}${currentPath || '/entry'}`
         })) {
           return Promise.reject(error)
         }

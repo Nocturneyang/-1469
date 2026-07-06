@@ -73,7 +73,7 @@ const checkAuth = async () => {
 
 const openSso = () => {
   authStore.clearSsoLoggedOut()
-  const redirectTo = `${window.location.origin}/sso-pending?from=${encodeURIComponent(targetPath())}`
+  const redirectTo = `${window.location.origin}${targetPath()}`
   if (!redirectToSsoLogin({ redirectTo })) {
     error.value = '未配置统一认证地址，请联系管理员检查 SSO_LOGIN_URL。'
   }

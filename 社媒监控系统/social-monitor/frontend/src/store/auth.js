@@ -37,6 +37,16 @@ export const useAuthStore = defineStore('auth', {
       localStorage.setItem('auth_user', JSON.stringify(user))
     },
 
+    setLocalDevAuth() {
+      if (this.token === '__local_dev__' && this.user?.role === 'admin') return
+      this.setAuth('__local_dev__', {
+        id: '1469',
+        username: 'admin',
+        display_name: '本地开发管理员',
+        role: 'admin'
+      })
+    },
+
     logout(options = {}) {
       const manualSsoLogout = Boolean(options.manualSsoLogout)
       this.token = null
