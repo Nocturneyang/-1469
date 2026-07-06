@@ -56,6 +56,9 @@ function configureSqlite(db, options = {}) {
   }
 
   const journalMode = normalizeJournalMode(options.journalMode) || sqliteJournalMode();
+  if (journalMode !== 'WAL') {
+    safePragma(db, 'wal_checkpoint(TRUNCATE)', `${label} wal_checkpoint`, logger);
+  }
   const result = safePragma(db, `journal_mode = ${journalMode}`, `${label} journal_mode=${journalMode}`, logger);
   const appliedJournalMode = Array.isArray(result) && result[0] && result[0].journal_mode
     ? String(result[0].journal_mode).toUpperCase()

@@ -111,4 +111,8 @@ else
   echo "analytics.sqlite exists, skip startup schema init; run scripts/init-analytics-db.js manually after DB health is restored"
 fi
 
+if [ "${SQLITE_STARTUP_CONFIGURE:-1}" != "0" ]; then
+  node scripts/configure-sqlite-storage.js
+fi
+
 exec pm2-runtime start ecosystem.config.js

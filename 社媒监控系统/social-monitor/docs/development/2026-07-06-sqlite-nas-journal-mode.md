@@ -14,6 +14,7 @@
 - 统一设置 `SQLITE_BUSY_TIMEOUT_MS`，默认 `15000ms`。
 - 只读连接不再改 journal mode，仅设置 `busy_timeout` 和 `query_only=ON`。
 - analyzer、analytics writable API、TG 回溯队列、初始化脚本和归档脚本都改为使用统一 helper。
+- 新增 `scripts/configure-sqlite-storage.js`，并在 `docker-entrypoint.sh` 中于 PM2 启动前执行，先由单进程完成 `database.sqlite`、`analytics.sqlite` 的 journal mode 调整，减少 analyzer 并发启动时抢锁。
 
 ## 验证
 
