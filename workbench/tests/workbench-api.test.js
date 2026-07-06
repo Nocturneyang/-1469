@@ -12,8 +12,10 @@ async function main() {
   const workbenchDbPath = path.join(tmpDir, 'workbench.sqlite');
   const outboxDir = path.join(tmpDir, 'outbox');
   seedRawDb(rawDbPath);
+  seedLegacyWorkbenchDb(workbenchDbPath);
 
   const workbenchDb = openWorkbenchDb(workbenchDbPath);
+  assertLegacyWorkbenchMigration(workbenchDb);
   const app = createApp({ workbenchDb, rawDbPath, outboxDir });
   const { server, port } = await listen(app);
   const baseUrl = `http://127.0.0.1:${port}/api/workbench`;
@@ -103,7 +105,14 @@ async function main() {
     assert.strictEqual(manualLevelTwo.group.parent_native_group_id, manualLevelOne.group.native_group_id);
 
     const manualGroupList = await requestJson(`${baseUrl}/manual-groups?platform=wa`);
-    assert.strictEqual(manualGroupList.groups.length, 2);
+    assert.strictEqual(
+      manualGroupList.groups.some((group) => group.native_group_id === manualLevelOne.group.native_group_id),
+      true,
+    );
+    assert.strictEqual(
+      manualGroupList.groups.some((group) => group.native_group_id === manualLevelTwo.group.native_group_id),
+      true,
+    );
 
     const saveManualGroups = await requestJson(`${baseUrl}/groups/group-1/manual-groups`, {
       method: 'PUT',
@@ -558,6 +567,49 @@ function seedRawDb(rawDbPath) {
     rawData: '{}',
   });
   db.close();
+}
+
+function seedLegacyWorkbenchDb(workbenchDbPath) {
+  const db = new Database(workbenchDbPath);
+  db.exec(`
+    CREATE TABLE service_groups (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      platform TEXT NOT NULL,
+      service_account TEXT NOT NULL,
+      native_group_id TEXT NOT NULL,
+      name TEXT NOT NULL,
+      source TEXT NOT NULL DEFAULT 'manual',
+      color TEXT,
+      raw_json TEXT,
+      synced_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(platform, service_account, native_group_id)
+    );
+  `);
+  db.prepare(`
+    INSERT INTO service_groups (
+      platform, service_account, native_group_id, name, source, color, raw_json
+    )
+    VALUES ('wa', 'nanya_wa', 'legacy-manual-l2', '旧人工二级', 'manual_l2', '#0f766e', '{}')
+  `).run();
+  db.close();
+}
+
+function assertLegacyWorkbenchMigration(db) {
+  const columns = new Set(db.prepare('PRAGMA table_info(service_groups)').all().map((column) => column.name));
+  assert.strictEqual(columns.has('parent_native_group_id'), true);
+  assert.strictEqual(columns.has('group_level'), true);
+  assert.strictEqual(columns.has('is_manual'), true);
+  const row = db.prepare(`
+    SELECT group_level, is_manual
+    FROM service_groups
+    WHERE native_group_id = 'legacy-manual-l2'
+  `).get();
+  assert.strictEqual(row.group_level, 2);
+  assert.strictEqual(row.is_manual, 1);
+  const indexes = new Set(db.prepare('PRAGMA index_list(service_groups)').all().map((index) => index.name));
+  assert.strictEqual(indexes.has('idx_service_groups_parent'), true);
 }
 
 function seedSyncedChannelMetadata(db) {

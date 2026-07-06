@@ -226,9 +226,6 @@ CREATE TABLE IF NOT EXISTS service_groups (
 CREATE INDEX IF NOT EXISTS idx_service_groups_account
   ON service_groups(platform, service_account, source, name);
 
-CREATE INDEX IF NOT EXISTS idx_service_groups_parent
-  ON service_groups(platform, service_account, parent_native_group_id);
-
 CREATE TABLE IF NOT EXISTS conversation_service_group_map (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   platform TEXT NOT NULL,
