@@ -376,15 +376,16 @@ button {
   min-width: 0;
   min-height: 0;
   display: grid;
-  grid-template-rows: var(--topbar-height) minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
   overflow: hidden;
 }
 
 .topbar {
-  height: var(--topbar-height);
-  display: grid;
-  grid-template-columns: 180px 112px auto auto minmax(190px, 250px) 156px 128px minmax(220px, 1fr);
+  min-height: var(--topbar-height);
+  display: flex;
+  flex-wrap: wrap;
   align-items: center;
+  align-content: center;
   gap: 12px;
   padding: 10px 16px;
   border-bottom: 1px solid var(--line);
@@ -392,6 +393,7 @@ button {
 }
 
 .toolbar-title {
+  flex: 0 0 180px;
   min-width: 0;
   display: grid;
   gap: 3px;
@@ -412,6 +414,7 @@ button {
 }
 
 .monitor-button {
+  flex: 0 0 112px;
   height: 38px;
   min-width: 0;
   border: 1px solid var(--line);
@@ -434,6 +437,7 @@ button {
 }
 
 .segmented {
+  flex: 0 0 auto;
   display: inline-grid;
   grid-auto-flow: column;
   border: 1px solid var(--line);
@@ -497,6 +501,20 @@ button {
   min-width: 0;
 }
 
+.account-select {
+  flex: 1 1 220px;
+  max-width: 280px;
+}
+
+.label-select {
+  flex: 0 1 156px;
+}
+
+.search-input {
+  flex: 1 1 240px;
+  max-width: 360px;
+}
+
 .account-option {
   min-width: 0;
   display: flex;
@@ -528,6 +546,7 @@ button {
 }
 
 .sync-button.el-button {
+  flex: 0 0 128px;
   height: 38px;
   border-radius: 8px;
   font-weight: 650;
@@ -1438,47 +1457,22 @@ button {
 @media (max-width: 1380px) {
   :root {
     --rail-width: 256px;
-    --topbar-height: 112px;
   }
 
   .topbar {
-    grid-template-columns: 150px 112px auto auto minmax(220px, 1fr) 138px;
-    grid-template-areas:
-      "title monitor platforms scope account sync"
-      "title monitor label search search search";
-    align-content: center;
+    padding-block: 12px;
   }
 
   .toolbar-title {
-    grid-area: title;
-  }
-
-  .platform-tabs {
-    grid-area: platforms;
-  }
-
-  .monitor-button {
-    grid-area: monitor;
-  }
-
-  .scope-tabs {
-    grid-area: scope;
+    flex-basis: 150px;
   }
 
   .account-select {
-    grid-area: account;
-  }
-
-  .label-select {
-    grid-area: label;
-  }
-
-  .sync-button.el-button {
-    grid-area: sync;
+    max-width: none;
   }
 
   .search-input {
-    grid-area: search;
+    max-width: none;
   }
 
   .workbench-grid {
@@ -1599,8 +1593,6 @@ button {
 
   .topbar {
     height: auto;
-    grid-template-columns: 1fr;
-    grid-template-areas: none;
     padding: 12px;
   }
 
@@ -1612,7 +1604,8 @@ button {
   .label-select,
   .sync-button.el-button,
   .search-input {
-    grid-area: auto;
+    flex: 1 1 100%;
+    max-width: none;
   }
 
   .segmented {
