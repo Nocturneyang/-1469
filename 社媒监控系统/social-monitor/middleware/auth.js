@@ -111,6 +111,9 @@ function getUserIdentities(user) {
     return [
         user.id,
         user.username,
+        user.display_name,
+        user.displayName,
+        user.name,
         user.email,
         user.mobile,
         user.department
@@ -146,6 +149,7 @@ function parseSsoUserHeader(req) {
         return applyAdminPolicy({
             id,
             username: username || String(id),
+            display_name: parsed.display_name || parsed.displayName || parsed.name || username || String(id),
             email: parsed.email || '',
             mobile: parsed.mobile || parsed.phone || parsed.phoneNumber || '',
             department: parsed.department || parsed.deptName || parsed.orgName || '',
@@ -179,6 +183,7 @@ function getSsoUserFromHeaders(req) {
     return applyAdminPolicy({
         id: id || username || email,
         username: username || email || String(id),
+        display_name: readHeader(req, ['x-user-display-name', 'x-auth-user-display-name', 'x-sso-display-name', 'x-user-name']) || username || email || String(id),
         email,
         mobile: readHeader(req, ['x-user-mobile', 'x-user-phone', 'x-sso-mobile']),
         department: readHeader(req, ['x-user-department', 'x-user-dept', 'x-sso-department']),
@@ -221,6 +226,7 @@ function mapRemoteUserInfo(payload) {
     return applyAdminPolicy({
         id,
         username: username || String(id),
+        display_name: data.display_name || data.displayName || data.name || data.nickName || username || String(id),
         email: data.email || '',
         mobile: data.mobile || data.phone || data.phoneNumber || '',
         department: data.department || data.deptName || data.orgName || '',

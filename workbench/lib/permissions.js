@@ -23,6 +23,9 @@ function operatorIdentities(operator = {}) {
   return [
     operator.id,
     operator.username,
+    operator.display_name,
+    operator.displayName,
+    operator.name,
     operator.email,
     operator.mobile,
     operator.department,
@@ -35,6 +38,9 @@ function requestUserIdentities(req) {
   return [
     user.id,
     user.username,
+    user.display_name,
+    user.displayName,
+    user.name,
     user.email,
     user.mobile,
     user.department,
