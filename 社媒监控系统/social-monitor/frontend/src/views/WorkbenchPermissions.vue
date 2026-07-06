@@ -52,6 +52,11 @@
           <strong>服务账号</strong>
           <span>{{ serviceAccounts.length }} 个</span>
         </div>
+        <div v-if="!serviceAccounts.length" class="empty-service-state">
+          <strong>还没有可授权的服务账号</strong>
+          <p>请先到账号管理，把需要进入工作台的 WA/TG 账号用途改成“服务账号”或“采集 + 服务”。</p>
+          <el-button size="small" type="primary" plain @click="goAccountManagement">去账号管理设置</el-button>
+        </div>
         <button
           v-for="account in serviceAccounts"
           :key="accountKey(account)"
@@ -153,6 +158,7 @@
 
 <script setup>
 import { computed, onMounted, reactive, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import {
   getWorkbenchOperators,
@@ -160,6 +166,7 @@ import {
   saveWorkbenchPermissionScopes
 } from '@/api/workbenchPermissions'
 
+const router = useRouter()
 const ALL_GROUPS = '*'
 const UNGROUPED_GROUP = '__ungrouped__'
 const operators = ref([])
@@ -399,6 +406,10 @@ function groupSourceText(group) {
   if (group.source === 'tg_group') return 'TG 分组'
   return group.source || '分组'
 }
+
+function goAccountManagement() {
+  router.push('/admin/accounts')
+}
 </script>
 
 <style scoped>
@@ -555,6 +566,25 @@ function groupSourceText(group) {
 .account-item {
   grid-template-columns: 42px minmax(0, 1fr) auto;
   padding: 14px;
+}
+
+.empty-service-state {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 18px 14px;
+  color: #475569;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.empty-service-state strong {
+  color: #0f172a;
+  font-size: 14px;
+}
+
+.empty-service-state p {
+  margin: 0;
 }
 
 .operator-item:hover,

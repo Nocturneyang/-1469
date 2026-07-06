@@ -142,6 +142,34 @@ function hasSsoTokenQuery(to) {
   return ['token', 'satoken', 'access_token'].some((key) => Object.prototype.hasOwnProperty.call(to.query || {}, key))
 }
 
+function portalRequestedPath(to) {
+  const params = new URLSearchParams()
+  Object.entries(to.query || {}).forEach(([key, value]) => {
+    if (['token', 'satoken', 'access_token'].includes(key)) return
+    if (Array.isArray(value)) {
+      value.forEach((item) => {
+        if (item != null) params.append(key, item)
+      })
+    } else if (value != null) {
+      params.set(key, value)
+    }
+  })
+  const query = params.toString()
+  return `${to.path}${query ? `?${query}` : ''}${to.hash || ''}`
+}
+
+function redirectToPortalDestination(destination, currentPath, next) {
+  if (destination === currentPath) {
+    return false
+  }
+  if (destination.startsWith('/workbench')) {
+    window.location.assign(destination)
+    return true
+  }
+  next(destination)
+  return true
+}
+
 router.beforeEach(async (to, from, next) => {
   const authStore = useAuthStore()
 
@@ -161,15 +189,19 @@ router.beforeEach(async (to, from, next) => {
         const user = await authStore.hydrateSsoUser()
         if (!user) {
           next({ name: 'SsoPending', query: { from: to.fullPath } })
+        } else if (to.name !== 'PortalEntry') {
+          const requestedPath = portalRequestedPath(to)
+          const destination = await authStore.resolvePortalDestination(requestedPath)
+          if (redirectToPortalDestination(destination, requestedPath, next)) return
+          if (to.meta.requiresAdmin && authStore.user?.role !== 'admin') {
+            next({ name: 'Home' })
+          } else if (to.meta.requiresWorkbenchSuperAdmin && !(await authStore.hydrateWorkbenchAccess()).is_super_admin) {
+            next({ name: 'Home' })
+          } else {
+            next()
+          }
         } else if (to.meta.requiresAdmin && authStore.user?.role !== 'admin') {
           next({ name: 'Home' })
-        } else if (to.name !== 'PortalEntry' && !(await authStore.hydrateWorkbenchAccess()).portal_access?.can_monitor) {
-          const access = authStore.portalAccess
-          if (access.can_workbench) {
-            return window.location.assign('/workbench/')
-          } else {
-            return next({ name: 'PortalEntry' })
-          }
         } else if (to.meta.requiresWorkbenchSuperAdmin && !(await authStore.hydrateWorkbenchAccess()).is_super_admin) {
           next({ name: 'Home' })
         } else {
@@ -185,12 +217,14 @@ router.beforeEach(async (to, from, next) => {
     next({ name: 'Home' })
   } else if (to.meta.requiresAdmin && !authStore.isAdmin) {
     next({ name: 'Home' })
-  } else if (!to.meta.public && to.name !== 'PortalEntry' && !(await authStore.hydrateWorkbenchAccess()).portal_access?.can_monitor) {
-    const access = authStore.portalAccess
-    if (access.can_workbench) {
-      return window.location.assign('/workbench/')
+  } else if (!to.meta.public && to.name !== 'PortalEntry') {
+    const requestedPath = portalRequestedPath(to)
+    const destination = await authStore.resolvePortalDestination(requestedPath)
+    if (redirectToPortalDestination(destination, requestedPath, next)) return
+    if (to.meta.requiresWorkbenchSuperAdmin && !(await authStore.hydrateWorkbenchAccess()).is_super_admin) {
+      next({ name: 'Home' })
     } else {
-      return next({ name: 'PortalEntry' })
+      next()
     }
   } else if (to.meta.requiresWorkbenchSuperAdmin && !(await authStore.hydrateWorkbenchAccess()).is_super_admin) {
     next({ name: 'Home' })

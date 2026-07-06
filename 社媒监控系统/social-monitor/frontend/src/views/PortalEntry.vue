@@ -64,10 +64,12 @@ onMounted(async () => {
 })
 
 function goMonitor() {
+  authStore.setPortalChoice('monitor')
   router.replace('/')
 }
 
 function goWorkbench() {
+  authStore.setPortalChoice('workbench')
   window.location.assign('/workbench/')
 }
 

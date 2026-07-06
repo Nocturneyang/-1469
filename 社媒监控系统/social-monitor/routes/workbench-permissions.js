@@ -91,7 +91,7 @@ function createWorkbenchPermissionsRouter(options = {}) {
             success: true,
             data: {
                 operator,
-                portal_access: operatorId ? loadStoredPortalAccess(workbenchDb, operatorId) : null,
+                portal_access: operatorId ? loadEffectivePortalAccess(workbenchDb, operatorId) : null,
                 service_accounts: listServiceAccounts(rawDbPath),
                 service_groups: listServiceGroups(workbenchDb, rawDbPath),
                 scopes: operatorId ? listScopes(workbenchDb, operatorId) : []
@@ -138,7 +138,7 @@ function createWorkbenchPermissionsRouter(options = {}) {
             success: true,
             data: {
                 operator: workbenchDb.prepare('SELECT * FROM operators WHERE id = ?').get(operatorId),
-                portal_access: loadStoredPortalAccess(workbenchDb, operatorId),
+                portal_access: loadEffectivePortalAccess(workbenchDb, operatorId),
                 scopes: save()
             }
         });
@@ -238,6 +238,20 @@ function loadStoredPortalAccess(db, operatorId) {
         };
     }
     return row;
+}
+
+function loadEffectivePortalAccess(db, operatorId) {
+    const operator = db.prepare('SELECT * FROM operators WHERE id = ?').get(operatorId) || {};
+    return {
+        operator_id: operatorId,
+        ...loadPortalAccess(db, {
+            id: operatorId,
+            username: operator.username || operatorId,
+            display_name: operator.display_name || operator.username || operatorId,
+            role: operator.role || 'agent',
+            identities: [operatorId, operator.username, operator.display_name].filter(Boolean)
+        })
+    };
 }
 
 function upsertPortalAccess(db, operatorId, access) {

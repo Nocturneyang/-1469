@@ -9,7 +9,8 @@ export const useAuthStore = defineStore('auth', {
     ssoLoggedOut: localStorage.getItem('sso_logged_out') === '1',
     workbenchAccess: JSON.parse(localStorage.getItem('workbench_access') || 'null'),
     workbenchAccessHydratedAt: Number(localStorage.getItem('workbench_access_hydrated_at') || 0),
-    workbenchAccessPromise: null
+    workbenchAccessPromise: null,
+    portalChoice: sessionStorage.getItem('portal_choice') || ''
   }),
 
   getters: {
@@ -48,8 +49,10 @@ export const useAuthStore = defineStore('auth', {
       localStorage.removeItem('sso_hydrated_at')
       localStorage.removeItem('workbench_access')
       localStorage.removeItem('workbench_access_hydrated_at')
+      sessionStorage.removeItem('portal_choice')
       this.workbenchAccess = null
       this.workbenchAccessHydratedAt = 0
+      this.portalChoice = ''
       if (manualSsoLogout) {
         this.markSsoLoggedOut()
       } else {
@@ -65,6 +68,16 @@ export const useAuthStore = defineStore('auth', {
     clearSsoLoggedOut() {
       this.ssoLoggedOut = false
       localStorage.removeItem('sso_logged_out')
+    },
+
+    setPortalChoice(choice) {
+      const normalized = ['monitor', 'workbench'].includes(choice) ? choice : ''
+      this.portalChoice = normalized
+      if (normalized) {
+        sessionStorage.setItem('portal_choice', normalized)
+      } else {
+        sessionStorage.removeItem('portal_choice')
+      }
     },
 
     getSsoTokenFromUrl() {
@@ -174,11 +187,13 @@ export const useAuthStore = defineStore('auth', {
       const canMonitor = Boolean(portalAccess.can_monitor)
       const canWorkbench = Boolean(portalAccess.can_workbench)
       const landing = portalAccess.landing || '/entry'
+      const portalChoice = this.portalChoice || sessionStorage.getItem('portal_choice') || ''
       const requested = typeof requestedPath === 'string' && requestedPath.startsWith('/') && !requestedPath.startsWith('//')
         ? requestedPath
         : '/'
 
       if (requested.startsWith('/workbench')) return canWorkbench ? requested : (canMonitor ? '/' : '/entry')
+      if (requested === '/' && portalChoice === 'monitor' && canMonitor) return '/'
       if (requested !== '/' && requested !== '/entry') {
         if (canMonitor) return requested
         if (canWorkbench) return '/workbench/'
