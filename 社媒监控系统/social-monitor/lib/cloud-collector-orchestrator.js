@@ -3,6 +3,7 @@
 const fs = require('fs');
 const path = require('path');
 const { K8sRuntimeAdapter } = require('./wa-runtime-adapters/k8s-runtime-adapter');
+const { createDeployHubAdapter } = require('./wa-runtime-adapters/deploy-hub-runtime-adapter');
 const {
     db,
     upsertCollectorRuntimeSpec,
@@ -220,10 +221,21 @@ function buildDeployment({
 class CloudCollectorOrchestrator {
     constructor({ logger = console } = {}) {
         this.logger = logger;
-        this.adapter = new K8sRuntimeAdapter({ logger });
-        this.namespace = process.env.CLOUD_COLLECTOR_NAMESPACE || this.adapter.namespace;
-        this.adapter.namespace = this.namespace;
         this.image = process.env.CLOUD_COLLECTOR_IMAGE || process.env.IMAGE || '';
+
+        // 优先使用 Deploy Hub 适配器（不需要 K8s RBAC）；
+        // 当 DEPLOY_HUB_TOKEN 有值时自动启用。
+        if (process.env.DEPLOY_HUB_TOKEN) {
+            this.adapter = createDeployHubAdapter({ logger });
+            this.namespace = process.env.CLOUD_COLLECTOR_NAMESPACE ||
+                process.env.WA_K8S_NAMESPACE || 'g1469';
+            logger.log('[CloudOrchestrator] Using DeployHub adapter (no RBAC required)');
+        } else {
+            this.adapter = new K8sRuntimeAdapter({ logger });
+            this.namespace = process.env.CLOUD_COLLECTOR_NAMESPACE || this.adapter.namespace;
+            this.adapter.namespace = this.namespace;
+            logger.log('[CloudOrchestrator] Using K8s direct API adapter');
+        }
     }
 
     requireEnabled() {
