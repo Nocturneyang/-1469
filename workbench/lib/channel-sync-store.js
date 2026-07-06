@@ -105,17 +105,25 @@ function replaceChannelSnapshot({
         );
       }
       if (shouldSyncServiceGroups) {
+        workbenchDb.prepare(`
+          DELETE FROM conversation_service_group_map
+          WHERE platform = @platform AND service_account = @account
+            AND native_group_id NOT IN (
+              SELECT native_group_id
+              FROM service_groups
+              WHERE platform = @platform
+                AND service_account = @account
+                AND source IN ('manual', 'manual_l1', 'manual_l2')
+            )
+        `).run({ platform, account });
         deleteMissing(
           workbenchDb,
           'service_groups',
           'native_group_id',
           { platform, accountColumn: 'service_account', account },
           serviceGroupIds,
+          { extraWhere: "(source IS NULL OR source NOT IN ('manual', 'manual_l1', 'manual_l2'))" },
         );
-        workbenchDb.prepare(`
-          DELETE FROM conversation_service_group_map
-          WHERE platform = @platform AND service_account = @account
-        `).run({ platform, account });
       }
 
       const groupStmt = workbenchDb.prepare(`
@@ -177,14 +185,21 @@ function replaceChannelSnapshot({
 
       const serviceGroupStmt = workbenchDb.prepare(`
         INSERT INTO service_groups (
-          platform, service_account, native_group_id, name, source, color, raw_json, synced_at
+          platform, service_account, native_group_id, name, source,
+          parent_native_group_id, group_level, is_manual,
+          color, raw_json, synced_at
         )
         VALUES (
-          @platform, @account, @nativeGroupId, @name, @source, @color, @rawJson, @syncedAt
+          @platform, @account, @nativeGroupId, @name, @source,
+          NULL, 1, 0,
+          @color, @rawJson, @syncedAt
         )
         ON CONFLICT(platform, service_account, native_group_id) DO UPDATE SET
           name = excluded.name,
           source = excluded.source,
+          parent_native_group_id = excluded.parent_native_group_id,
+          group_level = excluded.group_level,
+          is_manual = excluded.is_manual,
           color = excluded.color,
           raw_json = excluded.raw_json,
           synced_at = excluded.synced_at,
@@ -236,15 +251,18 @@ function replaceChannelSnapshot({
   }
 }
 
-function deleteMissing(db, table, field, { platform, account, accountColumn = 'account' }, keepSet) {
+function deleteMissing(db, table, field, { platform, account, accountColumn = 'account' }, keepSet, options = {}) {
+  const extraWhere = options.extraWhere ? `AND ${options.extraWhere}` : '';
   const rows = db.prepare(`
     SELECT ${field} AS value
     FROM ${table}
     WHERE platform = @platform AND ${accountColumn} = @account
+      ${extraWhere}
   `).all({ platform, account });
   const deleteStmt = db.prepare(`
     DELETE FROM ${table}
     WHERE platform = @platform AND ${accountColumn} = @account AND ${field} = @value
+      ${extraWhere}
   `);
   rows.forEach((row) => {
     if (!keepSet.has(String(row.value))) deleteStmt.run({ platform, account, value: row.value });

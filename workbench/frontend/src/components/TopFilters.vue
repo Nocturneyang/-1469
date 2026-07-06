@@ -75,9 +75,14 @@
       <el-option
         v-for="label in labels"
         :key="`${label.platform}:${label.account}:${label.native_label_id}`"
-        :label="label.name"
+        :label="labelOptionLabel(label)"
         :value="label.native_label_id"
-      />
+      >
+        <div class="label-option">
+          <span>{{ labelDisplayName(label) }}</span>
+          <small>{{ labelSourceText(label) }}</small>
+        </div>
+      </el-option>
     </el-select>
 
     <el-button
@@ -196,5 +201,22 @@ function accountKey(account) {
 function accountOptionLabel(account) {
   const displayName = account.account_display_name || account.account;
   return `${displayName} (${account.account})`;
+}
+
+function labelOptionLabel(label) {
+  return labelDisplayName(label);
+}
+
+function labelDisplayName(label) {
+  return label.name || label.native_label_id;
+}
+
+function labelSourceText(label) {
+  if (Number(label.is_manual) === 1 || String(label.source || '').startsWith('manual')) {
+    return Number(label.group_level || 1) === 2 ? '人工二级分组' : '人工一级分组';
+  }
+  if (label.source === 'wa_label') return 'WA 同步标签';
+  if (label.source === 'tg_group') return 'TG 同步分组';
+  return label.source || '分组';
 }
 </script>

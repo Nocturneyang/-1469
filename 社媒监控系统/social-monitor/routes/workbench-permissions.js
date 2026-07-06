@@ -186,10 +186,13 @@ function listServiceGroups(db, rawDbPath) {
             native_group_id,
             name,
             source,
+            parent_native_group_id,
+            group_level,
+            is_manual,
             color,
             synced_at
         FROM service_groups
-        ORDER BY platform ASC, service_account ASC, source ASC, name ASC
+        ORDER BY platform ASC, service_account ASC, source ASC, group_level ASC, name ASC
     `).all().filter((group) => accountSet.has(accountKey(group.platform, group.service_account)));
 
     const virtualGroups = serviceAccounts.flatMap((account) => [

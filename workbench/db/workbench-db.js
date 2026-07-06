@@ -23,10 +23,33 @@ function openWorkbenchDb(dbPath = DEFAULT_WORKBENCH_DB_PATH) {
   db.exec(fs.readFileSync(schemaPath, 'utf8'));
   migrateAccessControlSchema(db);
   seedAccessControl(db);
+  migrateManualServiceGroups(db);
   migrateLegacyLabels(db);
   seedDefaultSuperAdmin(db);
   seedDefaultOperator(db);
   return db;
+}
+
+function migrateManualServiceGroups(db) {
+  const columns = new Set(db.prepare('PRAGMA table_info(service_groups)').all().map((column) => column.name));
+  const addColumn = (name, definition) => {
+    if (!columns.has(name)) db.prepare(`ALTER TABLE service_groups ADD COLUMN ${name} ${definition}`).run();
+  };
+  addColumn('parent_native_group_id', 'TEXT');
+  addColumn('group_level', 'INTEGER NOT NULL DEFAULT 1');
+  addColumn('is_manual', 'INTEGER NOT NULL DEFAULT 0');
+  addColumn('created_by', 'TEXT');
+  addColumn('updated_by', 'TEXT');
+  db.prepare(`
+    UPDATE service_groups
+    SET
+      group_level = CASE WHEN source = 'manual_l2' THEN 2 ELSE COALESCE(NULLIF(group_level, 0), 1) END,
+      is_manual = CASE WHEN source IN ('manual', 'manual_l1', 'manual_l2') THEN 1 ELSE COALESCE(is_manual, 0) END
+  `).run();
+  db.prepare(`
+    CREATE INDEX IF NOT EXISTS idx_service_groups_parent
+      ON service_groups(platform, service_account, parent_native_group_id)
+  `).run();
 }
 
 function migrateLegacyLabels(db) {

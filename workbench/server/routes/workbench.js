@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const express = require('express');
 const { writeChannelSyncRequest } = require('../../lib/channel-sync-store');
 const {
@@ -110,6 +111,9 @@ function createWorkbenchRouter({ workbenchDb, rawDbPath = DEFAULT_RAW_DB_PATH, o
         color,
         source AS kind,
         source,
+        parent_native_group_id,
+        group_level,
+        is_manual,
         synced_at
       FROM service_groups
       ${where}
@@ -147,6 +151,9 @@ function createWorkbenchRouter({ workbenchDb, rawDbPath = DEFAULT_RAW_DB_PATH, o
         native_group_id,
         name,
         source,
+        parent_native_group_id,
+        group_level,
+        is_manual,
         color,
         synced_at
       FROM service_groups
@@ -154,6 +161,105 @@ function createWorkbenchRouter({ workbenchDb, rawDbPath = DEFAULT_RAW_DB_PATH, o
       ORDER BY platform ASC, service_account ASC, source ASC, name ASC
     `).all(params).filter((group) => serviceGroupVisible(workbenchDb, operator, group, 'can_view'));
     res.json({ ok: true, groups });
+  });
+
+  router.get('/manual-groups', (req, res) => {
+    const accountScope = getAccountScope();
+    const operator = currentOperatorContext(workbenchDb, req);
+    const visibleAccountScope = allowedAccountScope(workbenchDb, operator, accountScope, 'can_view');
+    const params = {};
+    const filters = [
+      "(source IN ('manual', 'manual_l1', 'manual_l2') OR is_manual = 1)",
+    ];
+    const platform = normalizePlatform(req.query.platform);
+    const accountFilterValue = req.query.accounts || (
+      req.query.account && platform ? `${platform}:${req.query.account}` : req.query.account
+    );
+    const selectedAccountScope = resolveSelectedAccountScope(visibleAccountScope, accountFilterValue);
+    if (platform) {
+      filters.push('platform = @platform');
+      params.platform = platform;
+    }
+    applyServiceAccountScopeSql(filters, params, selectedAccountScope);
+    const where = filters.length ? `WHERE ${filters.join(' AND ')}` : '';
+    const groups = workbenchDb.prepare(`
+      SELECT
+        id,
+        platform,
+        service_account,
+        native_group_id,
+        name,
+        source,
+        parent_native_group_id,
+        group_level,
+        is_manual,
+        color,
+        synced_at,
+        created_by,
+        updated_by,
+        created_at,
+        updated_at
+      FROM service_groups
+      ${where}
+      ORDER BY platform ASC, service_account ASC, group_level ASC, name ASC
+    `).all(params).filter((group) => serviceGroupVisible(workbenchDb, operator, group, 'can_view'));
+    res.json({ ok: true, groups: orderServiceGroups(groups) });
+  });
+
+  router.post('/manual-groups', (req, res) => {
+    const accountScope = getAccountScope();
+    const operator = currentOperatorContext(workbenchDb, req);
+    const manageAccountScope = allowedAccountScope(workbenchDb, operator, accountScope, 'can_manage');
+    const operatorId = operator.id;
+    const body = req.body || {};
+    const platform = requirePlatform(body.platform);
+    const account = requireText(body.account, 'account');
+    requireVisibleAccount(manageAccountScope, platform, account);
+    const name = sanitizeManualGroupName(body.name);
+    const groupLevel = normalizeManualGroupLevel(body.group_level ?? body.level);
+    const parentNativeGroupId = groupLevel === 2
+      ? requireText(body.parent_native_group_id || body.parent_id, 'parent_native_group_id')
+      : null;
+    if (parentNativeGroupId) {
+      const parent = getServiceGroup(workbenchDb, platform, account, parentNativeGroupId);
+      if (!parent || Number(parent.group_level || 1) !== 1 || !isManualServiceGroup(parent)) {
+        throw createHttpError(400, 'parent group must be an existing manual level-1 group');
+      }
+    }
+    const nativeGroupId = createManualGroupId();
+    const source = groupLevel === 2 ? 'manual_l2' : 'manual_l1';
+    const color = normalizeColor(body.color) || defaultManualGroupColor(groupLevel);
+    const now = new Date().toISOString();
+    workbenchDb.prepare(`
+      INSERT INTO service_groups (
+        platform, service_account, native_group_id, name, source,
+        parent_native_group_id, group_level, is_manual,
+        color, raw_json, synced_at, created_by, updated_by
+      )
+      VALUES (
+        @platform, @account, @nativeGroupId, @name, @source,
+        @parentNativeGroupId, @groupLevel, 1,
+        @color, @rawJson, @syncedAt, @operatorId, @operatorId
+      )
+    `).run({
+      platform,
+      account,
+      nativeGroupId,
+      name,
+      source,
+      parentNativeGroupId,
+      groupLevel,
+      color,
+      rawJson: safeJson({ manual: true, group_level: groupLevel, parent_native_group_id: parentNativeGroupId }),
+      syncedAt: now,
+      operatorId,
+    });
+    writeAction(workbenchDb, operatorId, 'manual_group.create', platform, account, null, nativeGroupId, {
+      name,
+      group_level: groupLevel,
+      parent_native_group_id: parentNativeGroupId,
+    });
+    res.status(201).json({ ok: true, group: getServiceGroup(workbenchDb, platform, account, nativeGroupId) });
   });
 
   router.get('/groups', (req, res) => {
@@ -165,6 +271,7 @@ function createWorkbenchRouter({ workbenchDb, rawDbPath = DEFAULT_RAW_DB_PATH, o
     const platforms = normalizePlatformList(req.query.platform || req.query.platforms);
     const scope = String(req.query.scope || 'all');
     const labelId = req.query.label_id ? String(req.query.label_id) : '';
+    const labelIds = labelId ? new Set(expandServiceGroupFilterIds(workbenchDb, labelId)) : new Set();
     const rawGroups = listGroups({
       rawDbPath,
       platforms,
@@ -192,8 +299,12 @@ function createWorkbenchRouter({ workbenchDb, rawDbPath = DEFAULT_RAW_DB_PATH, o
         return true;
       })
       .filter((group) => {
-        if (!labelId) return true;
-        return group.labels.some((label) => String(label.native_label_id) === labelId || String(label.id) === labelId);
+        if (!labelIds.size) return true;
+        return group.labels.some((label) => (
+          labelIds.has(String(label.native_label_id)) ||
+          labelIds.has(String(label.native_group_id)) ||
+          labelIds.has(String(label.id))
+        ));
       });
     res.json({ ok: true, groups: enriched, account_scope: mapAccountScope(visibleAccountScope) });
   });
@@ -259,6 +370,59 @@ function createWorkbenchRouter({ workbenchDb, rawDbPath = DEFAULT_RAW_DB_PATH, o
     const outbound = listOutboundMessages(workbenchDb, { platform, account, groupId });
     const messages = applyMentionDisplayNames(mergeConversationMessages(inbound, outbound));
     res.json({ ok: true, messages, paging: page.paging });
+  });
+
+  router.put('/groups/:groupId/manual-groups', (req, res) => {
+    const accountScope = getAccountScope();
+    const operator = currentOperatorContext(workbenchDb, req);
+    const manageAccountScope = allowedAccountScope(workbenchDb, operator, accountScope, 'can_manage');
+    const operatorId = operator.id;
+    const body = req.body || {};
+    const platform = requirePlatform(body.platform);
+    const account = requireText(body.account, 'account');
+    requireVisibleAccount(manageAccountScope, platform, account);
+    const groupId = req.params.groupId;
+    requireConversationCapability(workbenchDb, operator, platform, account, groupId, 'can_manage');
+    const manualGroupIds = normalizeManualGroupIds(
+      body.manual_group_ids ?? body.native_group_ids ?? body.group_ids ?? [],
+    );
+    const manualGroups = loadManualServiceGroupsByIds(workbenchDb, platform, account, manualGroupIds);
+    if (manualGroups.length !== manualGroupIds.length) {
+      throw createHttpError(400, 'manual_group_ids contains unknown or non-manual groups');
+    }
+    const save = workbenchDb.transaction(() => {
+      workbenchDb.prepare(`
+        DELETE FROM conversation_service_group_map
+        WHERE platform = @platform
+          AND service_account = @account
+          AND chat_id = @groupId
+          AND native_group_id IN (
+            SELECT native_group_id
+            FROM service_groups
+            WHERE platform = @platform
+              AND service_account = @account
+              AND (source IN ('manual', 'manual_l1', 'manual_l2') OR is_manual = 1)
+          )
+      `).run({ platform, account, groupId });
+      const insert = workbenchDb.prepare(`
+        INSERT INTO conversation_service_group_map (
+          platform, service_account, chat_id, native_group_id, synced_at
+        )
+        VALUES (@platform, @account, @groupId, @nativeGroupId, @syncedAt)
+        ON CONFLICT(platform, service_account, chat_id, native_group_id) DO UPDATE SET
+          synced_at = excluded.synced_at,
+          updated_at = CURRENT_TIMESTAMP
+      `);
+      const syncedAt = new Date().toISOString();
+      manualGroupIds.forEach((nativeGroupId) => {
+        insert.run({ platform, account, groupId, nativeGroupId, syncedAt });
+      });
+      writeAction(workbenchDb, operatorId, 'conversation.manual_groups.update', platform, account, groupId, groupId, {
+        manual_group_ids: manualGroupIds,
+      });
+      return loadConversationLabels(workbenchDb, platform, account, groupId);
+    });
+    res.json({ ok: true, labels: save() });
   });
 
   router.post('/reply', (req, res) => {
@@ -646,12 +810,20 @@ function loadLabelMap(db) {
       l.name,
       l.color,
       l.source AS kind,
-      l.source
+      l.source,
+      l.parent_native_group_id,
+      l.group_level,
+      l.is_manual,
+      parent.name AS parent_name
     FROM conversation_service_group_map m
     JOIN service_groups l
       ON l.platform = m.platform
      AND l.service_account = m.service_account
      AND l.native_group_id = m.native_group_id
+    LEFT JOIN service_groups parent
+      ON parent.platform = l.platform
+     AND parent.service_account = l.service_account
+     AND parent.native_group_id = l.parent_native_group_id
     ORDER BY l.source ASC, l.name ASC
   `).all();
   rows.forEach((row) => {
@@ -660,6 +832,42 @@ function loadLabelMap(db) {
     map.get(key).push(row);
   });
   return map;
+}
+
+function loadConversationLabels(db, platform, account, groupId) {
+  return db.prepare(`
+    SELECT
+      l.id,
+      l.platform,
+      l.service_account AS account,
+      l.native_group_id AS native_label_id,
+      l.native_group_id,
+      l.name,
+      l.color,
+      l.source AS kind,
+      l.source,
+      l.parent_native_group_id,
+      l.group_level,
+      l.is_manual,
+      parent.name AS parent_name
+    FROM conversation_service_group_map m
+    JOIN service_groups l
+      ON l.platform = m.platform
+     AND l.service_account = m.service_account
+     AND l.native_group_id = m.native_group_id
+    LEFT JOIN service_groups parent
+      ON parent.platform = l.platform
+     AND parent.service_account = l.service_account
+     AND parent.native_group_id = l.parent_native_group_id
+    WHERE m.platform = @platform
+      AND m.service_account = @account
+      AND m.chat_id = @groupId
+    ORDER BY l.source ASC, l.name ASC
+  `).all({
+    platform: normalizePlatform(platform),
+    account: String(account || '').trim(),
+    groupId: String(groupId || '').trim(),
+  });
 }
 
 function listOutboundMessages(db, { platform, account, groupId }) {
@@ -997,6 +1205,111 @@ function lastChannelSyncAt(db, platform, account) {
     )
   `).get({ platform, account });
   return row ? row.synced_at : null;
+}
+
+function getServiceGroup(db, platform, account, nativeGroupId) {
+  return db.prepare(`
+    SELECT *
+    FROM service_groups
+    WHERE platform = @platform
+      AND service_account = @account
+      AND native_group_id = @nativeGroupId
+  `).get({
+    platform: normalizePlatform(platform),
+    account: String(account || '').trim(),
+    nativeGroupId: String(nativeGroupId || '').trim(),
+  }) || null;
+}
+
+function isManualServiceGroup(group) {
+  if (!group) return false;
+  return Number(group.is_manual) === 1 || ['manual', 'manual_l1', 'manual_l2'].includes(String(group.source || ''));
+}
+
+function createManualGroupId() {
+  return `manual:${Date.now().toString(36)}:${crypto.randomBytes(4).toString('hex')}`;
+}
+
+function sanitizeManualGroupName(value) {
+  const name = String(value || '').trim().replace(/\s+/g, ' ').slice(0, 60);
+  if (!name) throw createHttpError(400, 'name is required');
+  return name;
+}
+
+function normalizeManualGroupLevel(value) {
+  const level = Number(value || 1);
+  if (level === 1 || level === 2) return level;
+  throw createHttpError(400, 'group level must be 1 or 2');
+}
+
+function normalizeManualGroupIds(value) {
+  const list = Array.isArray(value) ? value : String(value || '').split(',');
+  const seen = new Set();
+  const ids = [];
+  list.map((item) => String(item || '').trim()).filter(Boolean).forEach((id) => {
+    if (seen.has(id)) return;
+    seen.add(id);
+    ids.push(id);
+  });
+  return ids.slice(0, 50);
+}
+
+function normalizeColor(value) {
+  const color = String(value || '').trim();
+  return /^#[0-9a-fA-F]{6}$/.test(color) ? color : '';
+}
+
+function defaultManualGroupColor(level) {
+  return level === 2 ? '#2563eb' : '#7c3aed';
+}
+
+function loadManualServiceGroupsByIds(db, platform, account, nativeGroupIds) {
+  const ids = normalizeManualGroupIds(nativeGroupIds);
+  if (!ids.length) return [];
+  const params = {
+    platform: normalizePlatform(platform),
+    account: String(account || '').trim(),
+  };
+  const placeholders = ids.map((id, index) => {
+    const key = `nativeGroupId${index}`;
+    params[key] = id;
+    return `@${key}`;
+  });
+  return db.prepare(`
+    SELECT *
+    FROM service_groups
+    WHERE platform = @platform
+      AND service_account = @account
+      AND native_group_id IN (${placeholders.join(', ')})
+      AND (source IN ('manual', 'manual_l1', 'manual_l2') OR is_manual = 1)
+  `).all(params);
+}
+
+function expandServiceGroupFilterIds(db, nativeGroupId) {
+  const id = String(nativeGroupId || '').trim();
+  if (!id) return [];
+  const rows = db.prepare(`
+    SELECT native_group_id
+    FROM service_groups
+    WHERE native_group_id = @id
+       OR parent_native_group_id = @id
+  `).all({ id });
+  const ids = new Set([id]);
+  rows.forEach((row) => {
+    if (row.native_group_id) ids.add(String(row.native_group_id));
+  });
+  return [...ids];
+}
+
+function orderServiceGroups(groups) {
+  const byId = new Map(groups.map((group) => [String(group.native_group_id), group]));
+  return [...groups].sort((a, b) => {
+    const aParent = a.parent_native_group_id ? byId.get(String(a.parent_native_group_id)) : null;
+    const bParent = b.parent_native_group_id ? byId.get(String(b.parent_native_group_id)) : null;
+    const aPath = `${a.platform}:${a.service_account}:${aParent ? aParent.name : a.name}:${Number(a.group_level || 1)}:${a.name}`;
+    const bPath = `${b.platform}:${b.service_account}:${bParent ? bParent.name : b.name}:${Number(b.group_level || 1)}:${b.name}`;
+    return aPath.localeCompare(bPath, 'zh-Hans-CN');
+  });
 }
 
 function applyAccountScopeSql(filters, params, accountScope) {

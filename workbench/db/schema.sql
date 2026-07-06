@@ -210,9 +210,14 @@ CREATE TABLE IF NOT EXISTS service_groups (
   native_group_id TEXT NOT NULL,
   name TEXT NOT NULL,
   source TEXT NOT NULL DEFAULT 'manual',
+  parent_native_group_id TEXT,
+  group_level INTEGER NOT NULL DEFAULT 1,
+  is_manual INTEGER NOT NULL DEFAULT 0,
   color TEXT,
   raw_json TEXT,
   synced_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  created_by TEXT,
+  updated_by TEXT,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   UNIQUE(platform, service_account, native_group_id)
@@ -220,6 +225,9 @@ CREATE TABLE IF NOT EXISTS service_groups (
 
 CREATE INDEX IF NOT EXISTS idx_service_groups_account
   ON service_groups(platform, service_account, source, name);
+
+CREATE INDEX IF NOT EXISTS idx_service_groups_parent
+  ON service_groups(platform, service_account, parent_native_group_id);
 
 CREATE TABLE IF NOT EXISTS conversation_service_group_map (
   id INTEGER PRIMARY KEY AUTOINCREMENT,

@@ -62,6 +62,66 @@ async function main() {
     assert.strictEqual(syncedGroups.groups[0].group_id, 'group-synced-only');
     assert.strictEqual(syncedGroups.groups[0].labels[0].name, '同步标签');
 
+    const manualLevelOne = await requestJson(`${baseUrl}/manual-groups`, {
+      method: 'POST',
+      body: {
+        platform: 'wa',
+        account: 'nanya_wa',
+        name: '售后支持',
+        group_level: 1,
+      },
+    });
+    assert.strictEqual(manualLevelOne.ok, true);
+    assert.strictEqual(manualLevelOne.group.group_level, 1);
+    assert.strictEqual(manualLevelOne.group.is_manual, 1);
+
+    const manualLevelTwo = await requestJson(`${baseUrl}/manual-groups`, {
+      method: 'POST',
+      body: {
+        platform: 'wa',
+        account: 'nanya_wa',
+        name: 'VIP 客户',
+        group_level: 2,
+        parent_native_group_id: manualLevelOne.group.native_group_id,
+      },
+    });
+    assert.strictEqual(manualLevelTwo.ok, true);
+    assert.strictEqual(manualLevelTwo.group.group_level, 2);
+    assert.strictEqual(manualLevelTwo.group.parent_native_group_id, manualLevelOne.group.native_group_id);
+
+    const manualGroupList = await requestJson(`${baseUrl}/manual-groups?platform=wa`);
+    assert.strictEqual(manualGroupList.groups.length, 2);
+
+    const saveManualGroups = await requestJson(`${baseUrl}/groups/group-1/manual-groups`, {
+      method: 'PUT',
+      body: {
+        platform: 'wa',
+        account: 'nanya_wa',
+        manual_group_ids: [manualLevelTwo.group.native_group_id],
+      },
+    });
+    assert.strictEqual(saveManualGroups.ok, true);
+    assert.strictEqual(saveManualGroups.labels.length, 1);
+    assert.strictEqual(saveManualGroups.labels[0].name, 'VIP 客户');
+    assert.strictEqual(saveManualGroups.labels[0].parent_name, '售后支持');
+
+    const manualChildFilter = await requestJson(`${baseUrl}/groups?platforms=wa&scope=all&label_id=${encodeURIComponent(manualLevelTwo.group.native_group_id)}`);
+    assert.strictEqual(manualChildFilter.groups.some((group) => group.group_id === 'group-1'), true);
+    const manualParentFilter = await requestJson(`${baseUrl}/groups?platforms=wa&scope=all&label_id=${encodeURIComponent(manualLevelOne.group.native_group_id)}`);
+    assert.strictEqual(manualParentFilter.groups.some((group) => group.group_id === 'group-1'), true);
+
+    workbenchDb.prepare(`
+      INSERT INTO operator_service_group_scopes (
+        operator_id, platform, service_account, native_group_id, can_view, can_reply, can_assign, can_manage
+      )
+      VALUES ('agent-parent-scope', 'wa', 'nanya_wa', ?, 1, 0, 0, 0)
+    `).run(manualLevelOne.group.native_group_id);
+    const parentScopedGroups = await requestJson(`${baseUrl}/groups?platforms=wa&scope=all`, {
+      headers: { 'x-operator-id': 'agent-parent-scope' },
+    });
+    assert.strictEqual(parentScopedGroups.groups.some((group) => group.group_id === 'group-1'), true);
+    assert.strictEqual(parentScopedGroups.groups.some((group) => group.group_id === 'group-synced-only'), false);
+
     const replyBody = {
       client_msg_id: 'client-1',
       platform: 'wa',

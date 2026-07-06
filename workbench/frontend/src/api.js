@@ -33,6 +33,16 @@ export async function fetchLabels(params = {}) {
   return data.labels || [];
 }
 
+export async function fetchManualGroups(params = {}) {
+  const { data } = await api.get('/manual-groups', { params });
+  return data.groups || [];
+}
+
+export async function createManualGroup(payload = {}) {
+  const { data } = await api.post('/manual-groups', payload);
+  return data.group || null;
+}
+
 export async function fetchGroups(params = {}) {
   const { data } = await api.get('/groups', { params });
   return data.groups || [];
@@ -80,6 +90,15 @@ export async function releaseGroup(group) {
   const { data } = await api.post(`/groups/${encodeURIComponent(group.group_id)}/release`, {
     platform: group.platform,
     account: group.account,
+  });
+  return data;
+}
+
+export async function saveGroupManualGroups(group, manualGroupIds = []) {
+  const { data } = await api.put(`/groups/${encodeURIComponent(group.group_id)}/manual-groups`, {
+    platform: group.platform,
+    account: group.account,
+    manual_group_ids: manualGroupIds,
   });
   return data;
 }

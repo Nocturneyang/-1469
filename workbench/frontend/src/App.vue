@@ -54,7 +54,14 @@
           <Composer :group="selectedGroup" :sending="sending" @send="handleSend" />
         </div>
 
-        <ConversationInspector :group="selectedGroup" :messages="messages" />
+        <ConversationInspector
+          :group="selectedGroup"
+          :messages="messages"
+          :manual-groups="manualGroups"
+          :saving-manual-groups="savingManualGroups"
+          @manual-groups-change="handleManualGroupsChange"
+          @manual-group-create="handleManualGroupCreate"
+        />
       </main>
     </div>
 
@@ -75,17 +82,20 @@ import {
   assignGroup,
   cancelOutbound,
   createClientMsgId,
+  createManualGroup,
   createReply,
   fetchAccounts,
   fetchGroups,
   fetchHealth,
   fetchLabels,
+  fetchManualGroups,
   fetchMe,
   fetchMessages,
   markRead,
   requestChannelSync,
   releaseGroup,
   retryOutbound,
+  saveGroupManualGroups,
 } from './api';
 
 const filters = ref({
@@ -96,6 +106,7 @@ const filters = ref({
   search: '',
 });
 const labels = ref([]);
+const manualGroups = ref([]);
 const accounts = ref([]);
 const groups = ref([]);
 const messages = ref([]);
@@ -109,6 +120,7 @@ const loadingOlder = ref(false);
 const stickToBottom = ref(true);
 const sending = ref(false);
 const syncingChannels = ref(false);
+const savingManualGroups = ref(false);
 const error = ref('');
 const serviceRailCollapsed = ref(readStoredRailCollapsed());
 
@@ -172,6 +184,7 @@ onMounted(async () => {
   accounts.value = await fetchAccounts().catch(() => []);
   syncPlatformFilterWithScope({ preferMessageAccounts: true });
   await loadLabels();
+  await loadManualGroups();
   await loadGroups();
   startAutoRefresh();
 });
@@ -190,6 +203,7 @@ watch(() => [activeLabelPlatform.value, selectedAccountParam.value || ''], async
     filters.value = { ...filters.value, labelId: '' };
   }
   await loadLabels();
+  await loadManualGroups();
 });
 
 watch(
@@ -255,6 +269,14 @@ async function loadLabels() {
   if (filters.value.labelId && !hasLabel(nextLabels, filters.value.labelId)) {
     filters.value = { ...filters.value, labelId: '' };
   }
+}
+
+async function loadManualGroups() {
+  const platform = activeLabelPlatform.value;
+  manualGroups.value = await fetchManualGroups({
+    ...(platform ? { platform } : {}),
+    ...(selectedAccountParam.value ? { accounts: selectedAccountParam.value } : {}),
+  }).catch(() => []);
 }
 
 function hasLabel(nextLabels, labelId) {
@@ -381,6 +403,7 @@ async function handleChannelSync() {
     ElMessage.success(`已请求同步 ${result.requests.length} 个账号`);
     setTimeout(() => {
       loadLabels();
+      loadManualGroups();
       loadGroups({ silent: true });
     }, 2500);
   } catch (err) {
@@ -388,6 +411,51 @@ async function handleChannelSync() {
   } finally {
     syncingChannels.value = false;
   }
+}
+
+async function handleManualGroupCreate(payload) {
+  if (!selectedGroup.value || savingManualGroups.value) return;
+  savingManualGroups.value = true;
+  try {
+    const group = await createManualGroup({
+      platform: selectedGroup.value.platform,
+      account: selectedGroup.value.account,
+      ...payload,
+    });
+    await loadLabels();
+    await loadManualGroups();
+    if (group && group.native_group_id) {
+      const currentIds = selectedManualGroupIds(selectedGroup.value);
+      await persistManualGroups([...new Set([...currentIds, group.native_group_id])]);
+    }
+    ElMessage.success('人工分组已创建');
+  } catch (err) {
+    ElMessage.error('人工分组创建失败');
+  } finally {
+    savingManualGroups.value = false;
+  }
+}
+
+async function handleManualGroupsChange(manualGroupIds) {
+  if (!selectedGroup.value || savingManualGroups.value) return;
+  savingManualGroups.value = true;
+  try {
+    await persistManualGroups(manualGroupIds);
+    ElMessage.success('会话分组已更新');
+  } catch (err) {
+    ElMessage.error('会话分组保存失败');
+  } finally {
+    savingManualGroups.value = false;
+  }
+}
+
+async function persistManualGroups(manualGroupIds) {
+  if (!selectedGroup.value) return;
+  const result = await saveGroupManualGroups(selectedGroup.value, manualGroupIds);
+  patchSelectedGroup({ labels: result.labels || [] });
+  await loadLabels();
+  await loadManualGroups();
+  await loadGroups({ silent: true, clearSelectionOnMissing: true });
 }
 
 async function handleMarkRead() {
@@ -510,6 +578,13 @@ function patchSelectedGroup(patch) {
   groups.value = groups.value
     .map((group) => (group.id === nextGroup.id ? { ...group, ...patch } : group))
     .filter(groupMatchesActiveScope);
+}
+
+function selectedManualGroupIds(group) {
+  return ((group && group.labels) || [])
+    .filter((label) => label && (Number(label.is_manual) === 1 || String(label.source || '').startsWith('manual')))
+    .map((label) => String(label.native_group_id || label.native_label_id || '').trim())
+    .filter(Boolean);
 }
 
 function groupMatchesActiveScope(group) {

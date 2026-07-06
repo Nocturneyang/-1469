@@ -407,6 +407,9 @@ function operatorInitial(operator) {
 function groupSourceText(group) {
   if (group.native_group_id === ALL_GROUPS) return '账号全部分组'
   if (group.native_group_id === UNGROUPED_GROUP) return '没有 WA 标签 / TG 分组的会话'
+  if (Number(group.is_manual) === 1 || String(group.source || '').startsWith('manual')) {
+    return Number(group.group_level || 1) === 2 ? '人工二级分组' : '人工一级分组'
+  }
   if (group.source === 'wa_label') return 'WA 标签'
   if (group.source === 'tg_group') return 'TG 分组'
   return group.source || '分组'

@@ -25,6 +25,91 @@
         </div>
       </section>
 
+      <section class="inspector-section manual-groups-section">
+        <div class="section-title">人工分组</div>
+        <el-select
+          class="manual-group-select"
+          :model-value="selectedManualGroupIds"
+          multiple
+          clearable
+          collapse-tags
+          collapse-tags-tooltip
+          placeholder="选择一级或二级分组"
+          :disabled="!canManageManualGroups || savingManualGroups"
+          @change="emitManualGroupsChange"
+        >
+          <el-option
+            v-for="option in manualGroupOptions"
+            :key="option.value"
+            :label="option.label"
+            :value="option.value"
+          >
+            <div class="manual-group-option" :class="{ child: option.level === 2 }">
+              <span>{{ option.name }}</span>
+              <small>{{ option.subtitle }}</small>
+            </div>
+          </el-option>
+        </el-select>
+
+        <div class="manual-create-row">
+          <el-input
+            v-model="manualDraft.name"
+            size="small"
+            clearable
+            placeholder="新分组名称"
+            :disabled="!canManageManualGroups || savingManualGroups"
+          />
+          <el-select
+            v-model="manualDraft.level"
+            size="small"
+            class="manual-level-select"
+            :disabled="!canManageManualGroups || savingManualGroups"
+          >
+            <el-option label="一级" :value="1" />
+            <el-option label="二级" :value="2" />
+          </el-select>
+        </div>
+
+        <div v-if="manualDraft.level === 2" class="manual-create-row">
+          <el-select
+            v-model="manualDraft.parent_native_group_id"
+            size="small"
+            class="manual-parent-select"
+            placeholder="选择一级分组"
+            :disabled="!canManageManualGroups || savingManualGroups || !levelOneManualGroups.length"
+          >
+            <el-option
+              v-for="parent in levelOneManualGroups"
+              :key="parent.native_group_id"
+              :label="parent.name"
+              :value="parent.native_group_id"
+            />
+          </el-select>
+          <el-button
+            size="small"
+            type="primary"
+            :loading="savingManualGroups"
+            :disabled="!canSubmitManualGroup"
+            @click="submitManualGroup"
+          >
+            新建
+          </el-button>
+        </div>
+
+        <div v-else class="manual-create-row">
+          <span class="manual-helper">{{ manualHelperText }}</span>
+          <el-button
+            size="small"
+            type="primary"
+            :loading="savingManualGroups"
+            :disabled="!canSubmitManualGroup"
+            @click="submitManualGroup"
+          >
+            新建
+          </el-button>
+        </div>
+      </section>
+
       <section class="inspector-section">
         <div class="section-title">服务账号</div>
         <dl class="meta-list">
@@ -103,7 +188,7 @@
 </template>
 
 <script setup>
-import { computed } from 'vue';
+import { computed, reactive, watch } from 'vue';
 import { formatTime, platformClass, platformName } from '../utils/format';
 
 const props = defineProps({
@@ -115,6 +200,21 @@ const props = defineProps({
     type: Array,
     default: () => [],
   },
+  manualGroups: {
+    type: Array,
+    default: () => [],
+  },
+  savingManualGroups: {
+    type: Boolean,
+    default: false,
+  },
+});
+
+const emit = defineEmits(['manual-groups-change', 'manual-group-create']);
+const manualDraft = reactive({
+  name: '',
+  level: 1,
+  parent_native_group_id: '',
 });
 
 const isOnline = computed(() => {
@@ -131,6 +231,100 @@ const assignmentText = computed(() => {
   if (!assignment) return '未认领';
   return assignment.assigned_to_name || assignment.assigned_to || '已认领';
 });
+
+const canManageManualGroups = computed(() => (
+  props.group &&
+  props.group.permissions &&
+  props.group.permissions.can_manage === true
+));
+
+const accountManualGroups = computed(() => {
+  if (!props.group) return [];
+  return props.manualGroups.filter((item) => (
+    item.platform === props.group.platform &&
+    item.service_account === props.group.account
+  ));
+});
+
+const levelOneManualGroups = computed(() => (
+  accountManualGroups.value
+    .filter((item) => Number(item.group_level || 1) === 1)
+    .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'zh-Hans-CN'))
+));
+
+const selectedManualGroupIds = computed(() => (
+  ((props.group && props.group.labels) || [])
+    .filter((label) => Number(label.is_manual) === 1 || String(label.source || '').startsWith('manual'))
+    .map((label) => String(label.native_group_id || label.native_label_id || '').trim())
+    .filter(Boolean)
+));
+
+const manualGroupOptions = computed(() => {
+  const parents = new Map(levelOneManualGroups.value.map((item) => [String(item.native_group_id), item]));
+  return accountManualGroups.value
+    .map((item) => {
+      const level = Number(item.group_level || 1);
+      const parent = item.parent_native_group_id ? parents.get(String(item.parent_native_group_id)) : null;
+      return {
+        value: item.native_group_id,
+        name: item.name,
+        level,
+        label: parent ? `${parent.name} / ${item.name}` : item.name,
+        subtitle: parent ? '二级人工分组' : '一级人工分组',
+        sortKey: `${parent ? parent.name : item.name}:${level}:${item.name}`,
+      };
+    })
+    .sort((a, b) => a.sortKey.localeCompare(b.sortKey, 'zh-Hans-CN'));
+});
+
+const canSubmitManualGroup = computed(() => {
+  if (!canManageManualGroups.value || props.savingManualGroups) return false;
+  if (!manualDraft.name.trim()) return false;
+  if (manualDraft.level === 2 && !manualDraft.parent_native_group_id) return false;
+  return true;
+});
+
+const manualHelperText = computed(() => (
+  canManageManualGroups.value ? '一级分组可直接打到群上，也可作为二级分组的父级。' : '当前账号没有管理权限'
+));
+
+watch(
+  () => props.group && props.group.id,
+  () => {
+    manualDraft.name = '';
+    manualDraft.level = 1;
+    manualDraft.parent_native_group_id = '';
+  },
+);
+
+watch(levelOneManualGroups, (parents) => {
+  if (manualDraft.level === 2 && !parents.some((item) => item.native_group_id === manualDraft.parent_native_group_id)) {
+    manualDraft.parent_native_group_id = parents[0]?.native_group_id || '';
+  }
+});
+
+watch(
+  () => manualDraft.level,
+  (level) => {
+    if (level === 2 && !manualDraft.parent_native_group_id) {
+      manualDraft.parent_native_group_id = levelOneManualGroups.value[0]?.native_group_id || '';
+    }
+  },
+);
+
+function emitManualGroupsChange(values) {
+  emit('manual-groups-change', values);
+}
+
+function submitManualGroup() {
+  if (!canSubmitManualGroup.value) return;
+  emit('manual-group-create', {
+    name: manualDraft.name.trim(),
+    group_level: manualDraft.level,
+    parent_native_group_id: manualDraft.level === 2 ? manualDraft.parent_native_group_id : undefined,
+  });
+  manualDraft.name = '';
+}
 
 function platformShort(platform) {
   if (platform === 'wa') return 'W';

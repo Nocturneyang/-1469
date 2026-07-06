@@ -537,6 +537,35 @@ button {
   font-size: 12px;
 }
 
+.label-option,
+.manual-group-option {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.label-option span,
+.manual-group-option span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 650;
+}
+
+.label-option small,
+.manual-group-option small {
+  flex: 0 0 auto;
+  color: var(--muted-2);
+  font-size: 12px;
+}
+
+.manual-group-option.child span {
+  padding-left: 14px;
+}
+
 .account-select .el-select__wrapper,
 .label-select .el-select__wrapper,
 .search-input .el-input__wrapper {
@@ -1358,6 +1387,43 @@ button {
 .group-tag.muted {
   color: var(--muted);
   background: #eef2f0;
+}
+
+.manual-groups-section {
+  display: grid;
+  gap: 9px;
+}
+
+.manual-groups-section .section-title {
+  margin-bottom: 0;
+}
+
+.manual-group-select,
+.manual-parent-select {
+  width: 100%;
+}
+
+.manual-create-row {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.manual-level-select {
+  width: 84px;
+}
+
+.manual-helper {
+  min-width: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.manual-create-row .el-button {
+  min-width: 64px;
 }
 
 .meta-list {

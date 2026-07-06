@@ -34,7 +34,7 @@
           </div>
           <div class="label-line">
             <el-icon><Folder /></el-icon>
-            <span v-if="group.labels.length">{{ group.labels.map((label) => label.name).join(' / ') }}</span>
+            <span v-if="group.labels.length">{{ group.labels.map(labelText).join(' / ') }}</span>
             <span v-else>未分组</span>
           </div>
           <div class="preview-line">
@@ -97,5 +97,13 @@ function accountDisplayName(group) {
 function assignmentText(group) {
   if (!group.assignment) return '未认领';
   return group.assignment.assigned_to_name || group.assignment.assigned_to || '已认领';
+}
+
+function labelText(label) {
+  if (!label) return '';
+  if ((Number(label.is_manual) === 1 || String(label.source || '').startsWith('manual')) && label.parent_name) {
+    return `${label.parent_name}/${label.name}`;
+  }
+  return label.name || label.native_label_id || '';
 }
 </script>

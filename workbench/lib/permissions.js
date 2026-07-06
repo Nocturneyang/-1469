@@ -436,6 +436,43 @@ function nativeGroupIdsForConversation(db, platform, account, groupId) {
   return rows.map((row) => String(row.native_group_id || '').trim()).filter(Boolean);
 }
 
+function groupParentMap(db, platform, account, nativeGroupIds = []) {
+  const ids = [...new Set((nativeGroupIds || []).map((item) => String(item || '').trim()).filter(Boolean))];
+  if (!ids.length) return new Map();
+  const params = {
+    platform: normalizePlatform(platform),
+    account: String(account || '').trim(),
+  };
+  const placeholders = ids.map((id, index) => {
+    const key = `id${index}`;
+    params[key] = id;
+    return `@${key}`;
+  });
+  const rows = db.prepare(`
+    SELECT native_group_id, parent_native_group_id
+    FROM service_groups
+    WHERE platform = @platform
+      AND service_account = @account
+      AND native_group_id IN (${placeholders.join(', ')})
+  `).all(params);
+  return new Map(rows.map((row) => [
+    String(row.native_group_id || '').trim(),
+    String(row.parent_native_group_id || '').trim(),
+  ]));
+}
+
+function nativeIdsMatchAllowedScopes(db, platform, account, nativeIds, allowedScopes) {
+  const normalizedNativeIds = [...new Set((nativeIds || []).map((item) => String(item || '').trim()).filter(Boolean))];
+  if (!normalizedNativeIds.length) return false;
+  const allowedIds = new Set(allowedScopes.map((scope) => String(scope.native_group_id || '').trim()).filter(Boolean));
+  if (normalizedNativeIds.some((nativeId) => allowedIds.has(nativeId))) return true;
+  const parents = groupParentMap(db, platform, account, normalizedNativeIds);
+  return normalizedNativeIds.some((nativeId) => {
+    const parentId = parents.get(nativeId);
+    return parentId && allowedIds.has(parentId);
+  });
+}
+
 function conversationHasCapability(db, operator, platform, account, groupId, capability = 'can_view', nativeGroupIds = null) {
   if (operator && operator.is_super_admin) return true;
   const normalizedPlatform = normalizePlatform(platform);
@@ -449,7 +486,7 @@ function conversationHasCapability(db, operator, platform, account, groupId, cap
   if (!nativeIds.length) {
     return allowed.some((scope) => scope.native_group_id === UNGROUPED_GROUP);
   }
-  return nativeIds.some((nativeId) => allowed.some((scope) => scope.native_group_id === nativeId));
+  return nativeIdsMatchAllowedScopes(db, normalizedPlatform, normalizedAccount, nativeIds, allowed);
 }
 
 function conversationCapabilities(db, operator, group) {
@@ -500,7 +537,11 @@ function serviceGroupVisible(db, operator, group, capability = 'can_view') {
   const scopes = groupScopeMap(loadOperatorScopes(db, operator.id)).get(scopeKey(group.platform, group.service_account || group.account)) || [];
   return scopes.some((scope) => (
     scopeCapability(scope, capability) &&
-    (scope.native_group_id === ALL_GROUPS || scope.native_group_id === group.native_group_id)
+    (
+      scope.native_group_id === ALL_GROUPS ||
+      scope.native_group_id === group.native_group_id ||
+      (group.parent_native_group_id && scope.native_group_id === group.parent_native_group_id)
+    )
   ));
 }
 
