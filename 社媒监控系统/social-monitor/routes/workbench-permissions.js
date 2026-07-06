@@ -23,6 +23,7 @@ const {
 } = require(path.join(WORKBENCH_ROOT, 'db', 'workbench-db'));
 const {
     DEFAULT_RAW_DB_PATH,
+    WORKBENCH_PLATFORMS,
     listAccountProfiles,
     resolveAccountScope
 } = require(path.join(WORKBENCH_ROOT, 'db', 'raw-messages'));
@@ -226,8 +227,9 @@ function listScopes(db, operatorId) {
         SELECT *
         FROM operator_service_group_scopes
         WHERE operator_id = ?
+          AND platform IN (${WORKBENCH_PLATFORMS.map(() => '?').join(', ')})
         ORDER BY platform ASC, service_account ASC, native_group_id ASC
-    `).all(operatorId);
+    `).all(operatorId, ...WORKBENCH_PLATFORMS);
 }
 
 function loadStoredPortalAccess(db, operatorId) {

@@ -634,10 +634,6 @@ function goAccountManagement() {
   background: #0284c7;
 }
 
-.platform-dot.teams {
-  background: #4f46e5;
-}
-
 .permission-table {
   border-top: 1px solid #f1f5f9;
 }

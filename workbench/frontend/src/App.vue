@@ -99,7 +99,7 @@ import {
 } from './api';
 
 const filters = ref({
-  platforms: ['wa', 'tg', 'teams'],
+  platforms: ['wa', 'tg'],
   accountKeys: [],
   scope: 'all',
   labelId: '',
@@ -148,8 +148,10 @@ const selectedAccountParam = computed(() => (
 ));
 
 const availablePlatforms = computed(() => {
-  if (!accountScope.value || !accountScope.value.active) return ['wa', 'tg', 'teams'];
-  return [...new Set((accountScope.value.accounts || []).map((account) => account.platform).filter(Boolean))];
+  if (!accountScope.value || !accountScope.value.active) return ['wa', 'tg'];
+  return [...new Set((accountScope.value.accounts || [])
+    .map((account) => account.platform)
+    .filter((platform) => platform === 'wa' || platform === 'tg'))];
 });
 
 let searchTimer = null;

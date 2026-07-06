@@ -191,7 +191,6 @@ function isSelected(account) {
 function platformShort(platform) {
   if (platform === 'wa') return 'W';
   if (platform === 'tg') return 'T';
-  if (platform === 'teams') return 'M';
   return '?';
 }
 

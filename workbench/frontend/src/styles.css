@@ -14,7 +14,6 @@
   --accent-strong: #047857;
   --accent-soft: #e8f7ef;
   --tg: #229ed9;
-  --teams: #5b5fc7;
   --danger: #dc2626;
   --warning: #b45309;
   --shadow: 0 14px 34px rgba(24, 35, 30, 0.08);
@@ -484,10 +483,6 @@ button {
 
 .platform-tg {
   background: var(--tg);
-}
-
-.platform-teams {
-  background: var(--teams);
 }
 
 .platform-default {

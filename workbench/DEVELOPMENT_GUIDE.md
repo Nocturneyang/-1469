@@ -33,7 +33,7 @@ WA/TG worker = 唯一渠道执行层
 
 渠道执行层负责：
 
-- 持有 WhatsApp、Telegram、Teams 等账号 session
+- 持有 WhatsApp、Telegram 等工作台接入账号 session
 - 接收渠道消息并写入采集库
 - 从工作台外发队列取任务并发送
 - 回写发送结果
@@ -123,7 +123,7 @@ flowchart LR
 
   WDB --> Doorbell["outbox 文件门铃"]
   Doorbell --> Worker["WA/TG Session Worker"]
-  Worker --> Channel["WhatsApp / Telegram / Teams"]
+  Worker --> Channel["WhatsApp / Telegram"]
 
   Channel --> Worker
   Worker --> RawDB
@@ -156,7 +156,7 @@ DB = 账本
 
 ```text
 ┌────────────────────────────────────────────────────────────┐
-│ 工作台   [WA][TG][Teams]  [我的群] [未读] [全部]  搜索…   │
+│ 工作台   [WA][TG]  [我的群] [未读] [全部]  搜索…           │
 ├──────────────┬─────────────────────────────────────────────┤
 │ 群列表        │ 消息线程                                    │
 │              │                                             │
@@ -180,7 +180,7 @@ DB = 账本
 顶部区域：
 
 - 工作台标题
-- 平台多选：WA、TG、Teams
+- 平台多选：WA、TG
 - 范围过滤：我的群、未读、全部
 - 渠道原生标签/分组过滤：WA 标签、TG 文件夹
 - 搜索框
@@ -467,7 +467,7 @@ pending/sending -> paused
 ### 8.1 入站消息流
 
 ```text
-WA/TG/Teams 收到消息
+WA/TG 收到消息
 -> worker on(message/message_create)
 -> 写入 database.sqlite.messages
 -> 工作台只读 messages 展示
@@ -509,10 +509,8 @@ WA/TG/Teams 收到消息
 outbox/
 ├── worker-wa-nanya_wa/
 │   └── 10001.json
-├── worker-tg-user-main/
-│   └── 10002.json
-└── worker-teams-main/
-    └── 10003.json
+└── worker-tg-user-main/
+    └── 10002.json
 ```
 
 文件内容只需要最小信息：

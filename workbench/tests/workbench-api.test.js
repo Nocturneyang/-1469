@@ -30,6 +30,7 @@ async function main() {
     assert.strictEqual(accounts.accounts.length, 1);
     assert.strictEqual(accounts.accounts[0].account, 'nanya_wa');
     assert.strictEqual(accounts.accounts[0].account_display_name, 'Nanya Support');
+    assert.strictEqual(accounts.accounts.some((account) => account.platform === 'teams'), false);
 
     const groups = await requestJson(`${baseUrl}/groups?scope=all`);
     assert.strictEqual(groups.ok, true);
@@ -37,6 +38,11 @@ async function main() {
     assert.strictEqual(groups.groups[0].platform, 'wa');
     assert.strictEqual(groups.groups[0].account_display_name, 'Nanya Support');
     assert.strictEqual(groups.groups[0].unread_count, 2);
+    assert.strictEqual(groups.groups.some((group) => group.platform === 'teams'), false);
+
+    const teamsGroups = await requestJson(`${baseUrl}/groups?scope=all&platforms=teams`);
+    assert.strictEqual(teamsGroups.ok, true);
+    assert.strictEqual(teamsGroups.groups.length, 0);
 
     const syncRequest = await requestJson(`${baseUrl}/channel-sync`, {
       method: 'POST',
@@ -51,6 +57,13 @@ async function main() {
       body: { platform: 'tg' },
     });
     assert.strictEqual(hiddenSync.status, 404);
+
+    const teamsSync = await requestRaw(`${baseUrl}/channel-sync`, {
+      method: 'POST',
+      body: { platform: 'teams' },
+    });
+    assert.strictEqual(teamsSync.status, 400);
+    assert.strictEqual(teamsSync.payload.error, 'platform must be one of wa, tg');
 
     seedSyncedChannelMetadata(workbenchDb);
     const labelList = await requestJson(`${baseUrl}/channel-labels?platform=wa`);
@@ -478,6 +491,7 @@ function seedRawDb(rawDbPath) {
   `);
   db.prepare('INSERT INTO accounts (id, platform, status, pushname) VALUES (?, ?, ?, ?)').run('nanya_wa', 'whatsapp', 'authenticated', 'Nanya Support');
   db.prepare('INSERT INTO accounts (id, platform, status, pushname) VALUES (?, ?, ?, ?)').run('jason_tg', 'telegram', 'idle', 'Jason TG');
+  db.prepare('INSERT INTO accounts (id, platform, status, pushname) VALUES (?, ?, ?, ?)').run('teams-main', 'teams', 'authenticated', 'Teams Service');
   db.prepare(`
     INSERT INTO channel_account_registry (
       platform, account, display_name, login_type, account_role,
@@ -485,7 +499,8 @@ function seedRawDb(rawDbPath) {
     )
     VALUES
       ('wa', 'nanya_wa', 'Nanya Support', 'wa_personal_qr', 'service', 1, 1, 1, 1, 'medium', 'authenticated'),
-      ('tg', 'jason_tg', 'Jason TG', 'telegram_bot_api', 'collector', 0, 1, 0, 0, 'low', 'idle')
+      ('tg', 'jason_tg', 'Jason TG', 'telegram_bot_api', 'collector', 0, 1, 0, 0, 'low', 'idle'),
+      ('teams', 'teams-main', 'Teams Service', 'teams_web', 'service', 1, 1, 1, 1, 'low', 'authenticated')
   `).run();
   const insert = db.prepare(`
     INSERT INTO messages (
@@ -528,6 +543,18 @@ function seedRawDb(rawDbPath) {
     senderName: '客户',
     content: '这条消息不应在工作台显示',
     timestamp: 1782950520,
+    rawData: '{}',
+  });
+  insert.run({
+    platform: 'teams',
+    account: 'teams-main',
+    messageId: 'm-teams-hidden',
+    groupId: 'teams-hidden',
+    groupName: 'Teams 不应进入工作台',
+    senderId: 'teams-customer',
+    senderName: 'Teams 客户',
+    content: '这条 Teams 消息不应在工作台显示',
+    timestamp: 1782950580,
     rawData: '{}',
   });
   db.close();

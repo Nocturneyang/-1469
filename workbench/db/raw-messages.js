@@ -6,6 +6,9 @@ const DEFAULT_RAW_DB_PATH =
   process.env.SOCIAL_MONITOR_DB_PATH ||
   path.resolve(__dirname, '..', '..', '社媒监控系统', 'social-monitor', 'db', 'database.sqlite');
 
+const WORKBENCH_PLATFORMS = ['wa', 'tg'];
+const WORKBENCH_PLATFORM_SET = new Set(WORKBENCH_PLATFORMS);
+
 const LEGACY_NORMALIZED_MESSAGES_SQL = `
   SELECT
     id,
@@ -16,7 +19,6 @@ const LEGACY_NORMALIZED_MESSAGES_SQL = `
       WHEN 'tg' THEN 'tg'
       WHEN 'telegram-user' THEN 'tg'
       WHEN 'tg-user' THEN 'tg'
-      WHEN 'teams' THEN 'teams'
       ELSE lower(COALESCE(platform, 'unknown'))
     END AS platform,
     COALESCE(NULLIF(receiver_account, ''), 'default') AS account,
@@ -46,7 +48,6 @@ function normalizedMessagesSql(db) {
         WHEN 'tg' THEN 'tg'
         WHEN 'telegram-user' THEN 'tg'
         WHEN 'tg-user' THEN 'tg'
-        WHEN 'teams' THEN 'teams'
         ELSE lower(COALESCE(m.platform, 'unknown'))
       END AS platform,
       COALESCE(NULLIF(o.observer_account, ''), NULLIF(m.receiver_account, ''), 'default') AS account,
@@ -89,13 +90,19 @@ function openRawDb(rawDbPath = DEFAULT_RAW_DB_PATH) {
 
 function buildPlatformFilter(platforms, params) {
   const normalized = normalizePlatformList(platforms);
-  if (!normalized.length) return '';
-  const placeholders = normalized.map((platform, index) => {
+  if (!normalized.length && hasPlatformInput(platforms)) return 'AND 1 = 0';
+  const effectivePlatforms = normalized.length ? normalized : WORKBENCH_PLATFORMS;
+  const placeholders = effectivePlatforms.map((platform, index) => {
     const key = `platform${index}`;
     params[key] = platform;
     return `@${key}`;
   });
   return `AND platform IN (${placeholders.join(', ')})`;
+}
+
+function hasPlatformInput(platforms) {
+  if (Array.isArray(platforms)) return platforms.some((platform) => String(platform || '').trim());
+  return platforms !== undefined && platforms !== null && String(platforms).trim() !== '';
 }
 
 function buildAccountScopeFilter(accountScope, params) {
@@ -120,17 +127,20 @@ function normalizePlatform(platform) {
   return value;
 }
 
+function isWorkbenchPlatform(platform) {
+  return WORKBENCH_PLATFORM_SET.has(normalizePlatform(platform));
+}
+
 function normalizePlatformList(platforms) {
   if (!platforms) return [];
   const list = Array.isArray(platforms) ? platforms : String(platforms).split(',');
-  return [...new Set(list.map(normalizePlatform).filter(Boolean))];
+  return [...new Set(list.map(normalizePlatform).filter(isWorkbenchPlatform))];
 }
 
 function inferPlatformFromAccount(account) {
   const value = String(account || '').trim().toLowerCase();
   if (value.startsWith('wa-')) return 'wa';
   if (value.startsWith('tgu-') || value.startsWith('tg-')) return 'tg';
-  if (value.startsWith('teams-') || value.includes('teams')) return 'teams';
   return '';
 }
 
@@ -146,7 +156,7 @@ function normalizeAccountScope(accountScope) {
         account: String(entry.account || entry.id || '').trim(),
       };
     })
-    .filter((entry) => entry.platform && entry.account);
+    .filter((entry) => isWorkbenchPlatform(entry.platform) && entry.account);
   const deduped = [];
   const seen = new Set();
   accounts.forEach((entry) => {
@@ -248,7 +258,7 @@ function loadAccountProfilesFromDb(db, accountScope) {
         risk_level: registryRow ? registryRow.risk_level : 'low',
       };
     })
-    .filter((row) => row.platform && row.account)
+    .filter((row) => isWorkbenchPlatform(row.platform) && row.account)
     .filter((row) => {
       const scope = normalizeAccountScope(accountScope);
       if (scope.active) return true;
@@ -322,8 +332,9 @@ function resolveAccountScope({
 
 function accountScopeContains(accountScope, platform, account) {
   const scope = normalizeAccountScope(accountScope);
-  if (!scope.active) return true;
   const normalizedPlatform = normalizePlatform(platform);
+  if (!isWorkbenchPlatform(normalizedPlatform)) return false;
+  if (!scope.active) return true;
   const normalizedAccount = String(account || '').trim();
   return scope.accounts.some((entry) => entry.platform === normalizedPlatform && entry.account === normalizedAccount);
 }
@@ -332,6 +343,7 @@ function listAccounts({ rawDbPath = DEFAULT_RAW_DB_PATH, accountScope } = {}) {
   const db = openRawDb(rawDbPath);
   if (!db) return [];
   const params = {};
+  const platformFilter = buildPlatformFilter(null, params);
   const accountFilter = buildAccountScopeFilter(accountScope, params);
   try {
     const profiles = new Map(loadAccountProfilesFromDb(db, accountScope).map((profile) => [
@@ -347,6 +359,7 @@ function listAccounts({ rawDbPath = DEFAULT_RAW_DB_PATH, accountScope } = {}) {
         MAX(COALESCE(timestamp, 0)) AS last_timestamp
       FROM normalized
       WHERE group_id IS NOT NULL
+        ${platformFilter}
         ${accountFilter}
       GROUP BY platform, account
       ORDER BY platform ASC, account ASC
@@ -437,6 +450,7 @@ function listMessages({
   const db = openRawDb(rawDbPath);
   if (!db) return [];
   if (!accountScopeContains(accountScope, platform, account)) return [];
+  if (!isWorkbenchPlatform(platform)) return [];
   const params = {
     platform: normalizePlatform(platform),
     account: String(account || 'default'),
@@ -490,6 +504,7 @@ function countUnread({
   const db = openRawDb(rawDbPath);
   if (!db) return 0;
   if (!accountScopeContains(accountScope, platform, account)) return 0;
+  if (!isWorkbenchPlatform(platform)) return 0;
   const params = {
     platform: normalizePlatform(platform),
     account: String(account || 'default'),
@@ -515,9 +530,11 @@ function countUnread({
 
 module.exports = {
   DEFAULT_RAW_DB_PATH,
+  WORKBENCH_PLATFORMS,
   accountScopeContains,
   countUnread,
   inferPlatformFromAccount,
+  isWorkbenchPlatform,
   listAccountProfiles,
   listAccounts,
   listGroups,

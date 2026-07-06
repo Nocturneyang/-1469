@@ -5,8 +5,10 @@ const express = require('express');
 const { writeChannelSyncRequest } = require('../../lib/channel-sync-store');
 const {
   DEFAULT_RAW_DB_PATH,
+  WORKBENCH_PLATFORMS,
   accountScopeContains,
   countUnread,
+  isWorkbenchPlatform,
   listAccountProfiles,
   listAccounts,
   listGroups,
@@ -29,7 +31,7 @@ const {
   serviceGroupVisible,
 } = require('../../lib/permissions');
 
-const ALLOWED_PLATFORMS = new Set(['wa', 'tg', 'teams']);
+const ALLOWED_PLATFORMS = new Set(WORKBENCH_PLATFORMS);
 const OUTBOUND_STATUSES = new Set(['pending', 'sending', 'sent', 'delivered', 'failed', 'dead', 'paused', 'canceled']);
 const MAX_ATTACHMENTS = 4;
 const MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024;
@@ -89,15 +91,11 @@ function createWorkbenchRouter({ workbenchDb, rawDbPath = DEFAULT_RAW_DB_PATH, o
     const visibleAccountScope = allowedAccountScope(workbenchDb, operator, accountScope, 'can_view');
     const params = {};
     const filters = [];
-    const platform = normalizePlatform(req.query.platform);
+    const platform = applyWorkbenchPlatformFilter(filters, params, req.query.platform);
     const accountFilterValue = req.query.accounts || (
       req.query.account && platform ? `${platform}:${req.query.account}` : req.query.account
     );
     const selectedAccountScope = resolveSelectedAccountScope(visibleAccountScope, accountFilterValue);
-    if (platform) {
-      filters.push('platform = @platform');
-      params.platform = platform;
-    }
     applyServiceAccountScopeSql(filters, params, selectedAccountScope);
     const where = filters.length ? `WHERE ${filters.join(' AND ')}` : '';
     const labels = workbenchDb.prepare(`
@@ -132,15 +130,11 @@ function createWorkbenchRouter({ workbenchDb, rawDbPath = DEFAULT_RAW_DB_PATH, o
     const visibleAccountScope = allowedAccountScope(workbenchDb, operator, accountScope, 'can_view');
     const params = {};
     const filters = [];
-    const platform = normalizePlatform(req.query.platform);
+    const platform = applyWorkbenchPlatformFilter(filters, params, req.query.platform);
     const accountFilterValue = req.query.accounts || (
       req.query.account && platform ? `${platform}:${req.query.account}` : req.query.account
     );
     const selectedAccountScope = resolveSelectedAccountScope(visibleAccountScope, accountFilterValue);
-    if (platform) {
-      filters.push('platform = @platform');
-      params.platform = platform;
-    }
     applyServiceAccountScopeSql(filters, params, selectedAccountScope);
     const where = filters.length ? `WHERE ${filters.join(' AND ')}` : '';
     const groups = workbenchDb.prepare(`
@@ -171,15 +165,11 @@ function createWorkbenchRouter({ workbenchDb, rawDbPath = DEFAULT_RAW_DB_PATH, o
     const filters = [
       "(source IN ('manual', 'manual_l1', 'manual_l2') OR is_manual = 1)",
     ];
-    const platform = normalizePlatform(req.query.platform);
+    const platform = applyWorkbenchPlatformFilter(filters, params, req.query.platform);
     const accountFilterValue = req.query.accounts || (
       req.query.account && platform ? `${platform}:${req.query.account}` : req.query.account
     );
     const selectedAccountScope = resolveSelectedAccountScope(visibleAccountScope, accountFilterValue);
-    if (platform) {
-      filters.push('platform = @platform');
-      params.platform = platform;
-    }
     applyServiceAccountScopeSql(filters, params, selectedAccountScope);
     const where = filters.length ? `WHERE ${filters.join(' AND ')}` : '';
     const groups = workbenchDb.prepare(`
@@ -268,7 +258,12 @@ function createWorkbenchRouter({ workbenchDb, rawDbPath = DEFAULT_RAW_DB_PATH, o
     const visibleAccountScope = allowedAccountScope(workbenchDb, operator, accountScope, 'can_view');
     const selectedAccountScope = resolveSelectedAccountScope(visibleAccountScope, req.query.accounts || req.query.account);
     const operatorId = operator.id;
-    const platforms = normalizePlatformList(req.query.platform || req.query.platforms);
+    const platformFilterValue = req.query.platform || req.query.platforms;
+    const platforms = normalizePlatformList(platformFilterValue);
+    if (hasQueryValue(platformFilterValue) && !platforms.length) {
+      res.json({ ok: true, groups: [], account_scope: mapAccountScope(visibleAccountScope) });
+      return;
+    }
     const scope = String(req.query.scope || 'all');
     const labelId = req.query.label_id ? String(req.query.label_id) : '';
     const labelIds = labelId ? new Set(expandServiceGroupFilterIds(workbenchDb, labelId)) : new Set();
@@ -316,6 +311,9 @@ function createWorkbenchRouter({ workbenchDb, rawDbPath = DEFAULT_RAW_DB_PATH, o
     const operatorId = operator.id;
     const body = req.body || {};
     const requestedPlatform = normalizePlatform(body.platform);
+    if (hasQueryValue(body.platform) && !isWorkbenchPlatform(requestedPlatform)) {
+      throw createHttpError(400, 'platform must be one of wa, tg');
+    }
     const requestedAccount = body.account ? String(body.account).trim() : '';
     const requestedAccounts = Array.isArray(body.accounts)
       ? body.accounts
@@ -745,6 +743,8 @@ function listSyncedGroups(db, {
       return `@${key}`;
     });
     filters.push(`platform IN (${placeholders.join(', ')})`);
+  } else {
+    applyAllowedPlatformsSql(filters, params);
   }
   applyAccountScopeSql(filters, params, accountScope);
   if (search && String(search).trim()) {
@@ -1312,6 +1312,35 @@ function orderServiceGroups(groups) {
   });
 }
 
+function hasQueryValue(value) {
+  if (Array.isArray(value)) return value.some((item) => hasQueryValue(item));
+  return value !== undefined && value !== null && String(value).trim() !== '';
+}
+
+function applyAllowedPlatformsSql(filters, params, column = 'platform', prefix = 'allowedPlatform') {
+  const placeholders = WORKBENCH_PLATFORMS.map((platform, index) => {
+    const key = `${prefix}${index}`;
+    params[key] = platform;
+    return `@${key}`;
+  });
+  filters.push(`${column} IN (${placeholders.join(', ')})`);
+}
+
+function applyWorkbenchPlatformFilter(filters, params, platformValue, column = 'platform') {
+  const platform = normalizePlatform(platformValue);
+  if (hasQueryValue(platformValue) && !ALLOWED_PLATFORMS.has(platform)) {
+    filters.push('1 = 0');
+    return '';
+  }
+  if (platform) {
+    filters.push(`${column} = @platform`);
+    params.platform = platform;
+    return platform;
+  }
+  applyAllowedPlatformsSql(filters, params, column);
+  return '';
+}
+
 function applyAccountScopeSql(filters, params, accountScope) {
   if (!accountScope || !accountScope.active) return;
   if (!accountScope.accounts.length) {
@@ -1432,7 +1461,7 @@ function accountKey(platform, account) {
 function requirePlatform(value) {
   const platform = normalizePlatform(value);
   if (!ALLOWED_PLATFORMS.has(platform)) {
-    throw createHttpError(400, 'platform must be one of wa, tg, teams');
+    throw createHttpError(400, 'platform must be one of wa, tg');
   }
   return platform;
 }

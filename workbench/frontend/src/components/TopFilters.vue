@@ -145,7 +145,6 @@ const emit = defineEmits(['update:modelValue', 'sync-channels']);
 const platforms = [
   { value: 'wa', label: 'WA', className: 'platform-wa' },
   { value: 'tg', label: 'TG', className: 'platform-tg' },
-  { value: 'teams', label: 'Teams', className: 'platform-teams' },
 ];
 
 const visiblePlatforms = computed(() => {

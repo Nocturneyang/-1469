@@ -60,14 +60,12 @@ function formatShanghaiDayKey(date) {
 export function platformName(platform) {
   if (platform === 'wa') return 'WA';
   if (platform === 'tg') return 'TG';
-  if (platform === 'teams') return 'Teams';
   return platform || '';
 }
 
 export function platformClass(platform) {
   if (platform === 'wa') return 'platform-wa';
   if (platform === 'tg') return 'platform-tg';
-  if (platform === 'teams') return 'platform-teams';
   return 'platform-default';
 }
 
