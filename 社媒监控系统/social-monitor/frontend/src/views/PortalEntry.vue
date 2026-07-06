@@ -3,8 +3,8 @@
     <section class="entry-panel">
       <div class="entry-head">
         <p>Access Portal</p>
-        <h1>选择工作入口</h1>
-        <span>{{ authStore.username }}，请选择本次要进入的系统。</span>
+        <h1>访问首页</h1>
+        <span>{{ authStore.username }}，请选择本次要进入的页面。</span>
       </div>
 
       <div v-if="loading" class="entry-loading">正在读取入口权限...</div>
@@ -38,7 +38,7 @@
           @click="goAdmin"
         >
           <span>管</span>
-          <strong>管理后台</strong>
+          <strong>权限配置</strong>
           <em>用户、角色、权限、数据范围和系统配置</em>
         </button>
 
@@ -67,7 +67,7 @@ onMounted(async () => {
 
 function goMonitor() {
   authStore.setPortalChoice('monitor')
-  router.replace('/')
+  router.replace('/monitor')
 }
 
 function goWorkbench() {
@@ -77,7 +77,7 @@ function goWorkbench() {
 
 function goAdmin() {
   authStore.setPortalChoice('admin')
-  router.replace('/admin/users')
+  router.replace('/admin')
 }
 </script>
 

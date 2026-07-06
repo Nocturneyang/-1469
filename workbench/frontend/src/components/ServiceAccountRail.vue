@@ -20,6 +20,37 @@
       </button>
     </div>
 
+    <div class="portal-shortcuts" aria-label="全局入口">
+      <a class="portal-shortcut" href="/entry" title="访问首页" @click="rememberPortal('')">
+        <span>首</span>
+        <strong>访问首页</strong>
+      </a>
+      <a
+        v-if="portalAccess && portalAccess.can_monitor"
+        class="portal-shortcut"
+        href="/monitor"
+        title="监控系统"
+        @click="rememberPortal('monitor')"
+      >
+        <span>监</span>
+        <strong>监控系统</strong>
+      </a>
+      <span class="portal-shortcut active" title="客服工作台">
+        <span>客</span>
+        <strong>工作台</strong>
+      </span>
+      <a
+        v-if="canOpenAdmin"
+        class="portal-shortcut"
+        href="/admin"
+        title="权限配置"
+        @click="rememberPortal('admin')"
+      >
+        <span>权</span>
+        <strong>权限配置</strong>
+      </a>
+    </div>
+
     <button
       type="button"
       class="rail-all-button"
@@ -100,6 +131,10 @@ const props = defineProps({
     type: Object,
     default: () => ({ mode: 'all', active: false, accounts: [] }),
   },
+  portalAccess: {
+    type: Object,
+    default: () => ({ can_monitor: false, can_workbench: true, can_admin: false }),
+  },
   collapsed: {
     type: Boolean,
     default: false,
@@ -128,6 +163,10 @@ const scopeTitle = computed(() => {
   if (props.accountScope.mode === 'logged-in') return '登录服务账号';
   return '账号范围已限制';
 });
+
+const canOpenAdmin = computed(() => Boolean(
+  props.operator && props.operator.is_super_admin
+) || Boolean(props.portalAccess && props.portalAccess.can_admin));
 
 const scopeDescription = computed(() => {
   if (!props.accountScope || !props.accountScope.active) return '来自账号注册表中可见的 service/both 账号';
@@ -161,5 +200,14 @@ function compactCount(value) {
   if (count >= 10000) return `${Math.round(count / 1000) / 10}w`;
   if (count >= 1000) return `${Math.round(count / 100) / 10}k`;
   return count;
+}
+
+function rememberPortal(choice) {
+  try {
+    if (choice) window.sessionStorage.setItem('portal_choice', choice);
+    else window.sessionStorage.removeItem('portal_choice');
+  } catch (err) {
+    // Navigation still works if sessionStorage is unavailable.
+  }
 }
 </script>

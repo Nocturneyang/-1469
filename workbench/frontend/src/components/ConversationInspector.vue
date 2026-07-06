@@ -87,7 +87,7 @@
 
       <section class="inspector-note">
         <strong>账号用途设置</strong>
-        <span>监控系统后台 -> 渠道账号管理 -> WA/TG 账号 -> 账号用途</span>
+        <span>权限配置 -> 帐号管理 -> WA/TG 账号 -> 账号用途</span>
         <small>运行时白名单只作为保险，不作为唯一配置来源。</small>
       </section>
     </template>

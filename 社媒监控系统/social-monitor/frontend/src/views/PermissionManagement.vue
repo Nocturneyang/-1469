@@ -42,7 +42,7 @@ function categoryLabel(category) {
   return {
     monitor: '监控系统',
     workbench: '客服工作台',
-    admin: '管理后台'
+    admin: '权限配置'
   }[category] || category
 }
 </script>

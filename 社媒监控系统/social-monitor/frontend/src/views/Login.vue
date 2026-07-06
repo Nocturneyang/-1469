@@ -2,7 +2,7 @@
   <div class="login-wrapper">
     <div class="login-card panel">
       <div class="login-header">
-        <h2>社媒监控系统 Login</h2>
+        <h2>统一访问门户 Login</h2>
       </div>
 
       <div class="login-tabs">
@@ -86,7 +86,7 @@ const handleAdminLogin = async () => {
     if (response.success) {
       authStore.setAuth(response.token, response.user)
       ElMessage.success(`欢迎回来, ${response.user.username}`)
-      await routeAfterLogin('/')
+      await routeAfterLogin('/entry')
     }
   } catch (err) {
     console.error('Login block:', err)
@@ -102,7 +102,7 @@ const handleViewLogin = async () => {
     if (response.success) {
       authStore.setAuth(response.token, response.user)
       ElMessage.success(`欢迎, ${response.user.username}`)
-      await routeAfterLogin('/')
+      await routeAfterLogin('/entry')
     }
   } catch (err) {
     console.error('View login block:', err)

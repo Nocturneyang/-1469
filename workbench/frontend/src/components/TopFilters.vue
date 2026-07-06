@@ -7,7 +7,7 @@
 
     <a
       class="monitor-button"
-      href="/"
+      href="/monitor"
       aria-label="返回监控系统"
       @click="goMonitor"
     >

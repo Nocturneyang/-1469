@@ -4,6 +4,7 @@
       :accounts="accounts"
       :selected-account-keys="filters.accountKeys"
       :account-scope="accountScope"
+      :portal-access="portalAccess"
       :operator="currentOperator"
       :collapsed="serviceRailCollapsed"
       @select="selectServiceAccount"
@@ -100,6 +101,7 @@ const groups = ref([]);
 const messages = ref([]);
 const messagePaging = ref({ has_more: false, before_id: null });
 const accountScope = ref({ mode: 'all', active: false, accounts: [] });
+const portalAccess = ref({ can_monitor: false, can_workbench: true, can_admin: false });
 const currentOperator = ref(null);
 const selectedGroup = ref(null);
 const loadingGroups = ref(false);
@@ -151,7 +153,18 @@ const readProgressByGroup = new Map();
 
 onMounted(async () => {
   const me = await fetchMe().catch(() => null);
-  if (me && me.operator) currentOperator.value = me.operator;
+  if (me && me.operator) {
+    currentOperator.value = {
+      ...me.operator,
+      is_super_admin: Boolean(me.operator.is_super_admin || me.is_super_admin),
+    };
+  }
+  if (me && me.portal_access) {
+    portalAccess.value = {
+      ...portalAccess.value,
+      ...me.portal_access,
+    };
+  }
   const health = await fetchHealth().catch(() => null);
   if (health && health.account_scope) {
     accountScope.value = health.account_scope;

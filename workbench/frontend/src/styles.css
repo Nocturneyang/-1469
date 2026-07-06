@@ -132,6 +132,7 @@ button {
 
 .rail-all-button,
 .rail-account,
+.portal-shortcut,
 .rail-permission-button {
   width: 100%;
   min-width: 0;
@@ -159,8 +160,53 @@ button {
 
 .rail-all-button:hover,
 .rail-account:hover,
+.portal-shortcut:hover,
 .rail-permission-button:hover {
   background: var(--surface-muted);
+}
+
+.portal-shortcuts {
+  display: grid;
+  gap: 5px;
+  margin: 0 0 12px;
+}
+
+.portal-shortcut {
+  min-height: 42px;
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+  padding: 7px 10px;
+  text-decoration: none;
+}
+
+.portal-shortcut span {
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  color: var(--accent-strong);
+  background: #dff2e8;
+  font-size: 12px;
+  font-weight: 780;
+}
+
+.portal-shortcut strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 760;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.portal-shortcut.active {
+  border-color: rgba(5, 150, 105, 0.22);
+  background: var(--accent-soft);
+  cursor: default;
 }
 
 .rail-icon {
@@ -291,6 +337,7 @@ button {
 .service-rail.collapsed .brand-copy,
 .service-rail.collapsed .rail-all-button span:not(.rail-icon),
 .service-rail.collapsed .rail-permission-button span:not(.rail-icon),
+.service-rail.collapsed .portal-shortcut strong,
 .service-rail.collapsed .rail-section-title,
 .service-rail.collapsed .rail-account-copy,
 .service-rail.collapsed .rail-account em,
@@ -300,6 +347,7 @@ button {
 
 .service-rail.collapsed .rail-all-button,
 .service-rail.collapsed .rail-account,
+.service-rail.collapsed .portal-shortcut,
 .service-rail.collapsed .rail-permission-button {
   width: 44px;
   height: 44px;
@@ -310,6 +358,7 @@ button {
 }
 
 .service-rail.collapsed .rail-icon,
+.service-rail.collapsed .portal-shortcut span,
 .service-rail.collapsed .platform-icon.small {
   width: 32px;
   height: 32px;

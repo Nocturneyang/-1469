@@ -37,12 +37,12 @@ const copyText = computed(() => {
   if (loggedOut.value) {
     return '你已退出当前本地会话。为避免 SSO 有效会话自动回登，请点击“打开统一认证”重新授权。'
   }
-  return '系统正在等待钉钉 SSO 网关注入用户信息。认证成功后会按入口权限进入监控系统或工作台。'
+  return '系统正在等待钉钉 SSO 网关注入用户信息。认证成功后会按入口权限进入访问首页、监控系统、客服工作台或权限配置。'
 })
 
 const targetPath = () => {
-  const from = typeof route.query.from === 'string' ? route.query.from : '/'
-  return from.startsWith('/') && !from.startsWith('//') ? from : '/'
+  const from = typeof route.query.from === 'string' ? route.query.from : '/entry'
+  return from.startsWith('/') && !from.startsWith('//') ? from : '/entry'
 }
 
 const checkAuth = async () => {

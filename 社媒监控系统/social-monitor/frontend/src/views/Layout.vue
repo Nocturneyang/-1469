@@ -28,6 +28,7 @@
               :to="item.path"
               class="nav-item"
               :class="{ active: isActive(item.path) }"
+              @click="handleExternalNav(item)"
             >
               <span class="nav-icon">{{ item.icon }}</span>
               <span>{{ item.label }}</span>
@@ -78,16 +79,9 @@ const authStore = useAuthStore()
 const navSections = computed(() => {
   const sections = []
   const portalAccess = authStore.portalAccess || {}
-  const portalCount = [
-    portalAccess.can_monitor,
-    portalAccess.can_workbench,
-    portalAccess.can_admin
-  ].filter(Boolean).length
   const portalItems = []
 
-  if (portalCount > 1) {
-    portalItems.push({ path: "/entry", label: "入口选择", icon: "↔", key: "portal-entry" })
-  }
+  portalItems.push({ path: "/entry", label: "访问首页", icon: "⌂", key: "portal-entry" })
   if (portalAccess.can_workbench) {
     portalItems.push({
       href: "/workbench/",
@@ -95,6 +89,15 @@ const navSections = computed(() => {
       icon: "☏",
       key: "workbench",
       portalChoice: "workbench"
+    })
+  }
+  if (authStore.canAccessAdminShell) {
+    portalItems.push({
+      path: "/admin",
+      label: "权限配置",
+      icon: "权",
+      key: "admin",
+      portalChoice: "admin"
     })
   }
   if (portalItems.length) {
@@ -105,42 +108,27 @@ const navSections = computed(() => {
     {
       title: "实时监控",
       items: [
-        { path: "/", label: "全盘态势", icon: "📊" },
-        { path: "/feed", label: "原始数据流", icon: "💬", permission: "monitor:raw:view" },
-        { path: "/analytics", label: "数据看板", icon: "📈" },
-        { path: "/daily-digest", label: "日报汇总", icon: "📋" },
+        { path: "/monitor", label: "全盘态势", icon: "📊" },
+        { path: "/monitor/feed", label: "原始数据流", icon: "💬", permission: "monitor:raw:view" },
+        { path: "/monitor/analytics", label: "数据看板", icon: "📈" },
+        { path: "/monitor/daily-digest", label: "日报汇总", icon: "📋" },
       ]
     },
     {
       title: "知识资产",
       items: [
-        { path: "/assets", label: "资产发现", icon: "🧭" },
-        { path: "/region-intelligence", label: "区域运营情报", icon: "🗺️" },
-        { path: "/customer-service-intelligence", label: "客服运营情报", icon: "☏" },
-        { path: "/device-tech-intelligence", label: "设备技术情报", icon: "⌘" },
-        { path: "/entity-graph", label: "实体关系图谱", icon: "◎" },
-        { path: "/knowledge", label: "QA 知识库", icon: "📖" },
-        { path: "/devicekb", label: "设备知识库", icon: "🔧" },
-        { path: "/templates", label: "内容模板库", icon: "📝" },
-        { path: "/profiles", label: "供应商画像", icon: "🏷️" },
+        { path: "/monitor/assets", label: "资产发现", icon: "🧭" },
+        { path: "/monitor/region-intelligence", label: "区域运营情报", icon: "🗺️" },
+        { path: "/monitor/customer-service-intelligence", label: "客服运营情报", icon: "☏" },
+        { path: "/monitor/device-tech-intelligence", label: "设备技术情报", icon: "⌘" },
+        { path: "/monitor/entity-graph", label: "实体关系图谱", icon: "◎" },
+        { path: "/monitor/knowledge", label: "QA 知识库", icon: "📖" },
+        { path: "/monitor/devicekb", label: "设备知识库", icon: "🔧" },
+        { path: "/monitor/templates", label: "内容模板库", icon: "📝" },
+        { path: "/monitor/profiles", label: "供应商画像", icon: "🏷️" },
       ]
     }
   )
-
-  if (authStore.canAccessAdminShell) {
-    sections.push({
-      title: "系统管理",
-      items: [
-        { path: "/admin/config", label: "系统配置", icon: "⚙️", permission: "monitor:config:write" },
-        { path: "/admin/accounts", label: "帐号管理", icon: "👥", permission: "monitor:accounts:manage" },
-        { path: "/admin/users", label: "用户管理", icon: "🔐", permission: "admin:users:manage" },
-        { path: "/admin/roles", label: "角色管理", icon: "▣", permission: "admin:access:manage" },
-        { path: "/admin/permissions", label: "权限项", icon: "☷", permission: "admin:access:manage" },
-        { path: "/admin/workbench-permissions", label: "数据范围", icon: "▦", permission: "admin:access:manage" },
-        { path: "/admin/logs", label: "系统日志", icon: "📋", permission: "monitor:logs:view" },
-      ]
-    })
-  }
 
   return sections.map(section => ({
     ...section,
@@ -159,7 +147,7 @@ onMounted(() => {
 })
 
 const isActive = (path) => {
-  if (path === '/') return route.path === '/'
+  if (path === '/monitor') return route.path === '/monitor'
   return route.path.startsWith(path)
 }
 
@@ -170,26 +158,20 @@ const handleExternalNav = (item) => {
 }
 
 const titleMap = {
-  '/': '全盘态势 Dashboard',
-  '/feed': '原始数据流 Raw Feed',
-  '/analytics': '数据看板 Analytics',
-  '/daily-digest': '日报汇总 Daily Digest',
-  '/reports/daily': '日报详情 Daily Report',
-  '/assets': '知识资产发现',
-  '/region-intelligence': '区域运营情报',
-  '/customer-service-intelligence': '客服运营情报',
-  '/device-tech-intelligence': '设备技术情报',
-  '/entity-graph': '实体关系图谱',
-  '/admin/accounts': '帐号管理 Accounts',
-  '/admin/config': '系统配置 Config',
-  '/admin/workbench-permissions': '工作台权限 Workbench Access',
-  '/admin/users': '用户管理 Users',
-  '/admin/roles': '角色管理 Roles',
-  '/admin/permissions': '权限项 Permissions',
-  '/knowledge': 'QA 知识库',
-  '/profiles': '供应商画像 Supplier Profiles',
-  '/devicekb': '设备知识库 Device KB',
-  '/templates': '内容模板库 Templates',
+  '/monitor': '全盘态势 Dashboard',
+  '/monitor/feed': '原始数据流 Raw Feed',
+  '/monitor/analytics': '数据看板 Analytics',
+  '/monitor/daily-digest': '日报汇总 Daily Digest',
+  '/monitor/reports/daily': '日报详情 Daily Report',
+  '/monitor/assets': '知识资产发现',
+  '/monitor/region-intelligence': '区域运营情报',
+  '/monitor/customer-service-intelligence': '客服运营情报',
+  '/monitor/device-tech-intelligence': '设备技术情报',
+  '/monitor/entity-graph': '实体关系图谱',
+  '/monitor/knowledge': 'QA 知识库',
+  '/monitor/profiles': '供应商画像 Supplier Profiles',
+  '/monitor/devicekb': '设备知识库 Device KB',
+  '/monitor/templates': '内容模板库 Templates',
 }
 
 const pageTitle = computed(() => titleMap[route.path] || 'Dashboard')

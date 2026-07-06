@@ -114,13 +114,13 @@
               <strong>允许访问页面</strong>
               <el-checkbox v-model="operatorDraft.portal_access.can_monitor">监控系统</el-checkbox>
               <el-checkbox v-model="operatorDraft.portal_access.can_workbench">客服工作台</el-checkbox>
-              <el-checkbox v-model="operatorDraft.portal_access.can_admin">管理后台</el-checkbox>
+              <el-checkbox v-model="operatorDraft.portal_access.can_admin">权限配置</el-checkbox>
               <el-select v-model="operatorDraft.portal_access.default_entry" size="small" class="default-entry-select">
                 <el-option label="自动判断" value="auto" />
                 <el-option label="显示选择页" value="chooser" />
                 <el-option label="默认进监控系统" value="monitor" />
                 <el-option label="默认进工作台" value="workbench" />
-                <el-option label="默认进管理后台" value="admin" />
+                <el-option label="默认进权限配置" value="admin" />
               </el-select>
             </div>
 
@@ -317,7 +317,7 @@ function categoryLabel(category) {
   return {
     monitor: '监控系统',
     workbench: '客服工作台',
-    admin: '管理后台'
+    admin: '权限配置'
   }[category] || category
 }
 </script>

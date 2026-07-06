@@ -25,15 +25,27 @@ export const useAuthStore = defineStore('auth', {
     hasPermission: (state) => (permission) => state.user?.role === 'admin' ||
       Boolean(state.workbenchAccess?.is_super_admin) ||
       (state.workbenchAccess?.permissions || []).includes(permission),
-    portalAccess: (state) => state.workbenchAccess?.portal_access || {
-      can_monitor: false,
-      can_workbench: false,
-      can_admin: false,
-      default_entry: 'auto',
-      landing: '/entry'
+    portalAccess: (state) => {
+      const access = state.workbenchAccess?.portal_access || {}
+      const legacyAdmin = state.user?.role === 'admin'
+      const superAdmin = Boolean(state.workbenchAccess?.is_super_admin)
+      return {
+        can_monitor: Boolean(access.can_monitor || legacyAdmin || superAdmin),
+        can_workbench: Boolean(access.can_workbench || superAdmin),
+        can_admin: Boolean(access.can_admin || legacyAdmin || superAdmin),
+        default_entry: access.default_entry || 'auto',
+        landing: access.landing || '/entry'
+      }
     },
-    canAccessMonitor: (state) => Boolean(state.workbenchAccess?.portal_access?.can_monitor),
-    canAccessWorkbench: (state) => Boolean(state.workbenchAccess?.portal_access?.can_workbench),
+    canAccessMonitor: (state) => Boolean(
+      state.workbenchAccess?.portal_access?.can_monitor ||
+      state.user?.role === 'admin' ||
+      state.workbenchAccess?.is_super_admin
+    ),
+    canAccessWorkbench: (state) => Boolean(
+      state.workbenchAccess?.portal_access?.can_workbench ||
+      state.workbenchAccess?.is_super_admin
+    ),
     username: (state) => state.user?.username || ''
   },
 
@@ -203,9 +215,11 @@ export const useAuthStore = defineStore('auth', {
     async resolvePortalDestination(requestedPath = '/', options = {}) {
       const accessPayload = await this.hydrateWorkbenchAccess()
       const portalAccess = accessPayload?.portal_access || {}
-      const canMonitor = Boolean(portalAccess.can_monitor)
-      const canWorkbench = Boolean(portalAccess.can_workbench)
-      const canAdmin = Boolean(portalAccess.can_admin)
+      const legacyAdmin = this.user?.role === 'admin'
+      const superAdmin = Boolean(accessPayload?.is_super_admin)
+      const canMonitor = Boolean(portalAccess.can_monitor || legacyAdmin || superAdmin)
+      const canWorkbench = Boolean(portalAccess.can_workbench || superAdmin)
+      const canAdmin = Boolean(portalAccess.can_admin || legacyAdmin || superAdmin)
       const landing = portalAccess.landing || '/entry'
       const defaultEntry = portalAccess.default_entry || 'auto'
       const preferLanding = Boolean(options.preferLanding)
@@ -216,22 +230,24 @@ export const useAuthStore = defineStore('auth', {
 
       const landingDestination = () => {
         if (landing === '/workbench/' || landing === '/workbench') return '/workbench/'
-        if (landing === '/admin/users' || landing === '/admin') return '/admin/users'
-        if (landing === '/') return '/'
+        if (landing === '/admin/users' || landing === '/admin') return '/admin'
+        if (landing === '/' || landing === '/monitor') return '/monitor'
         const allowedCount = [canMonitor, canWorkbench, canAdmin].filter(Boolean).length
         if (allowedCount > 1) return '/entry'
-        if (canAdmin) return '/admin/users'
+        if (canAdmin) return '/admin'
         if (canWorkbench) return '/workbench/'
-        if (canMonitor) return '/'
+        if (canMonitor) return '/monitor'
         return '/entry'
       }
 
       if (preferLanding && !portalChoice && (defaultEntry !== 'auto' || [canMonitor, canWorkbench, canAdmin].filter(Boolean).length > 1)) {
         return landingDestination()
       }
-      if (requested.startsWith('/workbench')) return canWorkbench ? requested : (canMonitor ? '/' : '/entry')
-      if (requested.startsWith('/admin')) return canAdmin ? requested : (canMonitor ? '/' : '/entry')
-      if (requested === '/' && portalChoice === 'monitor' && canMonitor) return '/'
+      if (requested.startsWith('/workbench')) return canWorkbench ? requested : (canMonitor ? '/monitor' : '/entry')
+      if (requested.startsWith('/admin')) return canAdmin ? requested : (canMonitor ? '/monitor' : '/entry')
+      if (requested.startsWith('/monitor')) return canMonitor ? requested : (canWorkbench ? '/workbench/' : '/entry')
+      if (requested === '/' && portalChoice === 'monitor' && canMonitor) return '/monitor'
+      if (requested === '/') return canMonitor ? '/monitor' : landingDestination()
       if (requested !== '/' && requested !== '/entry') {
         if (canMonitor) return requested
         if (canWorkbench) return '/workbench/'

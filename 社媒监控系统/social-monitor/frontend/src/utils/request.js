@@ -44,7 +44,7 @@ api.interceptors.response.use(
         }
         router.push({
           name: 'SsoPending',
-          query: wasSsoLoggedOut ? { logged_out: '1', from: '/entry' } : { from: currentPath || '/' }
+          query: wasSsoLoggedOut ? { logged_out: '1', from: '/entry' } : { from: currentPath || '/entry' }
         })
       } else if (error.response.status === 401) {
         authStore.logout()
