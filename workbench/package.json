@@ -8,7 +8,7 @@
     "dev": "node server/index.js",
     "dev:api": "node server/index.js",
     "dev:frontend": "vite --config frontend/vite.config.mjs --host 0.0.0.0",
-    "build": "vite build --config frontend/vite.config.mjs",
+    "build": "WORKBENCH_BASE_PATH=/workbench/ vite build --config frontend/vite.config.mjs",
     "preview": "vite preview --config frontend/vite.config.mjs",
     "start": "NODE_ENV=production node server/index.js",
     "init-db": "node scripts/init-db.js",
