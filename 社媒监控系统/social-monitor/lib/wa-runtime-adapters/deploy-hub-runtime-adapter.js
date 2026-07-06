@@ -231,6 +231,7 @@ class DeployHubRuntimeAdapter {
             { name: 'COLLECTOR_PLATFORM', value: 'whatsapp' },
             { name: 'COLLECTOR_REMOTE_ONLY', value: 'true' },
             { name: 'COLLECTOR_API_URL', value: defaultCollectorApiUrl() },
+            { name: 'COLLECTOR_API_TIMEOUT_MS', value: process.env.COLLECTOR_API_TIMEOUT_MS || '20000' },
             { name: 'COLLECTOR_ID', value: `${CLOUD_RUNTIME_PROVIDER}:wa-${accountName}` },
             { name: 'COLLECTOR_OUTBOX_DIR', value: `/data/collector-outbox/wa-${accountName}` },
             { name: 'ACCOUNT_SESSION_DIR', value: '/data/collector-sessions' },

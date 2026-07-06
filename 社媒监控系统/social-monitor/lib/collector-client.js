@@ -16,13 +16,23 @@ function normalizeBaseUrl(baseUrl) {
         .replace(/\/api\/collector$/i, '');
 }
 
+function positiveNumber(value, fallback) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function defaultTimeoutMs() {
+    return positiveNumber(process.env.COLLECTOR_API_TIMEOUT_MS, 8000);
+}
+
 function endpointFileName(endpoint) {
     return endpoint.replace(/^\/+/, '').replace(/[^a-zA-Z0-9_-]+/g, '_') + '.jsonl';
 }
 
-function createCollectorClient({ baseUrl, token, timeoutMs = 8000, logger = console, outboxDir = null } = {}) {
+function createCollectorClient({ baseUrl, token, timeoutMs = defaultTimeoutMs(), logger = console, outboxDir = null } = {}) {
     const normalizedBaseUrl = normalizeBaseUrl(baseUrl);
     if (!normalizedBaseUrl) return null;
+    const requestTimeoutMs = positiveNumber(timeoutMs, defaultTimeoutMs());
     const durableEnabled = process.env.COLLECTOR_OUTBOX_ENABLED !== 'false';
     const queueDir = outboxDir || process.env.COLLECTOR_OUTBOX_DIR || path.join(process.env.DATA_DIR || path.join(__dirname, '..'), 'collector-outbox');
     const flushing = new Set();
@@ -42,7 +52,7 @@ function createCollectorClient({ baseUrl, token, timeoutMs = 8000, logger = cons
         const url = `${normalizedBaseUrl}${endpoint}`;
         const headers = {};
         if (token) headers.Authorization = `Bearer ${token}`;
-        const response = await axios.post(url, payload, { headers, timeout: timeoutMs });
+        const response = await axios.post(url, payload, { headers, timeout: requestTimeoutMs });
         return options.returnData ? response.data : true;
     }
 
@@ -126,5 +136,6 @@ function createCollectorClient({ baseUrl, token, timeoutMs = 8000, logger = cons
 
 module.exports = {
     createCollectorClient,
+    defaultTimeoutMs,
     normalizeBaseUrl
 };

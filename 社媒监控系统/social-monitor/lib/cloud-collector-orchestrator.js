@@ -120,6 +120,7 @@ function platformEnv(parts, extraEnv = {}) {
         envValue('COLLECTOR_PLATFORM', parts.collectorPlatform),
         envValue('COLLECTOR_REMOTE_ONLY', 'true'),
         envValue('COLLECTOR_API_URL', defaultCollectorApiUrl()),
+        envValue('COLLECTOR_API_TIMEOUT_MS', process.env.COLLECTOR_API_TIMEOUT_MS || '20000'),
         envValue('COLLECTOR_ID', `${CLOUD_RUNTIME_PROVIDER}:${parts.accountId}`),
         envValue('COLLECTOR_OUTBOX_DIR', `/data/collector-outbox/${parts.accountId}`),
         envValue('ACCOUNT_SESSION_DIR', '/data/collector-sessions'),

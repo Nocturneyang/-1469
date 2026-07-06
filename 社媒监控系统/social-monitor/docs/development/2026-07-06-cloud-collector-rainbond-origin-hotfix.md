@@ -21,6 +21,7 @@ Deploy Hub 当前把每个账号 collector 部署成独立 Rainbond app。collec
 - 保留 `collector-client` 自动拼接 `/api/collector/*` 的行为，环境变量只配置 origin，不包含 `/api/collector` 后缀。
 - 修正生产 PM2 配置中的 Collector Token 校验兜底：显式 `COLLECTOR_TOKEN_SHA256` 仍优先；如果只配置了明文 `COLLECTOR_TOKEN`，主服务改为按明文校验，避免历史兜底 hash 覆盖真实生产 token。
 - 提升 `docker-entrypoint.sh` 的 `CLOUD_ECOSYSTEM_VERSION`，确保生产容器刷新 `/data/ecosystem.config.js`。
+- 为云端 collector 配置 `COLLECTOR_API_TIMEOUT_MS=20000`，并让 `collector-client` 支持该环境变量，避免主服务 SQLite 短暂忙碌时 8 秒客户端超时造成误判和 outbox 重试。
 
 ## 影响范围
 
