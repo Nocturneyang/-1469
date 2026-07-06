@@ -45,7 +45,7 @@ export async function createManualGroup(payload = {}) {
 
 export async function fetchGroups(params = {}) {
   const { data } = await api.get('/groups', { params });
-  return data.groups || [];
+  return { groups: data.groups || [], account_scope: data.account_scope || null };
 }
 
 export async function requestChannelSync(payload = {}) {

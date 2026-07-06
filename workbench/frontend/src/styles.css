@@ -1515,6 +1515,21 @@ button {
   font-size: 13px;
 }
 
+.toast-warn {
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  max-width: 380px;
+  padding: 10px 14px;
+  border-radius: 8px;
+  color: #7a4f00;
+  background: #fff8e1;
+  border: 1px solid #f5c518;
+  box-shadow: var(--shadow);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
 @media (max-width: 1380px) {
   :root {
     --rail-width: 256px;

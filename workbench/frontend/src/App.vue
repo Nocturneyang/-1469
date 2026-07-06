@@ -66,6 +66,7 @@
     </div>
 
     <div v-if="error" class="toast-error">{{ error }}</div>
+    <div v-else-if="noServiceAccount" class="toast-warn">请在账号管理中设置至少 1 个服务账号（角色设为「服务」或「服务+采集」并开启工作台可见），工作台才能显示会话。</div>
   </div>
 </template>
 
@@ -122,6 +123,7 @@ const sending = ref(false);
 const syncingChannels = ref(false);
 const savingManualGroups = ref(false);
 const error = ref('');
+const noServiceAccount = ref(false);
 const serviceRailCollapsed = ref(readStoredRailCollapsed());
 
 const AUTO_REFRESH_MS = 5000;
@@ -235,14 +237,23 @@ watch(
 async function loadGroups({ silent = false, clearSelectionOnMissing = false } = {}) {
   if (!silent) loadingGroups.value = true;
   error.value = '';
+  noServiceAccount.value = false;
   try {
-    const nextGroups = await fetchGroups({
+    const { groups: nextGroups, account_scope } = await fetchGroups({
       platforms: filters.value.platforms.join(','),
       accounts: selectedAccountParam.value,
       scope: filters.value.scope,
       label_id: filters.value.labelId || undefined,
       search: filters.value.search || undefined,
     });
+    // 检测无服务账号配置（mode=operator-no-workbench 或帐号列表为空）
+    if (
+      account_scope &&
+      (account_scope.mode === 'operator-no-workbench' ||
+        (account_scope.active && account_scope.accounts && account_scope.accounts.length === 0))
+    ) {
+      noServiceAccount.value = true;
+    }
     groups.value = nextGroups;
     if (!selectedGroup.value) return;
     const currentGroup = nextGroups.find((group) => group.id === selectedGroup.value.id);
@@ -252,7 +263,7 @@ async function loadGroups({ silent = false, clearSelectionOnMissing = false } = 
       selectedGroup.value = null;
     }
   } catch (err) {
-    error.value = '工作台 API 暂不可用';
+    error.value = '工作台 API 暂不可用，请检查服务状态';
   } finally {
     if (!silent) loadingGroups.value = false;
   }
