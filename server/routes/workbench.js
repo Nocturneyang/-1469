@@ -4,12 +4,6 @@ const crypto = require('crypto');
 const express = require('express');
 const { writeChannelSyncRequest } = require('../../lib/channel-sync-store');
 const {
-  createLocalUser,
-  getLocalUserById,
-  listLocalUsers,
-  updateLocalUser,
-} = require('../../db/auth-db');
-const {
   DEFAULT_RAW_DB_PATH,
   WORKBENCH_PLATFORMS,
   accountScopeContains,
@@ -55,7 +49,7 @@ const MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024;
 const MAX_TOTAL_ATTACHMENT_BYTES = 12 * 1024 * 1024;
 const ALLOWED_ATTACHMENT_KINDS = new Set(['file', 'image', 'sticker']);
 
-function createWorkbenchRouter({ authDb, workbenchDb, rawDbPath = DEFAULT_RAW_DB_PATH, outboxDir } = {}) {
+function createWorkbenchRouter({ workbenchDb, rawDbPath = DEFAULT_RAW_DB_PATH, outboxDir } = {}) {
   if (!workbenchDb) throw new Error('workbenchDb is required');
   const router = express.Router();
   const doorbellRoot = outboxDir || process.env.WORKBENCH_OUTBOX_DIR || path.resolve(__dirname, '..', '..', 'outbox');
@@ -91,26 +85,20 @@ function createWorkbenchRouter({ authDb, workbenchDb, rawDbPath = DEFAULT_RAW_DB
   });
 
   router.get('/admin/access', requireAdmin, (req, res) => {
-    if (!authDb) throw createHttpError(500, 'authDb is required');
-    res.json(buildAdminAccessPayload({ authDb, workbenchDb, rawDbPath, accountScope: getAccountScope() }));
+    res.json(buildAdminAccessPayload({ workbenchDb, rawDbPath, accountScope: getAccountScope() }));
   });
 
   router.post('/admin/users', requireAdmin, (req, res) => {
-    if (!authDb) throw createHttpError(500, 'authDb is required');
     const body = req.body || {};
-    const username = requireText(body.username, 'username');
-    const password = requireText(body.password, 'password');
-    if (password.length < 8) throw createHttpError(400, 'password must be at least 8 characters');
-    const userId = createLocalUser(authDb, {
-      username,
-      password,
+    const operator = upsertAdminOperator(workbenchDb, {
+      id: body.id || body.operator_id || body.username,
+      username: body.username,
       role: body.role || 'agent',
-      displayName: body.display_name || body.displayName || username,
+      display_name: body.display_name || body.displayName || body.username,
+      status: body.status || 'active',
     });
-    const user = getLocalUserById(authDb, userId);
-    syncLocalUserOperator(workbenchDb, user);
-    setOperatorRoles(workbenchDb, user.id, Array.isArray(body.roles) && body.roles.length ? body.roles : ['agent'], currentAdminId(req));
-    savePortalAccess(workbenchDb, user.id, {
+    setOperatorRoles(workbenchDb, operator.id, Array.isArray(body.roles) && body.roles.length ? body.roles : ['agent'], currentAdminId(req));
+    savePortalAccess(workbenchDb, operator.id, {
       can_monitor: false,
       can_workbench: true,
       can_admin: false,
@@ -118,19 +106,17 @@ function createWorkbenchRouter({ authDb, workbenchDb, rawDbPath = DEFAULT_RAW_DB
     });
     res.status(201).json({
       ok: true,
-      user: enrichLocalUserAccess(workbenchDb, user),
-      access: buildAdminAccessPayload({ authDb, workbenchDb, rawDbPath, accountScope: getAccountScope() }),
+      user: enrichOperatorAccess(workbenchDb, operator),
+      access: buildAdminAccessPayload({ workbenchDb, rawDbPath, accountScope: getAccountScope() }),
     });
   });
 
   router.patch('/admin/users/:id', requireAdmin, (req, res) => {
-    if (!authDb) throw createHttpError(500, 'authDb is required');
-    const user = updateLocalUser(authDb, req.params.id, req.body || {});
-    syncLocalUserOperator(workbenchDb, user);
+    const operator = updateAdminOperator(workbenchDb, req.params.id, req.body || {});
     res.json({
       ok: true,
-      user: enrichLocalUserAccess(workbenchDb, user),
-      access: buildAdminAccessPayload({ authDb, workbenchDb, rawDbPath, accountScope: getAccountScope() }),
+      user: enrichOperatorAccess(workbenchDb, operator),
+      access: buildAdminAccessPayload({ workbenchDb, rawDbPath, accountScope: getAccountScope() }),
     });
   });
 
@@ -1268,11 +1254,8 @@ function sanitizeUser(user) {
   };
 }
 
-function buildAdminAccessPayload({ authDb, workbenchDb, rawDbPath, accountScope }) {
-  const users = listLocalUsers(authDb).map((user) => {
-    syncLocalUserOperator(workbenchDb, user);
-    return enrichLocalUserAccess(workbenchDb, user);
-  });
+function buildAdminAccessPayload({ workbenchDb, rawDbPath, accountScope }) {
+  const users = listAdminOperators(workbenchDb).map((operator) => enrichOperatorAccess(workbenchDb, operator));
   const accounts = listAccounts({ rawDbPath, accountScope }).map((account) => ({
     platform: account.platform,
     account: account.account,
@@ -1295,8 +1278,23 @@ function buildAdminAccessPayload({ authDb, workbenchDb, rawDbPath, accountScope 
   };
 }
 
-function syncLocalUserOperator(db, user) {
-  if (!user || !user.id) return null;
+function listAdminOperators(db) {
+  return db.prepare(`
+    SELECT id, username, display_name, role, status, created_at, updated_at
+    FROM operators
+    ORDER BY
+      CASE WHEN id = '1469' THEN 0 ELSE 1 END,
+      updated_at DESC,
+      id ASC
+  `).all();
+}
+
+function upsertAdminOperator(db, input = {}) {
+  const id = requireText(input.id || input.username, 'operator_id');
+  const username = String(input.username || id).trim() || id;
+  const displayName = String(input.display_name || input.displayName || username).trim() || username;
+  const role = normalizeAdminOperatorRole(input.role || 'agent');
+  const status = normalizeAdminOperatorStatus(input.status || 'active');
   db.prepare(`
     INSERT INTO operators (id, username, display_name, role, status)
     VALUES (@id, @username, @displayName, @role, @status)
@@ -1307,32 +1305,55 @@ function syncLocalUserOperator(db, user) {
       status = excluded.status,
       updated_at = CURRENT_TIMESTAMP
   `).run({
-    id: String(user.id),
-    username: user.username || String(user.id),
-    displayName: user.display_name || user.username || String(user.id),
-    role: user.role || 'agent',
-    status: user.status || 'active',
+    id,
+    username,
+    displayName,
+    role,
+    status,
   });
-  return db.prepare('SELECT * FROM operators WHERE id = ?').get(String(user.id));
+  return getAdminOperator(db, id);
 }
 
-function enrichLocalUserAccess(db, user) {
-  const operator = syncLocalUserOperator(db, user);
+function updateAdminOperator(db, operatorId, patch = {}) {
+  const existing = getAdminOperator(db, operatorId);
+  if (!existing) throw createHttpError(404, 'operator not found');
+  return upsertAdminOperator(db, {
+    id: existing.id,
+    username: patch.username || existing.username,
+    display_name: patch.display_name ?? patch.displayName ?? existing.display_name,
+    role: patch.role || existing.role,
+    status: patch.status || existing.status,
+  });
+}
+
+function getAdminOperator(db, operatorId) {
+  return db.prepare(`
+    SELECT id, username, display_name, role, status, created_at, updated_at
+    FROM operators
+    WHERE id = ?
+  `).get(String(operatorId || '').trim());
+}
+
+function enrichOperatorAccess(db, operator) {
   const operatorContext = {
-    id: String(user.id),
-    username: user.username,
-    display_name: user.display_name,
-    role: operator?.role || user.role,
-    status: operator?.status || user.status,
-    identities: [String(user.id), user.username, user.display_name].filter(Boolean),
-    user,
+    id: String(operator.id),
+    username: operator.username,
+    display_name: operator.display_name,
+    role: operator.role,
+    status: operator.status,
+    identities: [String(operator.id), operator.username, operator.display_name].filter(Boolean),
   };
   return {
-    ...user,
-    operator_id: String(user.id),
-    roles: listOperatorRoles(db, String(user.id)),
-    portal_access: loadEditablePortalAccess(db, String(user.id), operatorContext),
-    scopes: listEditableOperatorScopes(db, String(user.id)),
+    id: String(operator.id),
+    username: operator.username,
+    display_name: operator.display_name,
+    role: operator.role,
+    status: operator.status,
+    operator_id: String(operator.id),
+    is_super_admin: Boolean(loadPortalAccess(db, operatorContext).can_admin && String(operator.id) === '1469'),
+    roles: listOperatorRoles(db, String(operator.id)),
+    portal_access: loadEditablePortalAccess(db, String(operator.id), operatorContext),
+    scopes: listEditableOperatorScopes(db, String(operator.id)),
   };
 }
 
@@ -1452,6 +1473,18 @@ function currentAdminId(req) {
 
 function boolToInt(value) {
   return ['1', 'true', 'yes', 'on'].includes(String(value).trim().toLowerCase()) || value === true ? 1 : 0;
+}
+
+function normalizeAdminOperatorRole(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (['super_admin', 'admin', 'agent', 'viewer'].includes(normalized)) return normalized;
+  return 'agent';
+}
+
+function normalizeAdminOperatorStatus(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (['active', 'disabled'].includes(normalized)) return normalized;
+  return 'active';
 }
 
 function normalizeAdminDefaultEntry(value) {

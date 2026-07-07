@@ -2,7 +2,7 @@ const crypto = require('crypto');
 const { listSsoAdmins } = require('../db/auth-db');
 
 const TOKEN_PREFIX = 'wb1';
-const DEFAULT_SUPER_ADMIN_IDENTITIES = ['1469', '杨杰'];
+const DEFAULT_SUPER_ADMIN_IDENTITIES = ['1469'];
 const SSO_USER_CACHE_TTL_MS = positiveNumber('SSO_USER_CACHE_TTL_MS', 30 * 60 * 1000);
 const ssoUserCache = new Map();
 

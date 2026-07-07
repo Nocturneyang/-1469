@@ -3,7 +3,7 @@
     <header class="permission-header">
       <div>
         <h1>权限配置</h1>
-        <p>工作台本地账号、入口权限与服务账号范围</p>
+        <p>SSO 坐席身份、入口权限与服务账号范围</p>
       </div>
       <div class="permission-header-actions">
         <el-button @click="$emit('back')">返回工作台</el-button>
@@ -13,7 +13,7 @@
 
     <section class="permission-layout">
       <aside class="permission-users">
-        <div class="permission-section-title">账号</div>
+        <div class="permission-section-title">SSO 坐席</div>
         <button
           v-for="user in users"
           :key="user.id"
@@ -28,18 +28,15 @@
 
         <el-divider />
 
-        <div class="permission-section-title">新增账号</div>
+        <div class="permission-section-title">新增 SSO 坐席</div>
         <el-form label-position="top" class="permission-create-form">
-          <el-form-item label="账号">
-            <el-input v-model.trim="createForm.username" placeholder="例如 support01" />
+          <el-form-item label="SSO 工号/账号">
+            <el-input v-model.trim="createForm.username" placeholder="例如 1469 或 support01" />
           </el-form-item>
           <el-form-item label="显示名">
             <el-input v-model.trim="createForm.display_name" placeholder="坐席姓名" />
           </el-form-item>
-          <el-form-item label="初始密码">
-            <el-input v-model="createForm.password" show-password type="password" placeholder="至少 8 位" />
-          </el-form-item>
-          <el-button type="primary" :loading="saving" @click="createUser">创建账号</el-button>
+          <el-button type="primary" :loading="saving" @click="createUser">添加坐席</el-button>
         </el-form>
       </aside>
 
@@ -62,10 +59,7 @@
             <el-form-item label="账号状态">
               <el-segmented v-model="selectedUser.status" :options="statusOptions" />
             </el-form-item>
-            <el-form-item label="重置密码">
-              <el-input v-model="passwordDraft" show-password type="password" placeholder="留空则不修改" />
-            </el-form-item>
-            <el-button :loading="saving" @click="saveProfile">保存账号</el-button>
+            <el-button :loading="saving" @click="saveProfile">保存坐席</el-button>
           </el-form>
         </div>
 
@@ -180,7 +174,7 @@
       </section>
 
       <section v-else class="permission-detail empty-permission-state">
-        请选择一个账号。
+        请选择一个坐席。
       </section>
     </section>
   </main>
@@ -205,7 +199,6 @@ const loading = ref(false);
 const saving = ref(false);
 const access = ref({ users: [], roles: [], permissions: [], accounts: [], service_groups: [], scope_special_groups: [] });
 const selectedUserId = ref('');
-const passwordDraft = ref('');
 const roleDraft = ref([]);
 const scopeDraft = ref([]);
 const portalDraft = reactive({
@@ -218,7 +211,6 @@ const rolePermissionDraft = reactive({});
 const createForm = reactive({
   username: '',
   display_name: '',
-  password: '',
 });
 
 const statusOptions = [
@@ -246,7 +238,6 @@ watch(selectedUser, (user) => {
     can_admin: Boolean(user.portal_access?.can_admin),
     default_entry: user.portal_access?.default_entry || 'workbench',
   });
-  passwordDraft.value = '';
 }, { immediate: true });
 
 async function load() {
@@ -265,8 +256,8 @@ async function load() {
 }
 
 async function createUser() {
-  if (!createForm.username || !createForm.password) {
-    ElMessage.warning('请输入账号和初始密码');
+  if (!createForm.username) {
+    ElMessage.warning('请输入 SSO 工号或账号');
     return;
   }
   saving.value = true;
@@ -274,18 +265,16 @@ async function createUser() {
     const result = await createAdminUser({
       username: createForm.username,
       display_name: createForm.display_name || createForm.username,
-      password: createForm.password,
       roles: ['agent'],
       role: 'agent',
     });
     createForm.username = '';
     createForm.display_name = '';
-    createForm.password = '';
     access.value = result.access || access.value;
     selectedUserId.value = result.user?.id || selectedUserId.value;
-    ElMessage.success('账号已创建');
+    ElMessage.success('坐席已添加');
   } catch (err) {
-    ElMessage.error(err.response?.data?.error || '创建账号失败');
+    ElMessage.error(err.response?.data?.error || '添加坐席失败');
   } finally {
     saving.value = false;
   }
@@ -299,12 +288,11 @@ async function saveProfile() {
       display_name: selectedUser.value.display_name,
       status: selectedUser.value.status,
       role: selectedUser.value.role,
-      password: passwordDraft.value || undefined,
     });
     await load();
-    ElMessage.success('账号已保存');
+    ElMessage.success('坐席已保存');
   } catch (err) {
-    ElMessage.error(err.response?.data?.error || '保存账号失败');
+    ElMessage.error(err.response?.data?.error || '保存坐席失败');
   } finally {
     saving.value = false;
   }

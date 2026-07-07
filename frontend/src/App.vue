@@ -1,7 +1,5 @@
 <template>
-  <LoginView v-if="currentView === 'login'" @logged-in="handleLoggedIn" />
-
-  <PermissionConfig v-else-if="currentView === 'admin'" @back="goWorkbench" />
+  <PermissionConfig v-if="currentView === 'admin'" @back="goWorkbench" />
 
   <div v-else class="app-shell" :class="{ 'rail-collapsed': serviceRailCollapsed }">
     <ServiceAccountRail
@@ -77,7 +75,6 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { ElMessage } from 'element-plus';
-import LoginView from './components/LoginView.vue';
 import PermissionConfig from './components/PermissionConfig.vue';
 import ServiceAccountRail from './components/ServiceAccountRail.vue';
 import TopFilters from './components/TopFilters.vue';
@@ -179,7 +176,6 @@ const readProgressByGroup = new Map();
 
 function resolveCurrentView() {
   const pathname = window.location.pathname;
-  if (pathname === '/login') return 'login';
   if (pathname === '/admin' || pathname.startsWith('/admin/')) return 'admin';
   return 'workbench';
 }
@@ -194,32 +190,12 @@ function navigateTo(path) {
   syncRouteFromLocation();
 }
 
-function safeRedirectPath(value) {
-  try {
-    const url = new URL(String(value || '/'), window.location.origin);
-    if (url.origin !== window.location.origin) return '/';
-    return `${url.pathname}${url.search}${url.hash}`;
-  } catch (err) {
-    return '/';
-  }
-}
-
-function handleLoggedIn() {
-  const redirect = new URLSearchParams(window.location.search).get('redirect');
-  navigateTo(safeRedirectPath(redirect || '/'));
-}
-
 function goWorkbench() {
   navigateTo('/');
 }
 
 onMounted(async () => {
   window.addEventListener('popstate', syncRouteFromLocation);
-  if (currentView.value === 'login') {
-    const authUser = await hydrateWorkbenchAuth({ redirectOnFailure: false });
-    if (authUser) handleLoggedIn(authUser);
-    return;
-  }
 
   const authUser = await hydrateWorkbenchAuth();
   if (!authUser && isAuthRedirecting()) return;

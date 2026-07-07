@@ -88,11 +88,11 @@ async function redirectToSsoLogin() {
   }
 }
 
-function redirectToLocalLogin() {
-  if (window.location.pathname === '/login') return;
-  const url = new URL('/login', window.location.origin);
-  url.searchParams.set('redirect', `${window.location.pathname}${window.location.search}${window.location.hash}`);
-  window.location.assign(url.toString());
+async function redirectToSsoOrHome() {
+  const redirected = await redirectToSsoLogin();
+  if (!redirected && window.location.pathname !== '/') {
+    window.location.assign('/');
+  }
 }
 
 export function isAuthRedirecting() {
@@ -101,9 +101,6 @@ export function isAuthRedirecting() {
 
 export async function hydrateWorkbenchAuth(options = {}) {
   const redirectOnFailure = options.redirectOnFailure !== false;
-  if (window.location.pathname === '/login' && !window.localStorage.getItem('auth_token') && !window.localStorage.getItem('sso_token')) {
-    return null;
-  }
   const params = new URLSearchParams(window.location.search);
   const hasTokenInUrl = params.has('token') || params.has('satoken') || params.has('access_token');
   const hydratedAt = Number(window.localStorage.getItem('sso_hydrated_at') || 0);
@@ -125,7 +122,7 @@ export async function hydrateWorkbenchAuth(options = {}) {
     .then(async (response) => {
       if (!response.ok) {
         clearAuthStorage();
-        if (redirectOnFailure) redirectToLocalLogin();
+        if (redirectOnFailure) await redirectToSsoOrHome();
         return null;
       }
 
@@ -133,7 +130,7 @@ export async function hydrateWorkbenchAuth(options = {}) {
       const user = payload.user || payload.data;
       if (!user) {
         clearAuthStorage();
-        if (redirectOnFailure) redirectToLocalLogin();
+        if (redirectOnFailure) await redirectToSsoOrHome();
         return null;
       }
 
@@ -146,7 +143,7 @@ export async function hydrateWorkbenchAuth(options = {}) {
       return user;
     })
     .catch(async () => {
-      if (redirectOnFailure) redirectToLocalLogin();
+      if (redirectOnFailure) await redirectToSsoOrHome();
       return null;
     })
     .finally(() => {
@@ -154,25 +151,6 @@ export async function hydrateWorkbenchAuth(options = {}) {
     });
 
   return ssoHydratePromise;
-}
-
-export async function loginLocal(username, password) {
-  const { data } = await axios.post('/api/auth/login', { username, password }, { timeout: 15000 });
-  if (data && data.token && data.user) {
-    window.localStorage.setItem('auth_token', data.token);
-    window.localStorage.setItem('auth_user', JSON.stringify(data.user));
-    window.localStorage.setItem('sso_hydrated_at', String(Date.now()));
-  }
-  return data;
-}
-
-export async function startSsoLogin() {
-  return redirectToSsoLogin();
-}
-
-export function logoutLocal() {
-  clearAuthStorage();
-  window.location.assign('/login');
 }
 
 api.interceptors.request.use((config) => {
@@ -189,7 +167,7 @@ api.interceptors.response.use(
   async (error) => {
     if (error.response && error.response.status === 401) {
       clearAuthStorage();
-      redirectToLocalLogin();
+      await redirectToSsoOrHome();
     }
     return Promise.reject(error);
   },

@@ -93,7 +93,7 @@ function seedDefaultOperator(db) {
 }
 
 function seedDefaultSuperAdmin(db) {
-  const defaults = ['1469', '杨杰'];
+  const defaults = ['1469'];
   const insertSuperAdmin = db.prepare(`
     INSERT INTO workbench_super_admins (identity, display_name, status, created_by)
     VALUES (?, ?, 'active', 'system')
@@ -104,8 +104,17 @@ function seedDefaultSuperAdmin(db) {
     VALUES (?, 1, 1, 1, 'chooser')
     ON CONFLICT(operator_id) DO NOTHING
   `);
+  const insertOperator = db.prepare(`
+    INSERT INTO operators (id, username, display_name, role, status)
+    VALUES (?, ?, ?, 'super_admin', 'active')
+    ON CONFLICT(id) DO UPDATE SET
+      role = 'super_admin',
+      status = 'active',
+      updated_at = CURRENT_TIMESTAMP
+  `);
 
   defaults.forEach((identity) => {
+    insertOperator.run(identity, identity, identity);
     insertSuperAdmin.run(identity, identity);
     insertPortalAccess.run(identity);
     setOperatorRoles(db, identity, ['super_admin'], 'system');

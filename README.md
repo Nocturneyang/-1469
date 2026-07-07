@@ -12,7 +12,7 @@
 
 工作台和监控系统已经拆分：
 
-- 工作台负责：登录、权限、会话列表、消息线程、回复框、已读、认领、分配、外发账本、人工分组。
+- 工作台负责：SSO 登录后的权限、会话列表、消息线程、回复框、已读、认领、分配、外发账本、人工分组。
 - 监控系统负责：采集、分析、告警、日报、知识资产、供应商画像、运营情报。
 - 工作台不得读取监控分析库 `analytics.sqlite`。
 - 工作台不得调用监控系统的 AI、告警、画像、知识库或分析模块。
@@ -23,7 +23,7 @@
 工作台生产环境默认使用 `/data/db/` 下的独立数据库：
 
 ```text
-auth.sqlite       # 工作台本地登录账号、密码哈希、登录审计
+auth.sqlite       # SSO 超级管理员引导名单、兼容审计表；生产不使用本地密码登录
 workbench.sqlite  # 工作台角色、权限、入口权限、服务范围、已读、分配、外发、人工分组
 raw.sqlite        # 工作台侧原始消息只读/同步数据
 runtime.sqlite    # 工作台运行态数据
@@ -33,43 +33,36 @@ runtime.sqlite    # 工作台运行态数据
 
 - 不要把工作台账号、权限或会话作业数据写入监控项目的 SQLite。
 - 不要把多个系统的登录信息共用同一个 SQLite 文件。
-- 账号登录使用 `auth.sqlite`。
-- 角色、权限和服务账号/分组范围使用 `workbench.sqlite`。
+- 生产登录统一使用 skyline-ark-sso，不使用工作台本地密码登录页。
+- SSO 坐席、角色、入口权限和服务账号/分组范围使用 `workbench.sqlite`。
 
 ## 主要入口
 
 前端页面：
 
-- `/login`：工作台自己的账号登录入口。
 - `/`：工作台主界面。
 - `/admin`：工作台自己的权限配置入口。
 
 后端接口：
 
-- `POST /api/auth/login`：工作台本地账号登录。
 - `GET /api/workbench/me`：当前登录用户和权限上下文。
 - `GET /api/workbench/groups`：会话列表。
 - `GET /api/workbench/groups/:groupId/messages`：消息线程。
 - `POST /api/workbench/reply`：创建外发回复任务。
 - `GET /api/workbench/admin/access`：权限配置总览。
-- `POST /api/workbench/admin/users`：创建工作台账号。
+- `POST /api/workbench/admin/users`：新增 SSO 坐席身份。
 - `PUT /api/workbench/admin/users/:id/scopes`：配置服务账号/分组范围。
 
 ## 登录与权限
 
-工作台支持两种登录方式：
-
-- 工作台本地账号：账号数据保存在 `auth.sqlite`。
-- 统一登录：登录页保留“使用统一登录”按钮。
+生产环境统一使用 skyline-ark-sso 登录，不提供工作台自己的密码登录页。`1469` 工号默认是工作台超级管理员，可以进入 `/admin` 配置入口权限、角色和服务账号范围。
 
 权限配置入口 `/admin` 可以管理：
 
-- 工作台本地账号。
+- SSO 坐席身份。
 - 角色和权限项。
 - 入口权限：工作台、监控系统入口、权限配置。
 - 服务账号/分组范围：查看、回复、分配、管理。
-
-生产首次启用本地账号时，需要配置 `INITIAL_ADMIN_PASSWORD`，服务启动后会自动创建 `admin` 初始管理员。已有 SSO 超级管理员也可以进入权限配置。
 
 ## 本地运行
 
@@ -121,10 +114,10 @@ workbench/.deployhub/k8s/app.yaml
 ```yaml
 name: social-workbench
 domain: social-workbench.tyhark.com
-sso: false
+sso: true
 ```
 
-`sso: false` 是为了让用户可以先访问工作台自己的 `/login` 页面。应用内部 API 仍然由工作台自己的 token 和权限系统保护。
+Deploy Hub 当前要求公网服务必须开启 skyline-ark-sso 外层认证，因此 `sso: true` 是平台部署合规要求。工作台应用不再提供本地密码登录页；SSO 身份、角色、入口权限和服务范围写入 `workbench.sqlite`，不与监控项目共用 SQLite。
 
 部署前建议执行：
 
@@ -139,7 +132,7 @@ npm test
 workbench/
 ├── frontend/                 # Vue 3 + Element Plus 前端
 ├── server/                   # Express API 和静态前端服务
-├── routes/                   # 登录等独立路由
+├── routes/                   # SSO 兼容鉴权路由
 ├── middleware/               # 工作台鉴权中间件
 ├── lib/                      # 权限、外发、渠道同步等业务逻辑
 ├── db/                       # SQLite 路径、schema 和访问层

@@ -50,8 +50,11 @@ function seedBootstrap(db) {
   const row = db.prepare('SELECT COUNT(*) AS count FROM users').get();
   const initialPassword = String(process.env.INITIAL_ADMIN_PASSWORD || process.env.ADMIN_INITIAL_PASSWORD || '');
   const allowInsecureDefaults = envFlag('ALLOW_INSECURE_DEFAULT_USERS');
+  const productionSsoOnly = process.env.NODE_ENV === 'production' && (envFlag('SSO_ENABLED') || envFlag('SKYLINE_SSO_ENABLED'));
   if (Number(row.count || 0) === 0) {
-    if (initialPassword.length >= 12) {
+    if (productionSsoOnly) {
+      console.log('[auth] local password users table is empty; production uses SSO only');
+    } else if (initialPassword.length >= 12) {
       createLocalUser(db, {
         username: 'admin',
         password: initialPassword,
@@ -74,7 +77,6 @@ function seedBootstrap(db) {
 
   const identities = [
     '1469',
-    '杨杰',
     ...splitList(process.env.SSO_BOOTSTRAP_ADMINS || process.env.SSO_ADMIN_USERS || process.env.WORKBENCH_SUPER_ADMINS),
   ];
   const insertAdmin = db.prepare(`

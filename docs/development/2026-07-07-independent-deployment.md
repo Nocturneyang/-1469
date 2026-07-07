@@ -8,7 +8,7 @@
 
 工作台不得把登录信息、原始消息、业务动作和运行态混在同一个 SQLite 文件中。当前启动时会分别初始化：
 
-- `auth.sqlite`：本地用户、SSO 管理员、登录审计。
+- `auth.sqlite`：SSO 管理员引导名单和兼容审计表；生产不使用本地密码登录。
 - `raw.sqlite`：渠道原始消息、账号注册、消息观测。
 - `workbench.sqlite`：工作台会话操作、已读、分配、人工分组、外发账本。
 - `runtime.sqlite`：采集器心跳、运行事件、运行规格、同步任务。
@@ -23,10 +23,9 @@
 - `/auth/sso/start`
 - `/auth/sso/logout`
 - `/token/userinfo`
-- `/api/auth/login`
 - `/api/auth/me`
 
-生产优先使用 SSO；本地账号只作为应急兜底。密码哈希存储在 `auth.sqlite`，`JWT_SECRET`、SSO 配置和后续渠道密钥必须放在 K8s/Deploy Hub Secret。
+生产统一使用 skyline-ark-sso，工作台不提供自己的密码登录页。`1469` 工号默认是工作台超级管理员；SSO 坐席身份、角色、入口权限和服务账号范围写入 `workbench.sqlite`。`JWT_SECRET`、SSO 配置和后续渠道密钥必须放在 K8s/Deploy Hub Secret。
 
 ## 部署
 

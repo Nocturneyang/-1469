@@ -1,5 +1,5 @@
 const express = require('express');
-const { signToken } = require('../middleware/auth');
+const { isSsoEnabled, signToken } = require('../middleware/auth');
 const { verifyLocalUser } = require('../db/auth-db');
 
 function createAuthRouter({ authDb, authenticateToken } = {}) {
@@ -7,6 +7,10 @@ function createAuthRouter({ authDb, authenticateToken } = {}) {
   const router = express.Router();
 
   router.post('/login', (req, res) => {
+    if (process.env.NODE_ENV === 'production' && isSsoEnabled()) {
+      return res.status(410).json({ success: false, error: '生产环境统一使用 SSO 登录' });
+    }
+
     const username = String(req.body?.username || '').trim();
     const password = String(req.body?.password || '');
     if (!username || !password) {
