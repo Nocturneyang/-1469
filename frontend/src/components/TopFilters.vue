@@ -5,15 +5,6 @@
       <span>{{ toolbarSubtitle }}</span>
     </div>
 
-    <a
-      class="monitor-button"
-      href="/monitor"
-      aria-label="返回监控系统"
-      @click="goMonitor"
-    >
-      监控系统
-    </a>
-
     <div class="segmented platform-tabs" aria-label="平台过滤">
       <button
         v-for="platform in visiblePlatforms"
@@ -183,14 +174,6 @@ function update(patch) {
 function selectPlatform(platform) {
   if (props.modelValue.platforms.length === 1 && props.modelValue.platforms[0] === platform) return;
   update({ platforms: [platform], accountKeys: [], labelId: '' });
-}
-
-function goMonitor() {
-  try {
-    window.sessionStorage.setItem('portal_choice', 'monitor');
-  } catch (err) {
-    // Navigation still works if sessionStorage is unavailable.
-  }
 }
 
 function accountKey(account) {

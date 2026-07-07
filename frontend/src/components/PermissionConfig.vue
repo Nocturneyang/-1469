@@ -93,7 +93,6 @@
           </div>
           <div class="portal-access-grid">
             <el-checkbox v-model="portalDraft.can_workbench" border>工作台</el-checkbox>
-            <el-checkbox v-model="portalDraft.can_monitor" border>监控系统入口</el-checkbox>
             <el-checkbox v-model="portalDraft.can_admin" border>权限配置</el-checkbox>
             <el-select v-model="portalDraft.default_entry" placeholder="默认入口">
               <el-option label="自动" value="auto" />
@@ -233,7 +232,7 @@ watch(selectedUser, (user) => {
     local_id: `${Date.now()}-${Math.random()}`,
   }));
   Object.assign(portalDraft, {
-    can_monitor: Boolean(user.portal_access?.can_monitor),
+    can_monitor: false,
     can_workbench: Boolean(user.portal_access?.can_workbench),
     can_admin: Boolean(user.portal_access?.can_admin),
     default_entry: user.portal_access?.default_entry || 'workbench',

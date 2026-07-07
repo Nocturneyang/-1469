@@ -1,5 +1,22 @@
 <template>
-  <PermissionConfig v-if="currentView === 'admin'" @back="goWorkbench" />
+  <AccountSettings
+    v-if="currentView === 'account'"
+    :operator="currentOperator"
+    :user="currentUser"
+    :portal-access="portalAccess"
+    :account-scope="accountScope"
+    :accounts="accounts"
+    @back="goWorkbench"
+  />
+
+  <ServiceAccountAccess
+    v-else-if="currentView === 'serviceAccounts'"
+    :accounts="accounts"
+    :account-scope="accountScope"
+    @back="goWorkbench"
+  />
+
+  <PermissionConfig v-else-if="currentView === 'admin'" @back="goWorkbench" />
 
   <div v-else class="app-shell" :class="{ 'rail-collapsed': serviceRailCollapsed }">
     <ServiceAccountRail
@@ -13,6 +30,8 @@
       @clear="clearServiceAccount"
       @toggle-collapse="toggleServiceRail"
       @open-permissions="openWorkbenchPermissions"
+      @open-account-settings="openAccountSettings"
+      @open-service-access="openServiceAccounts"
     />
 
     <div class="workspace-shell">
@@ -75,7 +94,9 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { ElMessage } from 'element-plus';
+import AccountSettings from './components/AccountSettings.vue';
 import PermissionConfig from './components/PermissionConfig.vue';
+import ServiceAccountAccess from './components/ServiceAccountAccess.vue';
 import ServiceAccountRail from './components/ServiceAccountRail.vue';
 import TopFilters from './components/TopFilters.vue';
 import ConversationList from './components/ConversationList.vue';
@@ -120,6 +141,7 @@ const messagePaging = ref({ has_more: false, before_id: null });
 const accountScope = ref({ mode: 'all', active: false, accounts: [] });
 const portalAccess = ref({ can_monitor: false, can_workbench: true, can_admin: false });
 const currentOperator = ref(null);
+const currentUser = ref(null);
 const selectedGroup = ref(null);
 const loadingGroups = ref(false);
 const loadingOlder = ref(false);
@@ -176,13 +198,15 @@ const readProgressByGroup = new Map();
 
 function resolveCurrentView() {
   const pathname = window.location.pathname;
+  if (pathname === '/account' || pathname.startsWith('/account/')) return 'account';
+  if (pathname === '/service-accounts' || pathname.startsWith('/service-accounts/')) return 'serviceAccounts';
   if (pathname === '/admin' || pathname.startsWith('/admin/')) return 'admin';
   return 'workbench';
 }
 
 function syncRouteFromLocation() {
   currentView.value = resolveCurrentView();
-  if (currentView.value === 'workbench') bootstrapWorkbench();
+  if (currentView.value !== 'admin') bootstrapWorkbench();
 }
 
 function navigateTo(path) {
@@ -215,6 +239,7 @@ async function bootstrapWorkbench() {
   if (workbenchBootstrapped.value) return;
   workbenchBootstrapped.value = true;
   const me = await fetchMe().catch(() => null);
+  currentUser.value = me?.user || null;
   if (me && me.operator) {
     currentOperator.value = {
       ...me.operator,
@@ -544,6 +569,14 @@ function handleOpenNative() {
 
 function openWorkbenchPermissions() {
   navigateTo('/admin');
+}
+
+function openAccountSettings() {
+  navigateTo('/account');
+}
+
+function openServiceAccounts() {
+  navigateTo('/service-accounts');
 }
 
 async function handleRetry(message) {

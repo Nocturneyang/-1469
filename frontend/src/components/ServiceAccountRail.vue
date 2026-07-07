@@ -20,25 +20,29 @@
       </button>
     </div>
 
-    <div class="portal-shortcuts" aria-label="全局入口">
-      <a class="portal-shortcut" href="/" title="访问首页" @click="rememberPortal('')">
-        <span>首</span>
-        <strong>访问首页</strong>
-      </a>
-      <a
-        v-if="portalAccess && portalAccess.can_monitor"
-        class="portal-shortcut"
-        href="https://social-monitor.tyhark.com/monitor"
-        title="监控系统"
-        @click="rememberPortal('monitor')"
-      >
-        <span>监</span>
-        <strong>监控系统</strong>
-      </a>
+    <div class="portal-shortcuts" aria-label="工作台导航">
       <span class="portal-shortcut active" title="客服工作台">
         <span>客</span>
         <strong>工作台</strong>
       </span>
+      <button
+        type="button"
+        class="portal-shortcut"
+        title="服务账号接入"
+        @click="$emit('open-service-access')"
+      >
+        <span>接</span>
+        <strong>服务接入</strong>
+      </button>
+      <button
+        type="button"
+        class="portal-shortcut"
+        title="账户设置"
+        @click="$emit('open-account-settings')"
+      >
+        <span>账</span>
+        <strong>账户设置</strong>
+      </button>
       <a
         v-if="canOpenAdmin"
         class="portal-shortcut"
@@ -145,7 +149,14 @@ const props = defineProps({
   },
 });
 
-defineEmits(['select', 'clear', 'toggle-collapse', 'open-permissions']);
+defineEmits([
+  'select',
+  'clear',
+  'toggle-collapse',
+  'open-permissions',
+  'open-account-settings',
+  'open-service-access',
+]);
 
 const totalMessageCount = computed(() => props.accounts.reduce((sum, account) => (
   sum + Number(account.message_count || 0)
@@ -160,7 +171,7 @@ const scopeAccountCount = computed(() => (
 const scopeTitle = computed(() => {
   if (!props.accountScope || !props.accountScope.active) return '数据库服务账号';
   if (props.accountScope.mode === 'explicit') return '显式服务账号';
-  if (props.accountScope.mode === 'logged-in') return '登录服务账号';
+  if (props.accountScope.mode === 'logged-in') return '授权服务账号';
   return '账号范围已限制';
 });
 
@@ -199,14 +210,5 @@ function compactCount(value) {
   if (count >= 10000) return `${Math.round(count / 1000) / 10}w`;
   if (count >= 1000) return `${Math.round(count / 100) / 10}k`;
   return count;
-}
-
-function rememberPortal(choice) {
-  try {
-    if (choice) window.sessionStorage.setItem('portal_choice', choice);
-    else window.sessionStorage.removeItem('portal_choice');
-  } catch (err) {
-    // Navigation still works if sessionStorage is unavailable.
-  }
 }
 </script>

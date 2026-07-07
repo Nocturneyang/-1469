@@ -345,7 +345,7 @@ function listAccounts({ rawDbPath = DEFAULT_RAW_DB_PATH, accountScope } = {}) {
       accountProfileKey(profile.platform, profile.account),
       profile,
     ]));
-    return db.prepare(`
+    const messageAccounts = db.prepare(`
       WITH normalized AS (${normalizedMessagesSql(db)})
       SELECT
         platform,
@@ -358,14 +358,34 @@ function listAccounts({ rawDbPath = DEFAULT_RAW_DB_PATH, accountScope } = {}) {
         ${accountFilter}
       GROUP BY platform, account
       ORDER BY platform ASC, account ASC
-    `).all(params).map((account) => {
+    `).all(params);
+    const merged = new Map(messageAccounts.map((account) => [
+      accountProfileKey(account.platform, account.account),
+      account,
+    ]));
+    profiles.forEach((profile, key) => {
+      if (merged.has(key)) return;
+      merged.set(key, {
+        platform: profile.platform,
+        account: profile.account,
+        message_count: 0,
+        last_timestamp: null,
+      });
+    });
+    return [...merged.values()].map((account) => {
       const profile = profiles.get(accountProfileKey(account.platform, account.account));
       const displayName = profile && profile.display_name ? profile.display_name : account.account;
       return {
         ...account,
+        message_count: Number(account.message_count || 0),
         account_display_name: displayName,
+        account_status: profile && profile.status ? profile.status : '',
+        account_role: profile && profile.account_role ? profile.account_role : 'service',
+        send_enabled: profile ? Number(profile.send_enabled) : 1,
+        sync_groups_enabled: profile ? Number(profile.sync_groups_enabled) : 0,
+        risk_level: profile && profile.risk_level ? profile.risk_level : 'low',
       };
-    });
+    }).sort((a, b) => a.platform.localeCompare(b.platform) || a.account.localeCompare(b.account));
   } finally {
     db.close();
   }

@@ -114,6 +114,18 @@ async function main() {
     assert.strictEqual(teamsSync.status, 400);
     assert.strictEqual(teamsSync.payload.error, 'platform must be one of wa, tg');
 
+    insertRawAccount(rawDbPath, {
+      id: 'wa-no-messages',
+      platform: 'whatsapp',
+      status: 'authenticated',
+      pushname: 'No Message Support',
+    });
+    const accountsWithEmptyService = await requestJson(`${baseUrl}/accounts`);
+    const emptyServiceAccount = accountsWithEmptyService.accounts.find((account) => account.account === 'wa-no-messages');
+    assert.ok(emptyServiceAccount);
+    assert.strictEqual(emptyServiceAccount.account_display_name, 'No Message Support');
+    assert.strictEqual(emptyServiceAccount.message_count, 0);
+
     seedSyncedChannelMetadata(workbenchDb);
     const labelList = await requestJson(`${baseUrl}/channel-labels?platform=wa`);
     assert.strictEqual(labelList.ok, true);

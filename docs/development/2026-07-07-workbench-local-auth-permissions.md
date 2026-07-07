@@ -12,6 +12,8 @@
 - `auth.sqlite` 仅保留 SSO 超级管理员引导名单和兼容审计表；生产不使用本地密码登录。
 - 管理 API 挂在 `/api/workbench/admin/*`，由工作台自己的 `can_admin` 权限保护。
 - 前端不再提供工作台密码登录页，未登录或 401 统一回到 SSO。
+- 前端 `/account` 提供当前 SSO 工作台账户设置入口。
+- 前端 `/service-accounts` 提供服务账号接入状态页；WA/TG 登录仍由采集器或 worker 侧维护。
 - 前端 `/admin` 提供权限配置入口，可添加 SSO 坐席、配置角色、入口权限和服务账号/分组范围。
 - Deploy Hub 当前要求公网服务必须开启 skyline-ark-sso 外层认证，因此部署配置保持 `sso: true`；应用 API 由 SSO token 鉴权保护。
 

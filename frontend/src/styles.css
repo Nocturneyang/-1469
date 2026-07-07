@@ -220,6 +220,306 @@ button {
   margin-top: 12px;
 }
 
+.account-page {
+  width: 100%;
+  height: 100vh;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  background: var(--bg);
+  overflow: hidden;
+}
+
+.account-header {
+  min-height: 72px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px 24px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+}
+
+.account-header h1,
+.account-panel h2 {
+  margin: 0;
+  font-size: 18px;
+  line-height: 1.25;
+}
+
+.account-header p {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.account-header-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.account-layout {
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(280px, 420px) minmax(0, 1fr);
+  gap: 16px;
+  align-content: start;
+  padding: 18px;
+  overflow: auto;
+}
+
+.account-panel {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 16px;
+  background: var(--surface);
+  box-shadow: 0 8px 20px rgba(24, 35, 30, 0.04);
+}
+
+.account-panel:first-child {
+  display: grid;
+  grid-template-columns: 54px minmax(0, 1fr) auto;
+  gap: 14px;
+  align-items: center;
+}
+
+.account-avatar {
+  width: 54px;
+  height: 54px;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  color: var(--accent-strong);
+  background: var(--accent-soft);
+  font-size: 18px;
+  font-weight: 780;
+}
+
+.account-main {
+  min-width: 0;
+}
+
+.account-main span,
+.account-info-item span,
+.account-scope-summary span,
+.account-note p {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.account-main h2,
+.account-main span,
+.account-info-item strong,
+.account-info-item span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.account-info-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.account-info-item {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+  padding: 12px;
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  background: var(--surface-soft);
+}
+
+.account-info-item strong,
+.account-scope-summary strong {
+  font-size: 14px;
+}
+
+.account-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.account-scope-summary {
+  display: grid;
+  gap: 4px;
+  margin-bottom: 12px;
+}
+
+.account-service-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.account-service-chip {
+  max-width: 240px;
+  overflow: hidden;
+  padding: 6px 9px;
+  border-radius: 999px;
+  color: var(--accent-strong);
+  background: var(--accent-soft);
+  font-size: 12px;
+  font-weight: 680;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.account-note {
+  grid-column: 1 / -1;
+}
+
+.account-note p {
+  margin: 8px 0 0;
+  line-height: 1.6;
+}
+
+.service-access-page {
+  width: 100%;
+  height: 100vh;
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  background: var(--bg);
+  overflow: hidden;
+}
+
+.service-access-header {
+  min-height: 72px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px 24px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+}
+
+.service-access-header h1,
+.service-access-card h2 {
+  margin: 0;
+  font-size: 18px;
+  line-height: 1.25;
+}
+
+.service-access-header p {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.service-access-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  padding: 16px 18px 0;
+}
+
+.service-access-stat {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.service-access-stat span,
+.service-access-meta span,
+.service-access-method span,
+.service-access-title small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.service-access-stat strong {
+  font-size: 22px;
+  line-height: 1.15;
+}
+
+.service-access-body {
+  min-height: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+  gap: 14px;
+  align-content: start;
+  padding: 18px;
+  overflow: auto;
+}
+
+.service-access-card {
+  min-width: 0;
+  display: grid;
+  gap: 14px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.service-access-card-head,
+.service-access-title {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.service-access-card-head {
+  justify-content: space-between;
+}
+
+.service-access-title > div {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.service-access-title h2,
+.service-access-title small,
+.service-access-meta strong,
+.service-access-method strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.service-access-meta {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.service-access-meta > div,
+.service-access-method {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+  padding: 10px;
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  background: var(--surface-soft);
+}
+
+.service-access-empty {
+  min-height: 180px;
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
 .app-shell {
   width: 100%;
   height: 100vh;
@@ -579,29 +879,6 @@ button {
   text-overflow: ellipsis;
   color: var(--muted);
   font-size: 12px;
-}
-
-.monitor-button {
-  flex: 0 0 112px;
-  height: 38px;
-  min-width: 0;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0 14px;
-  color: var(--accent-strong);
-  background: var(--accent-soft);
-  font-size: 13px;
-  font-weight: 720;
-  text-decoration: none;
-  white-space: nowrap;
-}
-
-.monitor-button:hover {
-  border-color: rgba(15, 118, 110, 0.28);
-  background: rgba(15, 118, 110, 0.1);
 }
 
 .segmented {
@@ -1783,6 +2060,54 @@ button {
     border-bottom: 1px solid var(--line);
   }
 
+  .account-page {
+    height: auto;
+    min-height: 100vh;
+    overflow: visible;
+  }
+
+  .service-access-page {
+    height: auto;
+    min-height: 100vh;
+    overflow: visible;
+  }
+
+  .account-header,
+  .service-access-header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .account-header-actions {
+    width: 100%;
+    flex-wrap: wrap;
+  }
+
+  .account-layout {
+    grid-template-columns: 1fr;
+    padding: 12px;
+    overflow: visible;
+  }
+
+  .service-access-summary,
+  .service-access-body {
+    grid-template-columns: 1fr;
+    padding-inline: 12px;
+  }
+
+  .service-access-body {
+    overflow: visible;
+  }
+
+  .account-panel:first-child,
+  .account-info-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .account-panel:first-child {
+    justify-items: start;
+  }
+
   .brand-copy,
   .rail-all-button span:not(.rail-icon),
   .rail-permission-button span:not(.rail-icon),
@@ -1842,7 +2167,6 @@ button {
   }
 
   .toolbar-title,
-  .monitor-button,
   .platform-tabs,
   .scope-tabs,
   .account-select,

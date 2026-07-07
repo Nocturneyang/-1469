@@ -72,6 +72,13 @@ function clearAuthStorage() {
   window.localStorage.removeItem('sso_hydrated_at');
 }
 
+export function logoutSso() {
+  clearAuthStorage();
+  const url = new URL('/auth/sso/logout', window.location.origin);
+  url.searchParams.set('redirect', `${window.location.origin}/`);
+  window.location.assign(url.toString());
+}
+
 async function redirectToSsoLogin() {
   if (authRedirecting) return true;
   const config = await loadRuntimeConfig();
