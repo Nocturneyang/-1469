@@ -1,5 +1,20 @@
 # 社媒客服工作台开发规范与边界设计
 
+## 0. 当前定稿：工作台完全独立
+
+日期：2026-07-07
+
+从本次定稿开始，工作台按完整独立项目设计和实现：
+
+- 独立登录：工作台有自己的用户身份、登录兼容层和账户设置；公网部署仍可经过 Deploy Hub / skyline-ark-sso 网关，但不沿用监控项目登录。
+- 独立存储：工作台只使用自己的 `auth.sqlite`、`workbench.sqlite`、`raw.sqlite`、`runtime.sqlite`，不得读取或写入监控项目 SQLite。
+- 独立权限：工作台自己的 `/admin` 管理工作台坐席、角色、入口权限、服务账号和分组范围。
+- 独立前端：工作台前端不挂监控系统入口，不复用监控系统页面、路由或权限矩阵。
+- 独立服务账号登录：`/service-account-login` 从工作台发起 WA/TG 登录任务，任务写入工作台 `runtime.sqlite` 和工作台 outbox，由工作台 runtime worker 执行。
+- 独立 worker：工作台 runtime worker 持有工作台服务账号 session，写工作台 `raw.sqlite` / `runtime.sqlite`，不依赖监控项目 worker。
+
+本文下方早期章节中凡是出现“读取现有 `database.sqlite`”“由现有 `social-monitor` worker 持有 session”“监控 analyzer 静默读取工作台”等描述，都只代表历史阶段方案，不再作为当前实现依据。
+
 本文档沉淀本项目工作台的产品定位、系统边界、架构设计、UI 设计、数据流设计、数据库约束和开发落地规则。它来自前期讨论结论，用于指导后续开发，不代表现有监控系统需要立即改造。
 
 ## 1. 项目定位
@@ -51,14 +66,16 @@ WA/TG worker = 唯一渠道执行层
 工作台对监控系统的态度：
 
 ```text
-工作台不消费监控系统的分析结果，但会消费渠道原始消息。
-工作台贡献作业数据，监控系统后台静默读取这些数据做分析。
+工作台不消费监控系统的分析结果，也不依赖监控系统原始库。
+工作台服务账号登录、原始消息、权限和作业数据都由工作台自己保存。
 ```
 
 允许工作台读取：
 
-- 原始消息表 `database.sqlite.messages`
+- 自己的原始消息表 `raw.sqlite.messages`
 - 自己的作业库 `workbench.sqlite`
+- 自己的登录库 `auth.sqlite`
+- 自己的运行态库 `runtime.sqlite`
 
 禁止工作台读取或调用：
 
@@ -90,26 +107,19 @@ WA/TG worker = 唯一渠道执行层
 └── tests/
 ```
 
-现有监控系统仍位于：
-
-```text
-/Users/a2026/Desktop/社媒监控/社媒监控系统/social-monitor/
-```
-
 推荐关系：
 
 ```text
 workbench
 - 新客服工作台项目
-- 承载工作台 UI、API、作业库和权限
+- 承载工作台 UI、API、登录、作业库、运行态库、权限和 runtime worker
 
 social-monitor
-- 现有监控系统
-- 继续承载采集、分析、告警、知识资产
-- 只在必要时为 WA/TG worker 增加可选外发消费能力
+- 另一个独立项目
+- 不承载工作台登录、权限、服务账号登录、前端或 SQLite
 ```
 
-不要让新工作台重新登录同一个 WA/TG 账号。WA/TG session 必须仍由现有 worker 或后续统一 channel gateway 持有。
+工作台必须通过自己的 `/service-account-login` 入口发起 WA/TG 服务账号登录，session 由工作台 runtime worker 持有。
 
 ## 4. 总体架构
 
@@ -119,7 +129,7 @@ flowchart LR
   UI --> API["Workbench API"]
 
   API --> WDB["workbench.sqlite"]
-  API --> RawDB["database.sqlite messages 只读"]
+  API --> RawDB["raw.sqlite messages"]
 
   WDB --> Doorbell["outbox 文件门铃"]
   Doorbell --> Worker["WA/TG Session Worker"]
@@ -128,11 +138,8 @@ flowchart LR
   Channel --> Worker
   Worker --> RawDB
 
-  Analyzer["监控分析器"] --> RawDB
-  Analyzer --> WDB
-  Analyzer --> AnalyticsDB["analytics.sqlite"]
-
-  MonitorUI["监控系统 UI"] --> AnalyticsDB
+  Runtime["Workbench Runtime Worker"] --> RawDB
+  Runtime --> RDB["runtime.sqlite"]
 ```
 
 核心原则：
@@ -468,10 +475,9 @@ pending/sending -> paused
 
 ```text
 WA/TG 收到消息
--> worker on(message/message_create)
--> 写入 database.sqlite.messages
--> 工作台只读 messages 展示
--> 监控系统 analyzer 静默分析
+-> 工作台 runtime worker on(message/message_create)
+-> 写入 raw.sqlite.messages
+-> 工作台读取自己的 messages 展示
 ```
 
 工作台看到的是原始消息，不是分析后的消息。
@@ -489,7 +495,7 @@ WA/TG 收到消息
 -> worker 从 workbench.sqlite 查询 pending
 -> 同账号串行 sendMessage
 -> 回写 sent/failed/paused/dead
--> 渠道 message_create 事件把真实外发消息写入 database.sqlite.messages
+-> 渠道 message_create 事件把真实外发消息写入 raw.sqlite.messages
 -> 通过 remote_msg_id 与 outbound_messages 关联
 ```
 
@@ -718,8 +724,8 @@ GET  /api/workbench/outbound/:id
 第一版开发建议：
 
 ```text
-阶段 1：工作台 UI + API + workbench.sqlite，只读 messages，不启用发送
-阶段 2：本地单个测试账号启用 outbound 消费
+阶段 1：工作台 UI + API + 独立 SQLite，不启用发送
+阶段 2：工作台服务账号登录入口和本地单个测试账号 outbound 消费
 阶段 3：生产单账号灰度，限速、熔断、审计全部打开
 ```
 
@@ -727,53 +733,43 @@ GET  /api/workbench/outbound/:id
 
 - 不修改生产 PM2 配置。
 - 不开启生产外发。
-- 不改现有采集库结构。
-- 不改现有分析器主链路。
+- 不读取或修改监控项目采集库。
+- 不改监控项目分析器主链路。
 - 不将 session、token、SQLite 数据文件提交到版本库。
 
-## 13. 与现有监控系统的最小适配
+## 13. 与监控系统彻底分离
 
-工作台大部分代码应在 `workbench/` 内。
+工作台代码应在 `workbench/` 内实现。默认不得修改或依赖现有 `social-monitor`。
 
-是否需要修改现有 `social-monitor`，取决于工作台要拿到的数据深度：
+当前定稿：
 
 ```text
-只展示已经采集到消息的群：
-- 不需要修改原监控系统 worker。
-- 工作台只读 database.sqlite.messages。
-- 通过 platform + receiver_account + group_id 聚合群列表。
-- 缺点是：没有发过消息、近期没有采集到消息的群可能看不到。
+工作台服务账号登录：
+- 由 /service-account-login 发起。
+- 登录任务写入 runtime.sqlite。
+- 账号档案写入 raw.sqlite。
+- outbox/login-worker-* 唤醒工作台 runtime worker。
 
-获取账号完整群列表、WA 原生标签、TG 用户号文件夹：
-- 需要现有 worker 参与。
-- 原因是 WA/TG session 由 social-monitor 的 worker 持有。
-- 工作台不得重新登录 WA/TG，也不得自己创建 session。
-- 改动应限制为 worker 的可选只读同步能力。
+工作台完整群列表、WA 原生标签、TG 用户号文件夹：
+- 由工作台 runtime worker 同步。
+- 同步结果写入 workbench.sqlite / raw.sqlite。
+- 不依赖 social-monitor worker。
 ```
 
-现有 `social-monitor` 可能需要的最小适配：
-
-- 给 `worker-wa.js` 增加可选完整群列表同步器。
-- 给 `worker-wa.js` 增加可选 outbound 消费器。
-- 给 `worker-tg-user.js` 增加可选 outbound 消费器。
-- 必要时给 `worker-tg.js` 增加 Bot 外发消费器。
-- 给 `worker-wa.js` 增加可选 WA 原生标签同步器。
-- 给 `worker-tg-user.js` 增加可选完整对话/群列表同步器。
-- 给 `worker-tg-user.js` 增加可选 TG Dialog Folders 同步器。
-- 用环境变量控制是否启用，例如：
+工作台 runtime worker 使用自己的环境变量，例如：
 
 ```text
-ENABLE_WORKBENCH=1
-ENABLE_WORKBENCH_SEND=1
-ENABLE_WORKBENCH_LABEL_SYNC=1
-ENABLE_WORKBENCH_CHAT_SYNC=1
+WORKBENCH_RUNTIME_WORKER=1
+WORKBENCH_SEND_ENABLED=1
+WORKBENCH_LABEL_SYNC_ENABLED=1
+WORKBENCH_CHAT_SYNC_ENABLED=1
 WORKBENCH_DB_PATH=/path/to/workbench.sqlite
+WORKBENCH_RAW_DB_PATH=/path/to/raw.sqlite
+WORKBENCH_RUNTIME_DB_PATH=/path/to/runtime.sqlite
 WORKBENCH_OUTBOX_DIR=/path/to/outbox
 ```
 
-不开启上述开关时，现有 worker 行为必须保持不变。
-
-禁止把这些能力做成监控主链路默认行为。它们必须是工作台适配能力，且默认关闭。
+禁止把工作台能力做成监控主链路的一部分。
 
 ## 14. 开发顺序
 

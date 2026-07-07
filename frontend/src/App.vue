@@ -14,7 +14,10 @@
     :accounts="accounts"
     :account-scope="accountScope"
     @back="goWorkbench"
+    @open-login="openServiceLogin"
   />
+
+  <ServiceAccountLogin v-else-if="currentView === 'serviceLogin'" @back="goWorkbench" />
 
   <PermissionConfig v-else-if="currentView === 'admin'" @back="goWorkbench" />
 
@@ -32,6 +35,7 @@
       @open-permissions="openWorkbenchPermissions"
       @open-account-settings="openAccountSettings"
       @open-service-access="openServiceAccounts"
+      @open-service-login="openServiceLogin"
     />
 
     <div class="workspace-shell">
@@ -87,7 +91,7 @@
     </div>
 
     <div v-if="error" class="toast-error">{{ error }}</div>
-    <div v-else-if="noServiceAccount" class="toast-warn">请在账号管理中设置至少 1 个服务账号（角色设为「服务」或「服务+采集」并开启工作台可见），工作台才能显示会话。</div>
+    <div v-else-if="noServiceAccount" class="toast-warn">请先通过账号登录接入至少 1 个服务账号，并在权限配置中授权可见范围。</div>
   </div>
 </template>
 
@@ -97,6 +101,7 @@ import { ElMessage } from 'element-plus';
 import AccountSettings from './components/AccountSettings.vue';
 import PermissionConfig from './components/PermissionConfig.vue';
 import ServiceAccountAccess from './components/ServiceAccountAccess.vue';
+import ServiceAccountLogin from './components/ServiceAccountLogin.vue';
 import ServiceAccountRail from './components/ServiceAccountRail.vue';
 import TopFilters from './components/TopFilters.vue';
 import ConversationList from './components/ConversationList.vue';
@@ -200,6 +205,7 @@ function resolveCurrentView() {
   const pathname = window.location.pathname;
   if (pathname === '/account' || pathname.startsWith('/account/')) return 'account';
   if (pathname === '/service-accounts' || pathname.startsWith('/service-accounts/')) return 'serviceAccounts';
+  if (pathname === '/service-account-login' || pathname.startsWith('/service-account-login/')) return 'serviceLogin';
   if (pathname === '/admin' || pathname.startsWith('/admin/')) return 'admin';
   return 'workbench';
 }
@@ -577,6 +583,10 @@ function openAccountSettings() {
 
 function openServiceAccounts() {
   navigateTo('/service-accounts');
+}
+
+function openServiceLogin() {
+  navigateTo('/service-account-login');
 }
 
 async function handleRetry(message) {

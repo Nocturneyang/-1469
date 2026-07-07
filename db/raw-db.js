@@ -79,10 +79,104 @@ function ensureRawDb(dbPath = DEFAULT_RAW_DB_PATH) {
     CREATE INDEX IF NOT EXISTS idx_channel_account_registry_platform_role
       ON channel_account_registry(platform, account_role, workbench_visible);
   `);
+  migrateRawDbSchema(db);
   return db;
+}
+
+function migrateRawDbSchema(db) {
+  ensureColumn(db, 'accounts', 'display_name', 'TEXT');
+  ensureColumn(db, 'accounts', 'health_status', 'TEXT');
+  ensureColumn(db, 'accounts', 'session_status', 'TEXT');
+  ensureColumn(db, 'accounts', 'updated_at', 'TEXT');
+  ensureColumn(db, 'channel_account_registry', 'login_type', "TEXT NOT NULL DEFAULT 'unknown'");
+  ensureColumn(db, 'channel_account_registry', 'account_role', "TEXT NOT NULL DEFAULT 'service'");
+  ensureColumn(db, 'channel_account_registry', 'workbench_visible', 'INTEGER NOT NULL DEFAULT 1');
+  ensureColumn(db, 'channel_account_registry', 'collect_enabled', 'INTEGER NOT NULL DEFAULT 1');
+  ensureColumn(db, 'channel_account_registry', 'send_enabled', 'INTEGER NOT NULL DEFAULT 0');
+  ensureColumn(db, 'channel_account_registry', 'sync_groups_enabled', 'INTEGER NOT NULL DEFAULT 0');
+  ensureColumn(db, 'channel_account_registry', 'risk_level', "TEXT NOT NULL DEFAULT 'low'");
+  ensureColumn(db, 'channel_account_registry', 'status', 'TEXT');
+  ensureColumn(db, 'channel_account_registry', 'updated_at', 'TEXT');
+}
+
+function ensureColumn(db, tableName, columnName, definition) {
+  const columns = new Set(db.prepare(`PRAGMA table_info(${tableName})`).all().map((column) => column.name));
+  if (columns.has(columnName)) return;
+  db.prepare(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${definition}`).run();
+}
+
+function upsertServiceAccountProfile({
+  dbPath = DEFAULT_RAW_DB_PATH,
+  platform,
+  account,
+  displayName,
+  loginType = 'workbench_login',
+  status = 'login_requested',
+  accountRole = 'service',
+} = {}) {
+  const normalizedPlatform = normalizePlatform(platform);
+  const normalizedAccount = String(account || '').trim();
+  if (!['wa', 'tg'].includes(normalizedPlatform)) throw new Error('platform must be one of wa, tg');
+  if (!normalizedAccount) throw new Error('account is required');
+  const db = ensureRawDb(dbPath);
+  try {
+    const now = new Date().toISOString();
+    db.prepare(`
+      INSERT INTO accounts (id, platform, status, pushname, display_name, session_status, updated_at)
+      VALUES (@account, @platform, @status, @displayName, @displayName, @status, @now)
+      ON CONFLICT(id) DO UPDATE SET
+        platform = excluded.platform,
+        status = excluded.status,
+        display_name = COALESCE(NULLIF(excluded.display_name, ''), accounts.display_name),
+        session_status = excluded.session_status,
+        updated_at = excluded.updated_at
+    `).run({
+      account: normalizedAccount,
+      platform: normalizedPlatform,
+      status,
+      displayName: String(displayName || normalizedAccount).trim() || normalizedAccount,
+      now,
+    });
+    db.prepare(`
+      INSERT INTO channel_account_registry (
+        platform, account, display_name, login_type, account_role,
+        workbench_visible, collect_enabled, send_enabled, sync_groups_enabled, risk_level, status, updated_at
+      )
+      VALUES (
+        @platform, @account, @displayName, @loginType, @accountRole,
+        1, 1, 0, 1, 'low', @status, @now
+      )
+      ON CONFLICT(account) DO UPDATE SET
+        platform = excluded.platform,
+        display_name = COALESCE(NULLIF(excluded.display_name, ''), channel_account_registry.display_name),
+        login_type = excluded.login_type,
+        account_role = excluded.account_role,
+        workbench_visible = 1,
+        status = excluded.status,
+        updated_at = excluded.updated_at
+    `).run({
+      platform: normalizedPlatform,
+      account: normalizedAccount,
+      displayName: String(displayName || normalizedAccount).trim() || normalizedAccount,
+      loginType,
+      accountRole,
+      status,
+      now,
+    });
+  } finally {
+    db.close();
+  }
+}
+
+function normalizePlatform(platform) {
+  const value = String(platform || '').trim().toLowerCase();
+  if (value === 'whatsapp') return 'wa';
+  if (value === 'telegram' || value === 'telegram-user' || value === 'tg-user') return 'tg';
+  return value;
 }
 
 module.exports = {
   DEFAULT_RAW_DB_PATH,
   ensureRawDb,
+  upsertServiceAccountProfile,
 };

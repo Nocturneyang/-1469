@@ -1,27 +1,26 @@
 # AGENTS.md
 
-本文件用于指导 Codex 或其他代码协作 Agent 在 `workbench/` 项目中工作。工作台是独立于现有监控系统的新项目，但会与现有 `social-monitor` 的采集 worker 共享渠道执行能力。
+本文件用于指导 Codex 或其他代码协作 Agent 在 `workbench/` 项目中工作。工作台是独立登录、独立存储、独立权限配置、独立前端和独立部署的项目，不与现有 `social-monitor` 共享登录、权限、SQLite、前端路由或 worker 进程。
 
 ## 项目边界
 
 - 工作台目录：`/Users/a2026/Desktop/社媒监控/workbench/`
-- 现有监控系统目录：`/Users/a2026/Desktop/社媒监控/社媒监控系统/social-monitor/`
 - 工作台是客服/业务坐席使用的日常 IM 作业系统。
-- 监控系统是采集、分析、告警、知识资产和运营看板系统。
-- 两套系统必须保持产品心智、路由、数据库和权限边界清晰。
+- 工作台必须使用自己的用户登录、服务账号登录、权限配置、数据库和运行态 worker。
+- 监控系统是另一个独立项目；除非用户明确要求，不要修改或依赖监控项目。
 
 核心规则：
 
 ```text
-Workbench may read raw channel messages and write operational events;
-Workbench must not read analytical outputs or invoke AI/knowledge modules.
+Workbench owns its auth, raw channel data, runtime state, permissions, UI and deployment;
+Workbench must not share monitor SQLite files, monitor auth, monitor frontend routes, or monitor workers.
 ```
 
 中文规则：
 
 ```text
-工作台可以读取原始消息，可以写入作业事件；
-工作台不得读取分析结果，不得调用 AI、告警、画像、知识库模块。
+工作台拥有自己的登录、原始消息、运行态、权限、前端和部署；
+工作台不得共用监控项目 SQLite、监控登录、监控前端路由或监控 worker。
 ```
 
 ## 必读文档
@@ -30,10 +29,7 @@ Workbench must not read analytical outputs or invoke AI/knowledge modules.
 
 - `DEVELOPMENT_GUIDE.md`
 
-如果需要修改现有监控系统，再阅读：
-
-- `/Users/a2026/Desktop/社媒监控/AGENTS.md` 或用户提供的根目录规范
-- `/Users/a2026/Desktop/社媒监控/社媒监控系统/social-monitor/.specify/memory/constitution.md`
+如果用户明确要求修改监控项目，必须先重新确认范围；默认工作台需求只在 `workbench/` 内实现。
 
 ## 推荐目录
 
@@ -107,27 +103,22 @@ workbench/
 
 ## 数据库边界
 
-工作台推荐使用独立库：
+工作台必须使用独立库：
 
 ```text
+auth.sqlite
 workbench.sqlite
-```
-
-现有监控系统库：
-
-```text
-database.sqlite   # 原始采集库
-analytics.sqlite  # 分析输出库
+raw.sqlite
+runtime.sqlite
 ```
 
 规则：
 
-- 工作台可只读 `database.sqlite.messages`。
-- 工作台不得写 `database.sqlite`。
-- 工作台不得修改 `messages` 表结构。
-- 工作台不得读取 `analytics.sqlite` 的告警、画像、知识库、日报等分析表。
+- 工作台不得读取或写入监控项目的 `database.sqlite`、`analytics.sqlite` 或其他 SQLite 文件。
+- 工作台原始消息、服务账号档案和渠道同步数据写入自己的 `raw.sqlite`。
+- 工作台运行态、服务账号登录任务和 worker 状态写入自己的 `runtime.sqlite`。
+- 工作台用户登录和兼容审计写入自己的 `auth.sqlite`。
 - 工作台自己的外发、已读、分配、审计数据写入 `workbench.sqlite`。
-- 监控 analyzer 后续可以只读 `workbench.sqlite`，但工作台不反向消费 analyzer 结果。
 
 `workbench.sqlite` 核心表应包括：
 
@@ -137,6 +128,8 @@ analytics.sqlite  # 分析输出库
 - `conversation_reads`
 - `agent_actions`
 - `send_circuit_breaker`
+- `operator_portal_access`
+- `operator_service_group_scopes`
 - `channel_labels`
 - `conversation_label_map`
 
@@ -173,7 +166,7 @@ Workbench API 写 outbound_messages(status=pending)
 禁止：
 
 - 把文件队列作为唯一事实源。
-- 工作台 API 直接创建 WA/TG client。
+- 工作台 API 在请求线程里直接创建或持有 WA/TG client。
 - 工作台浏览器直接操作 WA/TG session。
 - 多个进程同时持有同一 WA/TG 账号 session。
 - 同一 WA 账号并发 `sendMessage`。
@@ -188,29 +181,26 @@ UNIQUE(created_by, client_msg_id)
 
 ## Worker 边界
 
-WA/TG session worker 是唯一真实发送者。
+工作台自己的 WA/TG runtime worker 是唯一真实登录者和发送者。
 
 群列表和标签/分组能力按阶段处理：
 
 ```text
 阶段 1：
-- 工作台只读 database.sqlite.messages。
-- 从已采集消息中聚合群列表。
-- 不修改原监控系统 worker。
+- 工作台通过自己的服务账号登录入口创建 WA/TG 登录任务。
+- 工作台 runtime worker 登录并写入 raw.sqlite / runtime.sqlite。
+- 工作台从自己的 raw.sqlite 聚合群列表和消息。
 
 阶段 2：
-- 如需完整群列表、WA 原生标签、TG 用户号文件夹，再修改 worker。
-- 修改范围仅限可选只读同步器。
+- 工作台 runtime worker 同步完整群列表、WA 原生标签、TG 用户号文件夹。
 - 同步结果写入 workbench.sqlite。
 ```
 
-如果需要修改现有 `social-monitor` worker，必须满足：
+工作台 runtime worker 必须满足：
 
-- 用环境变量开关控制。
-- 默认不开启工作台外发能力。
-- 默认不开启完整群列表/标签/分组同步。
-- 不影响现有采集逻辑。
-- 不影响生产环境。
+- 使用工作台自己的 `auth.sqlite`、`workbench.sqlite`、`raw.sqlite`、`runtime.sqlite`。
+- 不读取或写入监控项目 SQLite。
+- 不依赖监控项目 PM2 进程或 worker。
 - 同账号串行发送。
 - 只读取自己的任务：
 
@@ -226,15 +216,17 @@ WHERE platform = ? AND account = ? AND status = 'pending'
 建议环境变量：
 
 ```text
-ENABLE_WORKBENCH=1
-ENABLE_WORKBENCH_SEND=1
-ENABLE_WORKBENCH_LABEL_SYNC=1
-ENABLE_WORKBENCH_CHAT_SYNC=1
+WORKBENCH_RUNTIME_WORKER=1
+WORKBENCH_SEND_ENABLED=1
+WORKBENCH_LABEL_SYNC_ENABLED=1
+WORKBENCH_CHAT_SYNC_ENABLED=1
 WORKBENCH_DB_PATH=/path/to/workbench.sqlite
+WORKBENCH_RAW_DB_PATH=/path/to/raw.sqlite
+WORKBENCH_RUNTIME_DB_PATH=/path/to/runtime.sqlite
 WORKBENCH_OUTBOX_DIR=/path/to/outbox
 ```
 
-不开启这些开关时，现有 worker 行为必须与改动前一致。
+不开启这些开关时，工作台 UI/API 仍可运行，但不会执行真实渠道登录或发送。
 
 ## 风控规则
 
@@ -342,13 +334,13 @@ GET  /api/workbench/outbound/:id
 
 ## 生产安全
 
-开发工作台时，不得默认影响生产监控系统。
+开发工作台时，不得影响生产监控系统。
 
 禁止在未明确得到用户要求时执行：
 
 - 修改 `ecosystem.cloud.config.js`
 - 修改 `docker-entrypoint.sh`
-- 开启生产 `ENABLE_WORKBENCH_SEND`
+- 开启生产真实外发
 - 使用生产 WA/TG 账号测试外发
 - 修改生产数据库结构
 - 提交 `.env`、token、session、SQLite 数据文件、WAL/SHM 文件
@@ -376,9 +368,9 @@ GET  /api/workbench/outbound/:id
 
 - 工作台不展示监控分析结果。
 - 工作台不调用 AI。
-- 工作台不重新登录 WA/TG。
-- 工作台不写采集库。
-- worker 是唯一渠道执行层。
+- 工作台只能通过自己的服务账号登录入口发起 WA/TG 登录任务。
+- 工作台只写自己的 `auth.sqlite`、`workbench.sqlite`、`raw.sqlite`、`runtime.sqlite`。
+- 工作台 runtime worker 是唯一渠道执行层。
 
 ## 测试要求
 
@@ -422,15 +414,15 @@ GET  /api/workbench/outbound/:id
 MVP 顺序：
 
 1. `workbench.sqlite` schema 和初始化脚本。
-2. Workbench API 只读 `messages` 展示群和消息。
+2. Workbench API 读取自己的 `raw.sqlite` 展示群和消息。
 3. `channel_labels` 和 `conversation_label_map` 表与模拟数据展示。
 4. 两栏 Workbench UI，支持平台、未读、我的群、渠道标签/分组筛选。
 5. `outbound_messages` 写入和文件门铃。
-6. 本地单测试账号 outbound 消费器。
-7. 本地 worker 只读同步 WA 标签和 TG 用户号文件夹。
-8. 已读、认领、移交、操作日志。
-9. 失败重试、熔断、状态可视化。
-10. 监控 analyzer 静默读取工作台数据。
+6. 工作台服务账号登录入口和登录任务 outbox。
+7. 本地单测试账号 outbound 消费器。
+8. 本地 runtime worker 只读同步 WA 标签和 TG 用户号文件夹。
+9. 已读、认领、移交、操作日志。
+10. 失败重试、熔断、状态可视化。
 
 暂缓：
 
@@ -446,8 +438,8 @@ MVP 顺序：
 ## 最终原则
 
 ```text
-工作台只做收、发、分派、已读；
-监控系统只做采集、分析、告警、沉淀；
-worker 只做渠道 session 和真实发送；
-三者协作，但不能互相污染边界。
+工作台只做独立登录、服务账号接入、收、发、分派、已读；
+监控系统是另一个独立项目；
+工作台 runtime worker 只做工作台渠道 session 和真实发送；
+两套系统不能共用登录、权限、前端、SQLite 或 worker。
 ```

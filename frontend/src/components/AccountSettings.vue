@@ -25,7 +25,7 @@
 
       <section class="account-panel account-info-grid">
         <div class="account-info-item">
-          <span>SSO 工号</span>
+          <span>工作台身份</span>
           <strong>{{ identity }}</strong>
         </div>
         <div class="account-info-item">
@@ -34,7 +34,7 @@
         </div>
         <div class="account-info-item">
           <span>登录方式</span>
-          <strong>skyline SSO</strong>
+          <strong>{{ loginSource }}</strong>
         </div>
         <div class="account-info-item">
           <span>权限入口</span>
@@ -64,7 +64,7 @@
 
       <section class="account-panel account-note">
         <h2>服务账号登录位置</h2>
-        <p>WA/TG 服务账号由采集器或 worker 侧登录和维护，工作台只展示已接入服务账号的会话与授权范围。</p>
+        <p>WA/TG 服务账号从工作台自己的登录入口发起，由工作台运行态 worker 执行登录和维护，账号权限与会话数据不与监控项目共用。</p>
       </section>
     </section>
   </main>
@@ -118,6 +118,7 @@ const identity = computed(() => String(
 ));
 const username = computed(() => props.operator?.username || props.user?.username || props.user?.email || identity.value);
 const operatorStatus = computed(() => props.operator?.status || 'active');
+const loginSource = computed(() => (props.user?.source || props.operator?.auth_source || '工作台统一登录网关'));
 
 const roleText = computed(() => {
   const role = String(props.operator?.role || props.user?.role || '').trim();

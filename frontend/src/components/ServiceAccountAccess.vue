@@ -3,9 +3,12 @@
     <header class="service-access-header">
       <div>
         <h1>服务账号接入</h1>
-        <p>WA/TG 服务账号状态与工作台可见范围</p>
+        <p>WA/TG 服务账号状态与工作台独立可见范围</p>
       </div>
-      <el-button @click="$emit('back')">返回工作台</el-button>
+      <div class="service-access-actions">
+        <el-button type="primary" @click="$emit('open-login')">登录服务账号</el-button>
+        <el-button @click="$emit('back')">返回工作台</el-button>
+      </div>
     </header>
 
     <section class="service-access-summary">
@@ -101,7 +104,7 @@ const props = defineProps({
   },
 });
 
-defineEmits(['back']);
+defineEmits(['back', 'open-login']);
 
 const readyStatuses = new Set(['online', 'authenticated', 'ready', 'monitoring', 'healthy']);
 
@@ -155,9 +158,9 @@ function riskText(risk) {
 }
 
 function methodText(platform) {
-  if (platform === 'wa') return 'WA worker 扫码接入';
-  if (platform === 'tg') return 'TG worker session/token 接入';
-  return '采集器接入';
+  if (platform === 'wa') return '工作台 WA 扫码登录';
+  if (platform === 'tg') return '工作台 TG token/session 登录';
+  return '工作台服务账号登录';
 }
 
 function timeText(value) {

@@ -415,6 +415,13 @@ button {
   font-size: 13px;
 }
 
+.service-access-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
 .service-access-summary {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -511,6 +518,175 @@ button {
 }
 
 .service-access-empty {
+  min-height: 180px;
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.service-login-page {
+  width: 100%;
+  height: 100vh;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  background: var(--bg);
+  overflow: hidden;
+}
+
+.service-login-header {
+  min-height: 72px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px 24px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+}
+
+.service-login-header h1,
+.service-login-panel h2 {
+  margin: 0;
+  font-size: 18px;
+  line-height: 1.25;
+}
+
+.service-login-header p,
+.service-login-panel-head span {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.service-login-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.service-login-layout {
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(360px, 520px) minmax(0, 1fr);
+  gap: 16px;
+  padding: 18px;
+  overflow: auto;
+}
+
+.service-login-panel {
+  min-width: 0;
+  align-self: start;
+  display: grid;
+  gap: 16px;
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.service-login-panel-head {
+  display: grid;
+  gap: 4px;
+}
+
+.service-login-form {
+  display: grid;
+  gap: 4px;
+}
+
+.service-login-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0 12px;
+}
+
+.service-login-submit {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-top: 4px;
+}
+
+.service-login-submit span,
+.service-login-request span,
+.service-login-request dt {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.service-login-list {
+  display: grid;
+  gap: 12px;
+}
+
+.service-login-request {
+  min-width: 0;
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  background: var(--surface-soft);
+}
+
+.service-login-request-head {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.service-login-request-head > div {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.service-login-request strong,
+.service-login-request span,
+.service-login-request dd {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.service-login-request dl {
+  margin: 0;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.service-login-request dl > div {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.service-login-request dd {
+  margin: 0;
+  font-weight: 700;
+}
+
+.service-login-request p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.service-login-error {
+  color: #b42318 !important;
+}
+
+.service-login-empty {
   min-height: 180px;
   display: grid;
   place-items: center;
@@ -2072,13 +2248,22 @@ button {
     overflow: visible;
   }
 
+  .service-login-page {
+    height: auto;
+    min-height: 100vh;
+    overflow: visible;
+  }
+
   .account-header,
-  .service-access-header {
+  .service-access-header,
+  .service-login-header {
     align-items: flex-start;
     flex-direction: column;
   }
 
-  .account-header-actions {
+  .account-header-actions,
+  .service-access-actions,
+  .service-login-actions {
     width: 100%;
     flex-wrap: wrap;
   }
@@ -2097,6 +2282,22 @@ button {
 
   .service-access-body {
     overflow: visible;
+  }
+
+  .service-login-layout {
+    grid-template-columns: 1fr;
+    padding: 12px;
+    overflow: visible;
+  }
+
+  .service-login-form-grid,
+  .service-login-request dl {
+    grid-template-columns: 1fr;
+  }
+
+  .service-login-submit {
+    align-items: flex-start;
+    flex-direction: column;
   }
 
   .account-panel:first-child,

@@ -64,10 +64,30 @@ function openRuntimeDb(dbPath = DEFAULT_RUNTIME_DB_PATH) {
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
 
+    CREATE TABLE IF NOT EXISTS service_account_login_requests (
+      request_id TEXT PRIMARY KEY,
+      platform TEXT NOT NULL,
+      account TEXT NOT NULL,
+      display_name TEXT,
+      login_mode TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'requested',
+      requested_by TEXT,
+      credential_hint TEXT,
+      qr_payload TEXT,
+      worker_message TEXT,
+      error_message TEXT,
+      expires_at TEXT,
+      completed_at TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
     CREATE INDEX IF NOT EXISTS idx_runtime_events_account_time
       ON runtime_events(account_id, created_at);
     CREATE INDEX IF NOT EXISTS idx_channel_sync_tasks_status
       ON channel_sync_tasks(platform, account, status, created_at);
+    CREATE INDEX IF NOT EXISTS idx_service_account_login_requests_account_time
+      ON service_account_login_requests(platform, account, created_at DESC);
   `);
   return db;
 }

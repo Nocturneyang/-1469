@@ -16,11 +16,13 @@ function boolValue(value) {
 }
 
 function getRuntimeConfig() {
-  return window.__SOCIAL_MONITOR_CONFIG__ || {};
+  return window.__SOCIAL_WORKBENCH_CONFIG__ || window.__WORKBENCH_CONFIG__ || window.__SOCIAL_MONITOR_CONFIG__ || {};
 }
 
 async function loadRuntimeConfig() {
-  if (window.__SOCIAL_MONITOR_CONFIG__) return window.__SOCIAL_MONITOR_CONFIG__;
+  if (window.__SOCIAL_WORKBENCH_CONFIG__ || window.__WORKBENCH_CONFIG__ || window.__SOCIAL_MONITOR_CONFIG__) {
+    return getRuntimeConfig();
+  }
   if (runtimeConfigPromise) return runtimeConfigPromise;
 
   runtimeConfigPromise = new Promise((resolve) => {
@@ -218,6 +220,16 @@ export async function fetchGroups(params = {}) {
 export async function requestChannelSync(payload = {}) {
   const { data } = await api.post('/channel-sync', payload);
   return data;
+}
+
+export async function fetchServiceAccountLoginRequests(params = {}) {
+  const { data } = await api.get('/service-account-logins', { params });
+  return data.requests || [];
+}
+
+export async function createServiceAccountLoginRequest(payload = {}) {
+  const { data } = await api.post('/service-account-logins', payload);
+  return data.request;
 }
 
 export async function fetchMessages(group, params = {}) {

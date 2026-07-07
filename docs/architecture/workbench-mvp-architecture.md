@@ -1,5 +1,7 @@
 # 客服工作台 MVP 架构说明
 
+> 2026-07-07 更新：本文为早期 MVP 方案。当前定稿以 `docs/architecture/2026-07-07-workbench-full-separation.md` 为准，工作台不再依赖监控项目 SQLite 或 `social-monitor` worker。
+
 ## 边界
 
 工作台是独立项目，接口统一在 `/api/workbench/*`。它只读现有采集库 `database.sqlite.messages`，自己的已读、分配、外发和审计数据写入 `workbench.sqlite`。

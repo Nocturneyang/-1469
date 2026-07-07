@@ -101,7 +101,7 @@ function seedDefaultSuperAdmin(db) {
   `);
   const insertPortalAccess = db.prepare(`
     INSERT INTO operator_portal_access (operator_id, can_monitor, can_workbench, can_admin, default_entry)
-    VALUES (?, 1, 1, 1, 'chooser')
+    VALUES (?, 0, 1, 1, 'workbench')
     ON CONFLICT(operator_id) DO NOTHING
   `);
   const insertOperator = db.prepare(`

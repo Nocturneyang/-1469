@@ -3,7 +3,7 @@
     <header class="permission-header">
       <div>
         <h1>权限配置</h1>
-        <p>SSO 坐席身份、入口权限与服务账号范围</p>
+        <p>工作台坐席身份、入口权限与服务账号范围</p>
       </div>
       <div class="permission-header-actions">
         <el-button @click="$emit('back')">返回工作台</el-button>
@@ -13,7 +13,7 @@
 
     <section class="permission-layout">
       <aside class="permission-users">
-        <div class="permission-section-title">SSO 坐席</div>
+        <div class="permission-section-title">工作台坐席</div>
         <button
           v-for="user in users"
           :key="user.id"
@@ -28,9 +28,9 @@
 
         <el-divider />
 
-        <div class="permission-section-title">新增 SSO 坐席</div>
+        <div class="permission-section-title">新增工作台坐席</div>
         <el-form label-position="top" class="permission-create-form">
-          <el-form-item label="SSO 工号/账号">
+          <el-form-item label="工作台账号/工号">
             <el-input v-model.trim="createForm.username" placeholder="例如 1469 或 support01" />
           </el-form-item>
           <el-form-item label="显示名">
@@ -98,7 +98,6 @@
               <el-option label="自动" value="auto" />
               <el-option label="工作台" value="workbench" />
               <el-option label="权限配置" value="admin" />
-              <el-option label="入口选择" value="chooser" />
             </el-select>
           </div>
         </div>
@@ -256,7 +255,7 @@ async function load() {
 
 async function createUser() {
   if (!createForm.username) {
-    ElMessage.warning('请输入 SSO 工号或账号');
+    ElMessage.warning('请输入工作台账号或工号');
     return;
   }
   saving.value = true;

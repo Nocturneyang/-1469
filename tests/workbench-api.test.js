@@ -114,6 +114,41 @@ async function main() {
     assert.strictEqual(teamsSync.status, 400);
     assert.strictEqual(teamsSync.payload.error, 'platform must be one of wa, tg');
 
+    const waLogin = await requestJson(`${baseUrl}/service-account-logins`, {
+      method: 'POST',
+      body: {
+        platform: 'wa',
+        account: 'wa-login-test',
+        display_name: '登录测试 WA',
+        login_mode: 'wa_qr',
+      },
+    });
+    assert.strictEqual(waLogin.ok, true);
+    assert.strictEqual(waLogin.request.platform, 'wa');
+    assert.strictEqual(waLogin.request.status, 'waiting_qr');
+    assert.ok(fs.readdirSync(path.join(outboxDir, 'login-worker-wa-wa-login-test')).some((file) => file.endsWith('.json')));
+
+    const tgLogin = await requestJson(`${baseUrl}/service-account-logins`, {
+      method: 'POST',
+      body: {
+        platform: 'tg',
+        account: 'tg-login-bot',
+        display_name: '登录测试 TG',
+        login_mode: 'tg_bot_token',
+        credential: '123456:super-secret-token',
+      },
+    });
+    assert.strictEqual(tgLogin.request.credential_hint, '123456:***');
+    assert.strictEqual(JSON.stringify(tgLogin).includes('super-secret-token'), false);
+    const loginRequests = await requestJson(`${baseUrl}/service-account-logins`);
+    assert.strictEqual(loginRequests.requests.some((request) => request.request_id === tgLogin.request.request_id), true);
+    assert.strictEqual(JSON.stringify(loginRequests).includes('super-secret-token'), false);
+    const tgLoginFiles = fs.readdirSync(path.join(outboxDir, 'login-worker-tg-tg-login-bot'))
+      .filter((file) => file.endsWith('.json'));
+    assert.ok(tgLoginFiles.length >= 1);
+    const tgDoorbell = JSON.parse(fs.readFileSync(path.join(outboxDir, 'login-worker-tg-tg-login-bot', tgLoginFiles[0]), 'utf8'));
+    assert.strictEqual(tgDoorbell.credential.value, '123456:super-secret-token');
+
     insertRawAccount(rawDbPath, {
       id: 'wa-no-messages',
       platform: 'whatsapp',

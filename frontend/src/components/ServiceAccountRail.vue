@@ -37,6 +37,15 @@
       <button
         type="button"
         class="portal-shortcut"
+        title="服务账号登录"
+        @click="$emit('open-service-login')"
+      >
+        <span>登</span>
+        <strong>账号登录</strong>
+      </button>
+      <button
+        type="button"
+        class="portal-shortcut"
         title="账户设置"
         @click="$emit('open-account-settings')"
       >
@@ -156,6 +165,7 @@ defineEmits([
   'open-permissions',
   'open-account-settings',
   'open-service-access',
+  'open-service-login',
 ]);
 
 const totalMessageCount = computed(() => props.accounts.reduce((sum, account) => (

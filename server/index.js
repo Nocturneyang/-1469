@@ -57,7 +57,7 @@ function createApp(options = {}) {
     res.json({ success: true, code: 0, data: result.user, user: result.user, source: result.source });
   });
   app.use('/api/auth', createAuthRouter({ authDb, authenticateToken }));
-  app.use('/api/workbench', authenticateToken, createWorkbenchRouter({ authDb, workbenchDb, rawDbPath, outboxDir }));
+  app.use('/api/workbench', authenticateToken, createWorkbenchRouter({ authDb, workbenchDb, runtimeDb, rawDbPath, outboxDir }));
 
   const distDir = path.join(__dirname, '..', 'frontend', 'dist');
   app.use(express.static(distDir));
@@ -113,8 +113,10 @@ function sendRuntimeConfig(req, res) {
     guestLoginEnabled: false,
     localDevAuthBypass: isLocalDevAuthBypass(req),
   };
-  const body = `window.__SOCIAL_MONITOR_CONFIG__ = ${JSON.stringify(config).replace(/</g, '\\u003c')};\n` +
-    `window.__WORKBENCH_CONFIG__ = window.__SOCIAL_MONITOR_CONFIG__;\n`;
+  const encoded = JSON.stringify(config).replace(/</g, '\\u003c');
+  const body = `window.__SOCIAL_WORKBENCH_CONFIG__ = ${encoded};\n` +
+    `window.__WORKBENCH_CONFIG__ = window.__SOCIAL_WORKBENCH_CONFIG__;\n` +
+    `window.__SOCIAL_MONITOR_CONFIG__ = window.__SOCIAL_WORKBENCH_CONFIG__;\n`;
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0');
   res.setHeader('CDN-Cache-Control', 'no-store');
   res.type('application/javascript').send(body);

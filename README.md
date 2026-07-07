@@ -1,6 +1,6 @@
 # 客服工作台项目说明
 
-客服工作台是独立于监控系统部署的日常 IM 作业系统，用于客服或业务坐席查看 WA/TG 会话、按授权范围回复消息、认领/分配会话，并记录工作台侧的操作数据。
+客服工作台是独立部署、独立登录、独立存储、独立权限配置和独立前端的日常 IM 作业系统，用于客服或业务坐席接入 WA/TG 服务账号、查看会话、按授权范围回复消息、认领/分配会话，并记录工作台侧的操作数据。
 
 线上服务：
 
@@ -10,39 +10,41 @@
 
 ## 项目边界
 
-工作台和监控系统已经拆分：
+工作台和监控系统必须彻底拆分：
 
-- 工作台负责：SSO 登录后的权限、会话列表、消息线程、回复框、已读、认领、分配、外发账本、人工分组。
-- 监控系统负责：采集、分析、告警、日报、知识资产、供应商画像、运营情报。
+- 工作台负责：工作台登录身份、权限、WA/TG 服务账号登录入口、会话列表、消息线程、回复框、已读、认领、分配、外发账本、人工分组。
+- 监控系统负责：它自己的采集、分析、告警、日报、知识资产、供应商画像、运营情报。
 - 工作台不得读取监控分析库 `analytics.sqlite`。
 - 工作台不得调用监控系统的 AI、告警、画像、知识库或分析模块。
-- 工作台可以读取原始消息库，但自己的登录、权限和作业数据必须写入工作台自己的 SQLite 文件。
+- 工作台不得依赖监控项目的登录、权限、前端路由、worker 进程或 SQLite 文件。
+- 工作台自己的登录、权限、服务账号、会话和运行态数据必须写入工作台自己的 SQLite 文件。
 
 ## 数据隔离
 
 工作台生产环境默认使用 `/data/db/` 下的独立数据库：
 
 ```text
-auth.sqlite       # SSO 超级管理员引导名单、兼容审计表；生产不使用本地密码登录
+auth.sqlite       # 工作台用户登录、SSO 兼容身份和登录审计
 workbench.sqlite  # 工作台角色、权限、入口权限、服务范围、已读、分配、外发、人工分组
-raw.sqlite        # 工作台侧原始消息只读/同步数据
-runtime.sqlite    # 工作台运行态数据
+raw.sqlite        # 工作台自己的服务账号、原始消息和渠道同步数据
+runtime.sqlite    # 工作台运行态、服务账号登录任务和 worker 状态
 ```
 
 重要规则：
 
 - 不要把工作台账号、权限或会话作业数据写入监控项目的 SQLite。
 - 不要把多个系统的登录信息共用同一个 SQLite 文件。
-- 生产登录统一使用 skyline-ark-sso，不使用工作台本地密码登录页。
-- SSO 坐席、角色、入口权限和服务账号/分组范围使用 `workbench.sqlite`。
+- 生产公网仍通过 Deploy Hub 的 skyline-ark-sso 网关认证，但工作台应用内的用户、角色、入口权限和服务账号/分组范围使用工作台自己的 `auth.sqlite` / `workbench.sqlite`。
+- 服务账号登录任务使用 `runtime.sqlite` 记录状态，WA/TG session/token 不写入监控项目。
 
 ## 主要入口
 
 前端页面：
 
 - `/`：工作台主界面。
-- `/account`：当前 SSO 工作台账户设置。
+- `/account`：当前工作台账户设置。
 - `/service-accounts`：WA/TG 服务账号接入状态页。
+- `/service-account-login`：工作台自己的 WA/TG 服务账号登录入口。
 - `/admin`：工作台自己的权限配置入口。
 
 后端接口：
@@ -52,21 +54,29 @@ runtime.sqlite    # 工作台运行态数据
 - `GET /api/workbench/groups/:groupId/messages`：消息线程。
 - `POST /api/workbench/reply`：创建外发回复任务。
 - `GET /api/workbench/admin/access`：权限配置总览。
-- `POST /api/workbench/admin/users`：新增 SSO 坐席身份。
+- `POST /api/workbench/admin/users`：新增工作台坐席身份。
 - `PUT /api/workbench/admin/users/:id/scopes`：配置服务账号/分组范围。
+- `GET /api/workbench/service-account-logins`：服务账号登录任务列表。
+- `POST /api/workbench/service-account-logins`：发起 WA/TG 服务账号登录任务。
 
 ## 登录与权限
 
-生产环境统一使用 skyline-ark-sso 登录，不提供工作台自己的密码登录页。`1469` 工号默认是工作台超级管理员，可以进入 `/admin` 配置入口权限、角色和服务账号范围。
+工作台登录和权限是工作台自己的体系。生产公网入口会先经过 Deploy Hub 的 skyline-ark-sso 网关；进入应用后，`1469` 工号默认是工作台超级管理员，可以进入 `/admin` 配置工作台用户、入口权限、角色和服务账号范围。
 
 权限配置入口 `/admin` 可以管理：
 
-- SSO 坐席身份。
+- 工作台坐席身份。
 - 角色和权限项。
 - 入口权限：工作台、权限配置。
 - 服务账号/分组范围：查看、回复、分配、管理。
 
-服务账号接入页 `/service-accounts` 用于查看 WA/TG 服务账号状态、用途、发送开关、分组同步和风险等级。服务账号的真实登录动作仍在采集器或 worker 侧完成，工作台不保存 WA/TG session。
+服务账号登录入口 `/service-account-login` 用于在工作台内发起 WA/TG 登录任务：
+
+- WA：创建扫码登录任务，等待工作台 WA worker 回写二维码和登录状态。
+- TG Bot：提交 Bot Token，工作台只在一次性登录任务中交给工作台 TG worker 校验和接管。
+- TG 用户号：提交或导入 session，工作台 TG worker 接管后写入工作台自己的运行态/session 存储。
+
+服务账号接入页 `/service-accounts` 用于查看 WA/TG 服务账号状态、用途、发送开关、分组同步和风险等级。服务账号登录任务、状态和账号档案只写入工作台自己的 `runtime.sqlite` / `raw.sqlite`。
 
 ## 本地运行
 
@@ -121,7 +131,7 @@ domain: social-workbench.tyhark.com
 sso: true
 ```
 
-Deploy Hub 当前要求公网服务必须开启 skyline-ark-sso 外层认证，因此 `sso: true` 是平台部署合规要求。工作台应用不再提供本地密码登录页；SSO 身份、角色、入口权限和服务范围写入 `workbench.sqlite`，不与监控项目共用 SQLite。
+Deploy Hub 当前要求公网服务必须开启 skyline-ark-sso 外层认证，因此 `sso: true` 是平台部署合规要求。工作台应用内的身份、角色、入口权限、服务账号登录任务和服务范围写入工作台自己的 SQLite，不与监控项目共用 SQLite。
 
 部署前建议执行：
 
@@ -136,7 +146,7 @@ npm test
 workbench/
 ├── frontend/                 # Vue 3 + Element Plus 前端
 ├── server/                   # Express API 和静态前端服务
-├── routes/                   # SSO 兼容鉴权路由
+├── routes/                   # 工作台鉴权路由
 ├── middleware/               # 工作台鉴权中间件
 ├── lib/                      # 权限、外发、渠道同步等业务逻辑
 ├── db/                       # SQLite 路径、schema 和访问层
@@ -153,4 +163,4 @@ workbench/
 - 修改前端后运行 `npm run build`。
 - 不提交 `.env`、SQLite 数据文件、WAL/SHM、本地 session、Token 或本地缓存。
 - 不把工作台重新并入监控项目。
-- 不让工作台直接持有 WA/TG session；真实发送仍应由渠道 worker 执行。
+- 服务账号登录从工作台页面发起，由工作台运行态 worker 执行；不得依赖监控项目 worker 或监控项目 SQLite。

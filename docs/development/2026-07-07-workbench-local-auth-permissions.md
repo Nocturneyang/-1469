@@ -1,20 +1,20 @@
-# 工作台 SSO 登录与权限配置入口
+# 工作台登录与权限配置入口
 
 日期：2026-07-07
 
 ## 背景
 
-工作台已从监控项目拆分为独立部署项目。生产环境统一使用 skyline-ark-sso 登录，工作台不再提供自己的密码登录页。SSO 坐席身份、角色、入口权限和服务账号范围必须使用工作台自己的 SQLite 文件，不得写入或依赖监控项目的 SQLite。
+工作台已从监控项目拆分为独立部署项目。公网部署保留 skyline-ark-sso 网关认证，但工作台应用内的坐席身份、角色、入口权限、服务账号登录任务和服务账号范围必须使用工作台自己的 SQLite 文件，不得写入或依赖监控项目的 SQLite。
 
 ## 实现边界
 
-- SSO 坐席身份和权限配置存储在 `workbench.sqlite`。
-- `auth.sqlite` 仅保留 SSO 超级管理员引导名单和兼容审计表；生产不使用本地密码登录。
+- 工作台坐席身份和权限配置存储在 `workbench.sqlite`。
+- `auth.sqlite` 保存工作台登录兼容层、超级管理员引导名单和登录审计。
 - 管理 API 挂在 `/api/workbench/admin/*`，由工作台自己的 `can_admin` 权限保护。
-- 前端不再提供工作台密码登录页，未登录或 401 统一回到 SSO。
-- 前端 `/account` 提供当前 SSO 工作台账户设置入口。
-- 前端 `/service-accounts` 提供服务账号接入状态页；WA/TG 登录仍由采集器或 worker 侧维护。
-- 前端 `/admin` 提供权限配置入口，可添加 SSO 坐席、配置角色、入口权限和服务账号/分组范围。
+- 前端 `/account` 提供当前工作台账户设置入口。
+- 前端 `/service-accounts` 提供服务账号接入状态页。
+- 前端 `/service-account-login` 提供 WA/TG 服务账号登录入口；登录任务写入 `runtime.sqlite` 并交给工作台 runtime worker。
+- 前端 `/admin` 提供权限配置入口，可添加工作台坐席、配置角色、入口权限和服务账号/分组范围。
 - Deploy Hub 当前要求公网服务必须开启 skyline-ark-sso 外层认证，因此部署配置保持 `sso: true`；应用 API 由 SSO token 鉴权保护。
 
 ## 首次管理员

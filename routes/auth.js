@@ -8,7 +8,7 @@ function createAuthRouter({ authDb, authenticateToken } = {}) {
 
   router.post('/login', (req, res) => {
     if (process.env.NODE_ENV === 'production' && isSsoEnabled()) {
-      return res.status(410).json({ success: false, error: '生产环境统一使用 SSO 登录' });
+      return res.status(410).json({ success: false, error: '当前部署使用工作台统一登录网关' });
     }
 
     const username = String(req.body?.username || '').trim();

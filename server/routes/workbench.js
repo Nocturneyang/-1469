@@ -3,6 +3,7 @@ const path = require('path');
 const crypto = require('crypto');
 const express = require('express');
 const { writeChannelSyncRequest } = require('../../lib/channel-sync-store');
+const { upsertServiceAccountProfile } = require('../../db/raw-db');
 const {
   DEFAULT_RAW_DB_PATH,
   WORKBENCH_PLATFORMS,
@@ -41,6 +42,12 @@ const {
   setOperatorRoles,
   setRolePermissions,
 } = require('../../lib/access-control');
+const {
+  createServiceAccountLoginRequest,
+  getServiceAccountLoginRequest,
+  listServiceAccountLoginRequests,
+  updateServiceAccountLoginRequest,
+} = require('../../lib/service-account-login-store');
 
 const ALLOWED_PLATFORMS = new Set(WORKBENCH_PLATFORMS);
 const OUTBOUND_STATUSES = new Set(['pending', 'sending', 'sent', 'delivered', 'failed', 'dead', 'paused', 'canceled']);
@@ -49,8 +56,9 @@ const MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024;
 const MAX_TOTAL_ATTACHMENT_BYTES = 12 * 1024 * 1024;
 const ALLOWED_ATTACHMENT_KINDS = new Set(['file', 'image', 'sticker']);
 
-function createWorkbenchRouter({ workbenchDb, rawDbPath = DEFAULT_RAW_DB_PATH, outboxDir } = {}) {
+function createWorkbenchRouter({ workbenchDb, runtimeDb, rawDbPath = DEFAULT_RAW_DB_PATH, outboxDir } = {}) {
   if (!workbenchDb) throw new Error('workbenchDb is required');
+  if (!runtimeDb) throw new Error('runtimeDb is required');
   const router = express.Router();
   const doorbellRoot = outboxDir || process.env.WORKBENCH_OUTBOX_DIR || path.resolve(__dirname, '..', '..', 'outbox');
   const getAccountScope = () => resolveAccountScope({ rawDbPath });
@@ -154,6 +162,72 @@ function createWorkbenchRouter({ workbenchDb, rawDbPath = DEFAULT_RAW_DB_PATH, o
       last_channel_sync_at: lastChannelSyncAt(workbenchDb, account.platform, account.account),
     }));
     res.json({ ok: true, accounts, account_scope: mapAccountScope(visibleAccountScope) });
+  });
+
+  router.get('/service-account-logins', requireAdmin, (req, res) => {
+    res.json({
+      ok: true,
+      requests: listServiceAccountLoginRequests(runtimeDb, { limit: req.query.limit }),
+    });
+  });
+
+  router.post('/service-account-logins', requireAdmin, (req, res) => {
+    const operator = currentOperatorContext(workbenchDb, req);
+    const body = req.body || {};
+    const platform = requirePlatform(body.platform);
+    const account = requireText(body.account, 'account');
+    const loginMode = String(body.login_mode || body.loginMode || '').trim();
+    const displayName = String(body.display_name || body.displayName || account).trim();
+    let request;
+    try {
+      request = createServiceAccountLoginRequest({
+        runtimeDb,
+        outboxDir: doorbellRoot,
+        platform,
+        account,
+        displayName,
+        loginMode,
+        credential: body.credential,
+        requestedBy: operator.id,
+      });
+      upsertServiceAccountProfile({
+        dbPath: rawDbPath,
+        platform,
+        account,
+        displayName,
+        loginType: request.login_mode,
+        status: request.status,
+      });
+    } catch (err) {
+      throw createHttpError(400, err.message);
+    }
+    writeAction(workbenchDb, operator.id, 'service_account.login.request', platform, account, null, request.request_id, {
+      login_mode: request.login_mode,
+      credential_hint: request.credential_hint,
+    });
+    res.status(202).json({ ok: true, request });
+  });
+
+  router.get('/service-account-logins/:id', requireAdmin, (req, res) => {
+    const request = getServiceAccountLoginRequest(runtimeDb, req.params.id);
+    if (!request) throw createHttpError(404, 'login request not found');
+    res.json({ ok: true, request });
+  });
+
+  router.patch('/service-account-logins/:id', requireAdmin, (req, res) => {
+    const request = updateServiceAccountLoginRequest(runtimeDb, req.params.id, req.body || {});
+    if (!request) throw createHttpError(404, 'login request not found');
+    if (request.status) {
+      upsertServiceAccountProfile({
+        dbPath: rawDbPath,
+        platform: request.platform,
+        account: request.account,
+        displayName: request.display_name,
+        loginType: request.login_mode,
+        status: request.status,
+      });
+    }
+    res.json({ ok: true, request });
   });
 
   router.get('/channel-labels', (req, res) => {
@@ -1365,7 +1439,7 @@ function loadEditablePortalAccess(db, operatorId, operatorContext = null) {
   `).get(String(operatorId));
   const derived = operatorContext ? loadPortalAccess(db, operatorContext) : {};
   return {
-    can_monitor: Boolean(row ? Number(row.can_monitor) : derived.can_monitor),
+    can_monitor: false,
     can_workbench: Boolean(row ? Number(row.can_workbench) : derived.can_workbench),
     can_admin: Boolean(row ? Number(row.can_admin) : derived.can_admin),
     default_entry: normalizeAdminDefaultEntry(row ? row.default_entry : derived.default_entry),
@@ -1378,7 +1452,7 @@ function savePortalAccess(db, operatorId, input = {}) {
   if (!id) throw createHttpError(400, 'operator_id is required');
   const row = {
     operator_id: id,
-    can_monitor: boolToInt(input.can_monitor),
+    can_monitor: 0,
     can_workbench: boolToInt(input.can_workbench),
     can_admin: boolToInt(input.can_admin),
     default_entry: normalizeAdminDefaultEntry(input.default_entry),
@@ -1489,7 +1563,7 @@ function normalizeAdminOperatorStatus(value) {
 
 function normalizeAdminDefaultEntry(value) {
   const normalized = String(value || '').trim().toLowerCase();
-  if (['workbench', 'monitor', 'admin', 'chooser', 'auto'].includes(normalized)) return normalized;
+  if (['workbench', 'admin', 'auto'].includes(normalized)) return normalized;
   return 'workbench';
 }
 
