@@ -1,0 +1,138 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: social-workbench
+  namespace: g1469
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: social-workbench-sqlite-pvc
+  namespace: g1469
+spec:
+  accessModes:
+    - ReadWriteMany
+  storageClassName: nas
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: social-workbench
+  namespace: g1469
+  labels:
+    app.kubernetes.io/name: social-workbench
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: social-workbench
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: social-workbench
+    spec:
+      serviceAccountName: social-workbench
+      containers:
+        - name: social-workbench
+          image: __IMAGE__
+          ports:
+            - containerPort: 3000
+              name: http
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            failureThreshold: 30
+            periodSeconds: 5
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 20
+            periodSeconds: 20
+            timeoutSeconds: 3
+            failureThreshold: 3
+          env:
+            - name: NODE_ENV
+              value: production
+            - name: PORT
+              value: "3000"
+            - name: DATA_DIR
+              value: /data
+            - name: WORKBENCH_DB_DIR
+              value: /data/db
+            - name: WORKBENCH_AUTH_DB_PATH
+              value: /data/db/auth.sqlite
+            - name: WORKBENCH_RAW_DB_PATH
+              value: /data/db/raw.sqlite
+            - name: WORKBENCH_DB_PATH
+              value: /data/db/workbench.sqlite
+            - name: WORKBENCH_RUNTIME_DB_PATH
+              value: /data/db/runtime.sqlite
+            - name: WORKBENCH_OUTBOX_DIR
+              value: /data/outbox
+            - name: SSO_ENABLED
+              value: "true"
+            - name: SSO_LOGIN_URL
+              value: "https://skyline-ark-sso.tyhark.com/login"
+            - name: SSO_LOGOUT_URL
+              value: "https://skyline-ark-sso.tyhark.com/logout"
+            - name: SSO_REDIRECT_PARAM
+              value: "redirect"
+            - name: SSO_LOGOUT_REDIRECT_PARAM
+              value: "redirect"
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: social-workbench-secrets
+                  key: JWT_SECRET
+                  optional: true
+            - name: INITIAL_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: social-workbench-secrets
+                  key: INITIAL_ADMIN_PASSWORD
+                  optional: true
+          envFrom:
+            - secretRef:
+                name: social-workbench-secrets
+                optional: true
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          resources:
+            requests:
+              cpu: 300m
+              memory: 512Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: social-workbench-sqlite-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: social-workbench
+  namespace: g1469
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: 80
+      targetPort: 3000
+  selector:
+    app.kubernetes.io/name: social-workbench

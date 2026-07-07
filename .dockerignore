@@ -1,0 +1,11 @@
+node_modules
+frontend/dist
+.local-data
+outbox
+sessions
+db/*.sqlite
+db/*.sqlite-shm
+db/*.sqlite-wal
+.env
+*.log
+docs/product/*.png

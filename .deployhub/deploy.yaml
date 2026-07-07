@@ -1,0 +1,12 @@
+name: social-workbench
+description: Independent customer service workbench
+namespace: g1469
+runtime: node20
+port: 3000
+domain: social-workbench.tyhark.com
+sso: false
+middleware:
+  - sqlite
+build:
+  type: docker
+  dockerfile: Dockerfile
