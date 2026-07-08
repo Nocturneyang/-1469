@@ -7,13 +7,19 @@
       </div>
       <div class="permission-header-actions">
         <el-button @click="$emit('back')">返回工作台</el-button>
-        <el-button type="primary" :loading="loading" @click="load">刷新</el-button>
+        <el-button type="primary" :icon="Refresh" :loading="loading" @click="load">刷新</el-button>
       </div>
     </header>
 
     <section class="permission-layout">
       <aside class="permission-users">
-        <div class="permission-section-title">工作台坐席</div>
+        <div class="permission-users-head">
+          <div>
+            <div class="permission-section-title">工作台坐席</div>
+            <strong>{{ users.length }}</strong>
+          </div>
+          <span>{{ activeUserCount }} 启用</span>
+        </div>
         <button
           v-for="user in users"
           :key="user.id"
@@ -22,8 +28,14 @@
           :class="{ active: selectedUser && selectedUser.id === user.id }"
           @click="selectedUserId = user.id"
         >
-          <strong>{{ user.display_name || user.username }}</strong>
-          <span>{{ user.username }} · {{ roleLabel(user.roles) }}</span>
+          <span class="permission-user-avatar">{{ initialOf(user) }}</span>
+          <span class="permission-user-main">
+            <strong>{{ user.display_name || user.username }}</strong>
+            <span>{{ user.username }} · {{ roleLabel(user.roles) }}</span>
+          </span>
+          <span class="permission-user-status" :class="{ disabled: user.status !== 'active' }">
+            {{ user.status === 'active' ? '启用' : '停用' }}
+          </span>
         </button>
 
         <el-divider />
@@ -36,20 +48,41 @@
           <el-form-item label="显示名">
             <el-input v-model.trim="createForm.display_name" placeholder="坐席姓名" />
           </el-form-item>
-          <el-button type="primary" :loading="saving" @click="createUser">添加坐席</el-button>
+          <el-button type="primary" :icon="Plus" :loading="saving" @click="createUser">添加坐席</el-button>
         </el-form>
       </aside>
 
       <section v-if="selectedUser" class="permission-detail">
-        <div class="permission-block">
+        <div class="permission-block permission-profile-block">
           <div class="permission-block-head">
-            <div>
-              <h2>{{ selectedUser.display_name || selectedUser.username }}</h2>
-              <span>{{ selectedUser.username }} · ID {{ selectedUser.id }}</span>
+            <div class="permission-profile-title">
+              <span class="permission-detail-avatar">{{ initialOf(selectedUser) }}</span>
+              <div>
+                <h2>{{ selectedUser.display_name || selectedUser.username }}</h2>
+                <span>{{ selectedUser.username }} · ID {{ selectedUser.id }}</span>
+              </div>
             </div>
-            <el-tag :type="selectedUser.status === 'active' ? 'success' : 'info'">
-              {{ selectedUser.status === 'active' ? '启用' : '停用' }}
-            </el-tag>
+            <div class="permission-profile-actions">
+              <el-tag :type="selectedUser.status === 'active' ? 'success' : 'info'">
+                {{ selectedUser.status === 'active' ? '启用' : '停用' }}
+              </el-tag>
+              <el-button
+                type="danger"
+                plain
+                :icon="Delete"
+                :disabled="!canDeleteSelectedUser"
+                :loading="saving"
+                @click="confirmDeleteUser"
+              >
+                删除坐席
+              </el-button>
+            </div>
+          </div>
+
+          <div class="permission-meta-strip">
+            <span>角色：{{ selectedRoleText }}</span>
+            <span>入口：{{ entryLabel(portalDraft.default_entry) }}</span>
+            <span>范围：{{ scopeDraft.length }}</span>
           </div>
 
           <el-form class="permission-profile" label-position="top">
@@ -59,46 +92,48 @@
             <el-form-item label="账号状态">
               <el-segmented v-model="selectedUser.status" :options="statusOptions" />
             </el-form-item>
-            <el-button :loading="saving" @click="saveProfile">保存坐席</el-button>
+            <el-button type="primary" :loading="saving" @click="saveProfile">保存坐席</el-button>
           </el-form>
         </div>
 
-        <div class="permission-block">
-          <div class="permission-block-head">
-            <div>
-              <h2>角色</h2>
-              <span>角色决定基础功能权限</span>
+        <div class="permission-two-column">
+          <div class="permission-block">
+            <div class="permission-block-head">
+              <div>
+                <h2>角色</h2>
+                <span>基础功能权限</span>
+              </div>
+              <el-button type="primary" :loading="saving" @click="saveRoles">保存角色</el-button>
             </div>
-            <el-button type="primary" :loading="saving" @click="saveRoles">保存角色</el-button>
+            <el-checkbox-group v-model="roleDraft" class="role-checks">
+              <el-checkbox
+                v-for="role in roles"
+                :key="role.code"
+                :label="role.code"
+                border
+              >
+                {{ role.name }}
+              </el-checkbox>
+            </el-checkbox-group>
           </div>
-          <el-checkbox-group v-model="roleDraft" class="role-checks">
-            <el-checkbox
-              v-for="role in roles"
-              :key="role.code"
-              :label="role.code"
-              border
-            >
-              {{ role.name }}
-            </el-checkbox>
-          </el-checkbox-group>
-        </div>
 
-        <div class="permission-block">
-          <div class="permission-block-head">
-            <div>
-              <h2>入口权限</h2>
-              <span>控制左侧入口显示和默认进入位置</span>
+          <div class="permission-block">
+            <div class="permission-block-head">
+              <div>
+                <h2>入口权限</h2>
+                <span>入口与默认位置</span>
+              </div>
+              <el-button type="primary" :loading="saving" @click="savePortal">保存入口</el-button>
             </div>
-            <el-button type="primary" :loading="saving" @click="savePortal">保存入口</el-button>
-          </div>
-          <div class="portal-access-grid">
-            <el-checkbox v-model="portalDraft.can_workbench" border>工作台</el-checkbox>
-            <el-checkbox v-model="portalDraft.can_admin" border>权限配置</el-checkbox>
-            <el-select v-model="portalDraft.default_entry" placeholder="默认入口">
-              <el-option label="自动" value="auto" />
-              <el-option label="工作台" value="workbench" />
-              <el-option label="权限配置" value="admin" />
-            </el-select>
+            <div class="portal-access-grid">
+              <el-checkbox v-model="portalDraft.can_workbench" border>工作台</el-checkbox>
+              <el-checkbox v-model="portalDraft.can_admin" border>权限配置</el-checkbox>
+              <el-select v-model="portalDraft.default_entry" placeholder="默认入口">
+                <el-option label="自动" value="auto" />
+                <el-option label="工作台" value="workbench" />
+                <el-option label="权限配置" value="admin" />
+              </el-select>
+            </div>
           </div>
         </div>
 
@@ -109,12 +144,22 @@
               <span>按平台、服务账号和分组配置查看/回复/分配/管理</span>
             </div>
             <div>
-              <el-button @click="addScope">添加范围</el-button>
+              <el-button :icon="Plus" @click="addScope">添加范围</el-button>
               <el-button type="primary" :loading="saving" @click="saveScopes">保存范围</el-button>
             </div>
           </div>
 
           <div v-if="!scopeDraft.length" class="empty-permission-state">暂无范围，添加后该账号才会看到会话。</div>
+          <div v-else class="scope-row scope-row-head">
+            <span>平台</span>
+            <span>服务账号</span>
+            <span>分组</span>
+            <span>查看</span>
+            <span>回复</span>
+            <span>分配</span>
+            <span>管理</span>
+            <span></span>
+          </div>
           <div v-for="(scope, index) in scopeDraft" :key="scope.local_id" class="scope-row">
             <el-select v-model="scope.platform" placeholder="平台" @change="scope.service_account = ''; scope.native_group_id = '*'">
               <el-option label="WA" value="wa" />
@@ -140,7 +185,7 @@
             <el-checkbox v-model="scope.can_reply">回</el-checkbox>
             <el-checkbox v-model="scope.can_assign">分</el-checkbox>
             <el-checkbox v-model="scope.can_manage">管</el-checkbox>
-            <el-button text type="danger" @click="scopeDraft.splice(index, 1)">删除</el-button>
+            <el-button text type="danger" :icon="Delete" @click="scopeDraft.splice(index, 1)">删除</el-button>
           </div>
         </div>
 
@@ -180,9 +225,11 @@
 
 <script setup>
 import { computed, onMounted, reactive, ref, watch } from 'vue';
-import { ElMessage } from 'element-plus';
+import { ElMessage, ElMessageBox } from 'element-plus';
+import { Delete, Plus, Refresh } from '@element-plus/icons-vue';
 import {
   createAdminUser,
+  deleteAdminUser,
   fetchAdminAccess,
   saveAdminUserPortalAccess,
   saveAdminUserRoles,
@@ -220,6 +267,9 @@ const users = computed(() => access.value.users || []);
 const roles = computed(() => access.value.roles || []);
 const permissions = computed(() => access.value.permissions || []);
 const selectedUser = computed(() => users.value.find((user) => user.id === selectedUserId.value) || null);
+const activeUserCount = computed(() => users.value.filter((user) => user.status === 'active').length);
+const selectedRoleText = computed(() => roleLabel(roleDraft.value));
+const canDeleteSelectedUser = computed(() => selectedUser.value && selectedUser.value.id !== '1469');
 
 onMounted(load);
 
@@ -245,7 +295,9 @@ async function load() {
     roles.value.forEach((role) => {
       rolePermissionDraft[role.code] = [...(role.permissions || [])];
     });
-    if (!selectedUserId.value && users.value[0]) selectedUserId.value = users.value[0].id;
+    if (!users.value.some((user) => user.id === selectedUserId.value)) {
+      selectedUserId.value = users.value[0]?.id || '';
+    }
   } catch (err) {
     ElMessage.error(err.response?.data?.error || '无法加载权限配置');
   } finally {
@@ -291,6 +343,37 @@ async function saveProfile() {
     ElMessage.success('坐席已保存');
   } catch (err) {
     ElMessage.error(err.response?.data?.error || '保存坐席失败');
+  } finally {
+    saving.value = false;
+  }
+}
+
+async function confirmDeleteUser() {
+  if (!selectedUser.value || !canDeleteSelectedUser.value) return;
+  const user = selectedUser.value;
+  try {
+    await ElMessageBox.confirm(
+      `确定删除坐席「${user.display_name || user.username}」吗？`,
+      '删除坐席',
+      {
+        confirmButtonText: '删除',
+        cancelButtonText: '取消',
+        type: 'warning',
+        confirmButtonClass: 'el-button--danger',
+      },
+    );
+  } catch (_) {
+    return;
+  }
+
+  saving.value = true;
+  try {
+    const result = await deleteAdminUser(user.id);
+    access.value = result.access || access.value;
+    selectedUserId.value = access.value.users?.[0]?.id || '';
+    ElMessage.success('坐席已删除');
+  } catch (err) {
+    ElMessage.error(err.response?.data?.error || '删除坐席失败');
   } finally {
     saving.value = false;
   }
@@ -381,5 +464,16 @@ function roleLabel(roleCodes = []) {
   if (!roleCodes.length) return '未分配角色';
   const roleMap = new Map(roles.value.map((role) => [role.code, role.name]));
   return roleCodes.map((code) => roleMap.get(code) || code).join('、');
+}
+
+function initialOf(user = {}) {
+  const text = String(user.display_name || user.username || user.id || '?').trim();
+  return text.slice(0, 1).toUpperCase();
+}
+
+function entryLabel(value) {
+  if (value === 'admin') return '权限配置';
+  if (value === 'workbench') return '工作台';
+  return '自动';
 }
 </script>

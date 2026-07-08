@@ -125,6 +125,15 @@ function createWorkbenchRouter({ workbenchDb, runtimeDb, rawDbPath = DEFAULT_RAW
     });
   });
 
+  router.delete('/admin/users/:id', requireAdmin, (req, res) => {
+    const deleted = deleteAdminOperator(workbenchDb, req.params.id, currentAdminId(req), accountData);
+    res.json({
+      ok: true,
+      deleted,
+      access: buildAdminAccessPayload({ workbenchDb, rawDbPath, accountScope: getAccountScope(), accountData }),
+    });
+  });
+
   router.put('/admin/users/:id/roles', requireAdmin, (req, res) => {
     const userId = requireText(req.params.id, 'id');
     const roles = setOperatorRoles(workbenchDb, userId, req.body?.roles || [], currentAdminId(req));
@@ -1545,6 +1554,43 @@ function updateAdminOperator(db, operatorId, patch = {}) {
     role: patch.role || existing.role,
     status: patch.status || existing.status,
   });
+}
+
+function deleteAdminOperator(db, operatorId, currentOperatorId, accountData) {
+  const id = requireText(operatorId, 'id');
+  const existing = getAdminOperator(db, id);
+  if (!existing) throw createHttpError(404, 'operator not found');
+  if (id === '1469') throw createHttpError(400, 'super admin cannot be deleted');
+  if (id === String(currentOperatorId || '').trim()) throw createHttpError(400, 'current operator cannot be deleted');
+
+  const releaseAssignments = (targetDb) => {
+    targetDb.prepare(`
+      UPDATE group_assignments
+      SET status = 'released',
+          released_at = CURRENT_TIMESTAMP,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE assigned_to = ? AND status = 'active'
+    `).run(id);
+    targetDb.prepare('DELETE FROM conversation_reads WHERE operator_id = ?').run(id);
+  };
+
+  if (accountData?.isolated) {
+    accountData.mapWorkbenchDbs({}, releaseAssignments);
+  }
+
+  db.transaction(() => {
+    db.prepare('DELETE FROM operator_roles WHERE operator_id = ?').run(id);
+    db.prepare('DELETE FROM operator_portal_access WHERE operator_id = ?').run(id);
+    db.prepare('DELETE FROM operator_service_group_scopes WHERE operator_id = ?').run(id);
+    releaseAssignments(db);
+    db.prepare('DELETE FROM operators WHERE id = ?').run(id);
+  })();
+
+  return {
+    id: existing.id,
+    username: existing.username,
+    display_name: existing.display_name,
+  };
 }
 
 function getAdminOperator(db, operatorId) {

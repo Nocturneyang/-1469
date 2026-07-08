@@ -81,6 +81,22 @@ async function main() {
     assert.strictEqual(savedScopes.scopes.length, 1);
     assert.strictEqual(savedScopes.scopes[0].service_account, 'nanya_wa');
 
+    const deniedAdminDelete = await requestRaw(`${baseUrl}/admin/users/1469`, {
+      method: 'DELETE',
+    });
+    assert.strictEqual(deniedAdminDelete.status, 400);
+
+    const deletedUser = await requestJson(`${baseUrl}/admin/users/${createdUser.user.id}`, {
+      method: 'DELETE',
+    });
+    assert.strictEqual(deletedUser.ok, true);
+    assert.strictEqual(deletedUser.deleted.id, createdUser.user.id);
+    assert.strictEqual(deletedUser.access.users.some((user) => user.id === createdUser.user.id), false);
+    assert.strictEqual(countRows(workbenchDb, 'operators', 'id', createdUser.user.id), 0);
+    assert.strictEqual(countRows(workbenchDb, 'operator_roles', 'operator_id', createdUser.user.id), 0);
+    assert.strictEqual(countRows(workbenchDb, 'operator_portal_access', 'operator_id', createdUser.user.id), 0);
+    assert.strictEqual(countRows(workbenchDb, 'operator_service_group_scopes', 'operator_id', createdUser.user.id), 0);
+
     const groups = await requestJson(`${baseUrl}/groups?scope=all`);
     assert.strictEqual(groups.ok, true);
     assert.strictEqual(groups.groups.length, 1);
@@ -792,6 +808,11 @@ function insertRawAccount(rawDbPath, row) {
   } finally {
     db.close();
   }
+}
+
+function countRows(db, tableName, columnName, value) {
+  const row = db.prepare(`SELECT COUNT(*) AS count FROM ${tableName} WHERE ${columnName} = ?`).get(value);
+  return row ? Number(row.count || 0) : 0;
 }
 
 function listen(app) {

@@ -94,16 +94,39 @@ button {
 .permission-layout {
   min-height: 0;
   display: grid;
-  grid-template-columns: 320px minmax(0, 1fr);
+  grid-template-columns: 310px minmax(0, 1fr);
   overflow: hidden;
 }
 
 .permission-users {
   min-height: 0;
-  padding: 16px;
+  padding: 14px;
   border-right: 1px solid var(--line);
   background: #fbfcfb;
   overflow: auto;
+}
+
+.permission-users-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: end;
+  margin-bottom: 10px;
+}
+
+.permission-users-head > div {
+  display: grid;
+  gap: 2px;
+}
+
+.permission-users-head strong {
+  font-size: 22px;
+  line-height: 1;
+}
+
+.permission-users-head span {
+  color: var(--muted);
+  font-size: 12px;
 }
 
 .permission-section-title {
@@ -115,9 +138,11 @@ button {
 
 .permission-user {
   width: 100%;
-  min-height: 58px;
+  min-height: 56px;
   display: grid;
-  gap: 4px;
+  grid-template-columns: 36px minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
   margin-bottom: 8px;
   padding: 10px 12px;
   border: 1px solid var(--line);
@@ -132,16 +157,59 @@ button {
   background: var(--accent-soft);
 }
 
-.permission-user strong,
-.permission-user span {
+.permission-user-avatar,
+.permission-detail-avatar {
+  display: grid;
+  place-items: center;
+  border-radius: 8px;
+  color: var(--accent-strong);
+  background: #dff4e8;
+  font-weight: 780;
+}
+
+.permission-user-avatar {
+  width: 36px;
+  height: 36px;
+  font-size: 14px;
+}
+
+.permission-detail-avatar {
+  width: 46px;
+  height: 46px;
+  font-size: 18px;
+}
+
+.permission-user-main {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.permission-user-main strong,
+.permission-user-main span {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.permission-user span {
+.permission-user-main span {
   color: var(--muted);
   font-size: 12px;
+}
+
+.permission-user-status {
+  min-width: 42px;
+  padding: 3px 7px;
+  border-radius: 999px;
+  color: var(--accent-strong);
+  background: var(--accent-soft);
+  font-size: 12px;
+  text-align: center;
+}
+
+.permission-user-status.disabled {
+  color: var(--muted);
+  background: var(--surface-muted);
 }
 
 .permission-create-form {
@@ -151,9 +219,9 @@ button {
 .permission-detail {
   min-width: 0;
   min-height: 0;
-  padding: 16px;
+  padding: 14px;
   display: grid;
-  gap: 14px;
+  gap: 12px;
   align-content: start;
   overflow: auto;
 }
@@ -161,7 +229,7 @@ button {
 .permission-block {
   border: 1px solid var(--line);
   border-radius: 8px;
-  padding: 16px;
+  padding: 14px;
   background: var(--surface);
 }
 
@@ -173,11 +241,65 @@ button {
   margin-bottom: 14px;
 }
 
+.permission-profile-title {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 46px minmax(0, 1fr);
+  gap: 12px;
+  align-items: center;
+}
+
+.permission-profile-title > div {
+  min-width: 0;
+}
+
+.permission-profile-title h2,
+.permission-profile-title span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.permission-profile-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  align-items: center;
+}
+
+.permission-meta-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: -4px 0 12px;
+}
+
+.permission-meta-strip span {
+  max-width: 320px;
+  overflow: hidden;
+  padding: 6px 9px;
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  color: var(--muted);
+  background: var(--surface-soft);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .permission-profile {
   display: grid;
-  grid-template-columns: minmax(160px, 1fr) 180px minmax(180px, 1fr) auto;
+  grid-template-columns: minmax(240px, 1fr) 180px auto;
   gap: 12px;
   align-items: end;
+}
+
+.permission-two-column {
+  display: grid;
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+  gap: 12px;
 }
 
 .role-checks,
@@ -189,20 +311,29 @@ button {
 
 .portal-access-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(150px, 1fr));
+  grid-template-columns: repeat(2, minmax(120px, 1fr)) minmax(160px, 1.2fr);
   gap: 10px;
 }
 
 .scope-row {
   display: grid;
-  grid-template-columns: 92px minmax(150px, 1fr) minmax(170px, 1.2fr) repeat(4, 48px) 56px;
+  grid-template-columns: 88px minmax(150px, 1fr) minmax(180px, 1.3fr) repeat(4, 52px) 70px;
   gap: 8px;
   align-items: center;
   padding: 10px 0;
   border-top: 1px solid var(--line-soft);
 }
 
-.scope-row:first-of-type {
+.scope-row-head {
+  padding: 0 0 8px;
+  color: var(--muted);
+  border-top: 0;
+  font-size: 12px;
+  font-weight: 680;
+}
+
+.scope-row:first-of-type,
+.scope-row-head + .scope-row {
   border-top: 0;
 }
 
@@ -2497,6 +2628,10 @@ button {
   .service-login-runtime-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+
+  .scope-row {
+    grid-template-columns: 78px minmax(132px, 1fr) minmax(150px, 1.2fr) repeat(4, 48px) 64px;
+  }
 }
 
 @media (max-width: 1160px) {
@@ -2537,6 +2672,27 @@ button {
   .inspector-pane {
     display: none;
   }
+
+  .permission-layout {
+    grid-template-columns: 280px minmax(0, 1fr);
+  }
+
+  .permission-two-column,
+  .permission-profile {
+    grid-template-columns: 1fr;
+  }
+
+  .portal-access-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .scope-row {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .scope-row-head {
+    display: none;
+  }
 }
 
 @media (max-width: 820px) {
@@ -2575,18 +2731,52 @@ button {
     overflow: visible;
   }
 
+  .permission-page {
+    height: auto;
+    min-height: 100vh;
+    overflow: visible;
+  }
+
   .account-header,
   .service-access-header,
-  .service-login-header {
+  .service-login-header,
+  .permission-header {
     align-items: flex-start;
     flex-direction: column;
   }
 
   .account-header-actions,
   .service-access-actions,
-  .service-login-actions {
+  .service-login-actions,
+  .permission-header-actions {
     width: 100%;
     flex-wrap: wrap;
+  }
+
+  .permission-layout {
+    grid-template-columns: 1fr;
+    overflow: visible;
+  }
+
+  .permission-users {
+    max-height: none;
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .permission-detail {
+    overflow: visible;
+  }
+
+  .permission-block-head,
+  .permission-profile-actions {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .portal-access-grid,
+  .scope-row {
+    grid-template-columns: 1fr;
   }
 
   .account-layout {

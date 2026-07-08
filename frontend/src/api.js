@@ -314,6 +314,11 @@ export async function updateAdminUser(userId, payload) {
   return data;
 }
 
+export async function deleteAdminUser(userId) {
+  const { data } = await api.delete(`/admin/users/${encodeURIComponent(userId)}`);
+  return data;
+}
+
 export async function saveAdminUserRoles(userId, roles) {
   const { data } = await api.put(`/admin/users/${encodeURIComponent(userId)}/roles`, { roles });
   return data;
