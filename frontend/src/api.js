@@ -251,6 +251,58 @@ export async function fetchMessages(group, params = {}) {
   };
 }
 
+export async function fetchGroupWorkspace(group) {
+  const { data } = await api.get(`/groups/${encodeURIComponent(group.group_id)}/workspace`, {
+    params: {
+      platform: group.platform,
+      account: group.account,
+    },
+  });
+  return {
+    profile: data.profile || null,
+    notes: data.notes || [],
+    timeline: data.timeline || [],
+    presence: data.presence || [],
+  };
+}
+
+export async function saveGroupWorkspace(group, payload = {}) {
+  const { data } = await api.patch(`/groups/${encodeURIComponent(group.group_id)}/workspace`, {
+    platform: group.platform,
+    account: group.account,
+    ...payload,
+  });
+  return data.profile || null;
+}
+
+export async function createGroupNote(group, body) {
+  const { data } = await api.post(`/groups/${encodeURIComponent(group.group_id)}/notes`, {
+    platform: group.platform,
+    account: group.account,
+    body,
+  });
+  return data.note || null;
+}
+
+export async function updateGroupPresence(group, mode = 'viewing', active = true) {
+  const { data } = await api.post(`/groups/${encodeURIComponent(group.group_id)}/presence`, {
+    platform: group.platform,
+    account: group.account,
+    mode,
+    active,
+  });
+  return data.presence || [];
+}
+
+export async function bulkGroupAction(action, items = [], payload = {}) {
+  const { data } = await api.post('/groups/bulk', {
+    action,
+    items,
+    ...payload,
+  });
+  return data;
+}
+
 export async function createReply(payload) {
   const { data } = await api.post('/reply', payload);
   return data;

@@ -6,9 +6,73 @@
           {{ platformShort(group.platform) }}
         </div>
         <div class="profile-copy">
-          <h2 :title="group.group_name">{{ group.group_name }}</h2>
+          <h2 :title="displayGroupName">{{ displayGroupName }}</h2>
           <p>{{ platformName(group.platform) }} · {{ group.group_id }}</p>
         </div>
+      </section>
+
+      <section class="inspector-section workflow-section">
+        <div class="section-title">会话工作流</div>
+        <div class="status-segments">
+          <button
+            v-for="option in statusOptions"
+            :key="option.value"
+            type="button"
+            :class="{ active: profileDraft.status === option.value }"
+            :disabled="!canEditWorkflow"
+            @click="saveWorkflow({ status: option.value })"
+          >
+            {{ option.label }}
+          </button>
+        </div>
+        <div class="workflow-fields">
+          <button
+            type="button"
+            class="star-toggle"
+            :class="{ active: profileDraft.starred }"
+            :disabled="!canEditWorkflow"
+            @click="saveWorkflow({ starred: !profileDraft.starred })"
+          >
+            {{ profileDraft.starred ? '已星标' : '星标' }}
+          </button>
+          <label>
+            重要度
+            <select v-model="profileDraft.priority" :disabled="!canEditWorkflow" @change="saveWorkflow({ priority: profileDraft.priority })">
+              <option value="low">低</option>
+              <option value="normal">普通</option>
+              <option value="high">高</option>
+              <option value="urgent">紧急</option>
+            </select>
+          </label>
+          <label>
+            跟进提醒
+            <input
+              v-model="profileDraft.follow_up_at"
+              type="datetime-local"
+              :disabled="!canEditWorkflow"
+              @change="saveWorkflow({ follow_up_at: profileDraft.follow_up_at })"
+            >
+          </label>
+        </div>
+      </section>
+
+      <section class="inspector-section customer-profile-section">
+        <div class="section-title">群备注字段</div>
+        <label>
+          内部展示名
+          <input v-model="profileDraft.internal_display_name" type="text" :disabled="!canManageManualGroups">
+        </label>
+        <label>
+          客户类型
+          <input v-model="profileDraft.customer_type" type="text" :disabled="!canManageManualGroups">
+        </label>
+        <label>
+          负责人备注
+          <textarea v-model="profileDraft.owner_note" rows="3" :disabled="!canManageManualGroups"></textarea>
+        </label>
+        <el-button size="small" type="primary" :disabled="!canManageManualGroups" @click="saveProfileFields">
+          保存群资料
+        </el-button>
       </section>
 
       <section class="inspector-section workbench-tags-section">
@@ -148,6 +212,43 @@
         </dl>
       </section>
 
+      <section class="inspector-section notes-section">
+        <div class="section-title">内部备注</div>
+        <div v-if="notes.length" class="note-list">
+          <article v-for="note in notes" :key="note.id" class="note-item">
+            <strong>{{ note.actor_name || note.created_by }}</strong>
+            <p>{{ note.body }}</p>
+            <time>{{ formatTime(note.created_at) }}</time>
+          </article>
+        </div>
+        <div v-else class="empty-mini">暂无备注</div>
+        <textarea v-model="noteDraft" rows="3" placeholder="添加内部备注"></textarea>
+        <el-button size="small" type="primary" :disabled="!noteDraft.trim()" @click="submitNote">
+          添加备注
+        </el-button>
+      </section>
+
+      <section class="inspector-section presence-section">
+        <div class="section-title">协作防撞</div>
+        <div v-if="presence.length" class="presence-list">
+          <span v-for="item in presence" :key="`${item.operator_id}-${item.mode}`">
+            {{ item.actor_name || item.operator_id }} · {{ presenceModeText(item.mode) }}
+          </span>
+        </div>
+        <div v-else class="empty-mini">暂无其他坐席查看</div>
+      </section>
+
+      <section class="inspector-section timeline-section">
+        <div class="section-title">操作时间线</div>
+        <div v-if="timeline.length" class="timeline-list">
+          <article v-for="event in timeline" :key="event.id">
+            <strong>{{ timelineText(event) }}</strong>
+            <span>{{ event.actor_name || event.actor_id }} · {{ formatTime(event.created_at) }}</span>
+          </article>
+        </div>
+        <div v-else class="empty-mini">暂无操作记录</div>
+      </section>
+
       <section class="inspector-note">
         <strong>账号用途设置</strong>
         <span>权限管理 -> 服务账号范围 -> 账号用途</span>
@@ -166,7 +267,7 @@
 </template>
 
 <script setup>
-import { computed, reactive, watch } from 'vue';
+import { computed, reactive, ref, watch } from 'vue';
 import { formatTime, platformClass, platformName } from '../utils/format';
 
 const props = defineProps({
@@ -186,12 +287,37 @@ const props = defineProps({
     type: Boolean,
     default: false,
   },
+  workspaceDetail: {
+    type: Object,
+    default: () => ({ profile: null, notes: [], timeline: [], presence: [] }),
+  },
+  loadingWorkspace: {
+    type: Boolean,
+    default: false,
+  },
 });
 
-const emit = defineEmits(['manual-groups-change', 'manual-group-create']);
+const emit = defineEmits(['manual-groups-change', 'manual-group-create', 'workspace-save', 'note-create']);
 const manualDraft = reactive({
   name: '',
 });
+const noteDraft = ref('');
+const profileDraft = reactive({
+  status: 'pending',
+  priority: 'normal',
+  starred: false,
+  follow_up_at: '',
+  internal_display_name: '',
+  customer_type: '',
+  owner_note: '',
+});
+
+const statusOptions = [
+  { value: 'pending', label: '待处理' },
+  { value: 'in_progress', label: '跟进中' },
+  { value: 'resolved', label: '已解决' },
+  { value: 'paused', label: '暂停' },
+];
 
 const isOnline = computed(() => {
   if (!props.group || !props.group.account_status) return false;
@@ -212,6 +338,35 @@ const canManageManualGroups = computed(() => (
   props.group &&
   props.group.permissions &&
   props.group.permissions.can_manage === true
+));
+
+const canEditWorkflow = computed(() => (
+  props.group &&
+  props.group.permissions &&
+  props.group.permissions.can_view !== false
+));
+
+const workspaceProfile = computed(() => (
+  props.workspaceDetail && props.workspaceDetail.profile ? props.workspaceDetail.profile : props.group || {}
+));
+
+const notes = computed(() => (
+  props.workspaceDetail && Array.isArray(props.workspaceDetail.notes) ? props.workspaceDetail.notes : []
+));
+
+const timeline = computed(() => (
+  props.workspaceDetail && Array.isArray(props.workspaceDetail.timeline) ? props.workspaceDetail.timeline : []
+));
+
+const presence = computed(() => (
+  props.workspaceDetail && Array.isArray(props.workspaceDetail.presence) ? props.workspaceDetail.presence : []
+));
+
+const displayGroupName = computed(() => (
+  workspaceProfile.value.internal_display_name ||
+  props.group?.display_group_name ||
+  props.group?.group_name ||
+  ''
 ));
 
 const accountManualGroups = computed(() => {
@@ -274,7 +429,15 @@ watch(
   () => props.group && props.group.id,
   () => {
     manualDraft.name = '';
+    noteDraft.value = '';
+    syncProfileDraft();
   },
+);
+
+watch(
+  () => props.workspaceDetail && props.workspaceDetail.profile,
+  () => syncProfileDraft(),
+  { immediate: true, deep: true },
 );
 
 function emitManualGroupsChange(values) {
@@ -288,6 +451,42 @@ function submitManualGroup() {
     group_level: 1,
   });
   manualDraft.name = '';
+}
+
+function saveWorkflow(patch) {
+  if (!canEditWorkflow.value) return;
+  const normalized = { ...patch };
+  if (Object.prototype.hasOwnProperty.call(normalized, 'follow_up_at')) {
+    normalized.follow_up_at = normalizeDateTimeLocal(normalized.follow_up_at);
+  }
+  emit('workspace-save', normalized);
+}
+
+function saveProfileFields() {
+  if (!canManageManualGroups.value) return;
+  emit('workspace-save', {
+    internal_display_name: profileDraft.internal_display_name,
+    customer_type: profileDraft.customer_type,
+    owner_note: profileDraft.owner_note,
+  });
+}
+
+function submitNote() {
+  const body = noteDraft.value.trim();
+  if (!body) return;
+  emit('note-create', body);
+  noteDraft.value = '';
+}
+
+function syncProfileDraft() {
+  const profile = workspaceProfile.value || {};
+  profileDraft.status = profile.status || profile.conversation_status || 'pending';
+  profileDraft.priority = profile.priority || 'normal';
+  profileDraft.starred = Boolean(profile.starred);
+  profileDraft.follow_up_at = toDateTimeLocal(profile.follow_up_at);
+  profileDraft.internal_display_name = profile.internal_display_name || '';
+  profileDraft.customer_type = profile.customer_type || '';
+  profileDraft.owner_note = profile.owner_note || '';
 }
 
 function isWorkbenchTag(label) {
@@ -327,5 +526,44 @@ function riskText(risk) {
 
 function statusClass(value) {
   return value ? 'status-ok' : 'status-warn';
+}
+
+function toDateTimeLocal(value) {
+  if (!value) return '';
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return '';
+  const pad = (number) => String(number).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+function normalizeDateTimeLocal(value) {
+  if (!value) return null;
+  const date = new Date(value);
+  return Number.isFinite(date.getTime()) ? date.toISOString() : null;
+}
+
+function presenceModeText(mode) {
+  if (mode === 'typing') return '正在输入';
+  if (mode === 'replying') return '正在回复';
+  return '正在查看';
+}
+
+function timelineText(event) {
+  const map = {
+    'conversation.profile.update': '更新会话资料',
+    'conversation.note.create': '添加内部备注',
+    'conversation.manual_groups.update': '更新工作台标签',
+    'conversation.read': '标记已读',
+    'conversation.assign': '认领/移交会话',
+    'conversation.release': '释放会话',
+    'conversation.bulk.mark_read': '批量标已读',
+    'conversation.bulk.assign': '批量认领/移交',
+    'conversation.bulk.release': '批量释放',
+    'conversation.bulk.add_tags': '批量打标签',
+    'reply.create': '创建外发回复',
+    'outbound.cancel': '取消外发',
+    'outbound.retry': '重试外发',
+  };
+  return map[event.action_type] || event.action_type || '操作';
 }
 </script>

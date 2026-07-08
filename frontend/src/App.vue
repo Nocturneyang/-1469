@@ -54,8 +54,11 @@
           :loading="loadingGroups"
           :selected-id="selectedGroup && selectedGroup.id"
           :scope-label="scopeLabel"
+          :selected-bulk-ids="selectedBulkIds"
           @select="selectGroup"
           @refresh="loadGroups"
+          @bulk-toggle="handleBulkToggle"
+          @bulk-action="handleBulkAction"
         />
 
         <div class="thread-shell">
@@ -66,6 +69,7 @@
             :loading-older="loadingOlder"
             :stick-to-bottom="stickToBottom"
             :current-operator-id="currentOperatorId"
+            :message-filters="messageFilters"
             @mark-read="handleMarkRead"
             @assign="handleAssign"
             @open-native="handleOpenNative"
@@ -74,17 +78,30 @@
             @load-older="handleLoadOlder"
             @read-progress="handleReadProgress"
             @stick-state-change="handleStickStateChange"
+            @quote="handleQuote"
+            @message-search-change="handleMessageSearchChange"
           />
-          <Composer :group="selectedGroup" :sending="sending" @send="handleSend" />
+          <Composer
+            :group="selectedGroup"
+            :sending="sending"
+            :quote-message="quoteMessage"
+            @send="handleSend"
+            @clear-quote="clearQuote"
+            @typing-state="handleTypingState"
+          />
         </div>
 
         <ConversationInspector
           :group="selectedGroup"
           :messages="messages"
           :manual-groups="manualGroups"
+          :workspace-detail="workspaceDetail"
+          :loading-workspace="loadingWorkspace"
           :saving-manual-groups="savingManualGroups"
           @manual-groups-change="handleManualGroupsChange"
           @manual-group-create="handleManualGroupCreate"
+          @workspace-save="handleWorkspaceSave"
+          @note-create="handleNoteCreate"
         />
       </main>
     </div>
@@ -109,11 +126,14 @@ import Composer from './components/Composer.vue';
 import ConversationInspector from './components/ConversationInspector.vue';
 import {
   assignGroup,
+  bulkGroupAction,
   cancelOutbound,
   createClientMsgId,
+  createGroupNote,
   createManualGroup,
   createReply,
   fetchAccounts,
+  fetchGroupWorkspace,
   fetchGroups,
   fetchHealth,
   fetchLabels,
@@ -126,7 +146,9 @@ import {
   requestChannelSync,
   releaseGroup,
   retryOutbound,
+  saveGroupWorkspace,
   saveGroupManualGroups,
+  updateGroupPresence,
 } from './api';
 
 const filters = ref({
@@ -147,6 +169,17 @@ const portalAccess = ref({ can_monitor: false, can_workbench: true, can_admin: f
 const currentOperator = ref(null);
 const currentUser = ref(null);
 const selectedGroup = ref(null);
+const workspaceDetail = ref({ profile: null, notes: [], timeline: [], presence: [] });
+const loadingWorkspace = ref(false);
+const quoteMessage = ref(null);
+const messageFilters = ref({
+  message_search: '',
+  sender: '',
+  date_from: '',
+  date_to: '',
+  has_attachment: false,
+});
+const selectedBulkIds = ref([]);
 const loadingGroups = ref(false);
 const loadingOlder = ref(false);
 const stickToBottom = ref(true);
@@ -198,6 +231,9 @@ let readProgressTimer = null;
 let pendingReadProgress = null;
 let readProgressInFlight = false;
 let labelRequestSeq = 0;
+let workspaceRequestSeq = 0;
+let presenceHeartbeatTimer = null;
+let typingPresenceTimer = null;
 const readProgressByGroup = new Map();
 
 function resolveCurrentView() {
@@ -225,6 +261,7 @@ function goWorkbench() {
 
 onMounted(async () => {
   window.addEventListener('popstate', syncRouteFromLocation);
+  window.addEventListener('keydown', handleGlobalShortcut);
 
   const authUser = await hydrateWorkbenchAuth();
   if (!authUser && isAuthRedirecting()) return;
@@ -234,8 +271,12 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   window.removeEventListener('popstate', syncRouteFromLocation);
+  window.removeEventListener('keydown', handleGlobalShortcut);
   clearTimeout(searchTimer);
   clearTimeout(readProgressTimer);
+  clearTimeout(typingPresenceTimer);
+  stopPresenceHeartbeat();
+  clearPresence();
   stopAutoRefresh();
   stopPendingRefresh();
 });
@@ -283,7 +324,10 @@ watch(
   () => ({ ...filters.value, platforms: [...filters.value.platforms] }),
   () => {
     clearTimeout(searchTimer);
+    clearPresence();
     selectedGroup.value = null;
+    selectedBulkIds.value = [];
+    quoteMessage.value = null;
     pendingReadProgress = null;
     clearTimeout(readProgressTimer);
     searchTimer = setTimeout(() => loadGroups({ clearSelectionOnMissing: true }), 180);
@@ -295,10 +339,16 @@ watch(
   () => selectedGroup.value && selectedGroup.value.id,
   async () => {
     stickToBottom.value = true;
-    if (selectedGroup.value) await loadMessages();
+    quoteMessage.value = null;
+    if (selectedGroup.value) {
+      await Promise.all([loadMessages(), loadWorkspace()]);
+      startPresenceHeartbeat();
+    }
     else {
       messages.value = [];
       messagePaging.value = { has_more: false, before_id: null };
+      workspaceDetail.value = { profile: null, notes: [], timeline: [], presence: [] };
+      stopPresenceHeartbeat();
     }
   },
 );
@@ -324,6 +374,7 @@ async function loadGroups({ silent = false, clearSelectionOnMissing = false } = 
       noServiceAccount.value = true;
     }
     groups.value = nextGroups;
+    selectedBulkIds.value = selectedBulkIds.value.filter((id) => nextGroups.some((group) => group.id === id));
     if (!selectedGroup.value) return;
     const currentGroup = nextGroups.find((group) => group.id === selectedGroup.value.id);
     if (currentGroup) {
@@ -385,6 +436,9 @@ function syncPlatformFilterWithScope({ preferMessageAccounts = false } = {}) {
 }
 
 async function selectGroup(group) {
+  if (selectedGroup.value && (!group || group.id !== selectedGroup.value.id)) {
+    clearPresence(selectedGroup.value);
+  }
   selectedGroup.value = group;
 }
 
@@ -425,13 +479,44 @@ function readStoredRailCollapsed() {
 
 async function loadMessages(params = {}) {
   if (!selectedGroup.value) return;
-  const page = await fetchMessages(selectedGroup.value, params);
+  const page = await fetchMessages(selectedGroup.value, {
+    ...activeMessageFilterParams(),
+    ...params,
+  });
   if (params.before_id) {
     messages.value = mergeMessages(page.messages, messages.value);
   } else {
     messages.value = page.messages;
   }
   messagePaging.value = page.paging;
+}
+
+async function loadWorkspace({ silent = false } = {}) {
+  if (!selectedGroup.value) return;
+  const requestSeq = ++workspaceRequestSeq;
+  if (!silent) loadingWorkspace.value = true;
+  try {
+    const detail = await fetchGroupWorkspace(selectedGroup.value);
+    if (requestSeq !== workspaceRequestSeq) return;
+    workspaceDetail.value = detail;
+    patchSelectedGroup(profileToGroupPatch(detail.profile, detail));
+  } catch (err) {
+    if (requestSeq === workspaceRequestSeq) {
+      workspaceDetail.value = { profile: null, notes: [], timeline: [], presence: [] };
+    }
+  } finally {
+    if (requestSeq === workspaceRequestSeq && !silent) loadingWorkspace.value = false;
+  }
+}
+
+function activeMessageFilterParams() {
+  const params = {};
+  if (messageFilters.value.message_search) params.message_search = messageFilters.value.message_search;
+  if (messageFilters.value.sender) params.sender = messageFilters.value.sender;
+  if (messageFilters.value.date_from) params.date_from = messageFilters.value.date_from;
+  if (messageFilters.value.date_to) params.date_to = messageFilters.value.date_to;
+  if (messageFilters.value.has_attachment) params.has_attachment = 1;
+  return params;
 }
 
 function mergeMessages(...sets) {
@@ -460,9 +545,12 @@ async function handleSend(message) {
       group_id: selectedGroup.value.group_id,
       text,
       attachments,
+      quote_msg_id: payload.quote_msg_id || (quoteMessage.value && (quoteMessage.value.message_id || quoteMessage.value.raw_id || quoteMessage.value.outbound_id)),
     });
     stickToBottom.value = true;
+    quoteMessage.value = null;
     await loadMessages();
+    await loadWorkspace({ silent: true });
     await loadGroups();
     if (LIVE_OUTBOUND_STATUSES.has(reply.status)) startPendingRefresh();
   } catch (err) {
@@ -509,8 +597,9 @@ async function handleManualGroupCreate(payload) {
     await loadManualGroups();
     if (group && group.native_group_id) {
       const currentIds = selectedManualGroupIds(selectedGroup.value);
-      await persistManualGroups([...new Set([...currentIds, group.native_group_id])]);
+    await persistManualGroups([...new Set([...currentIds, group.native_group_id])]);
     }
+    await loadWorkspace({ silent: true });
     ElMessage.success('工作台标签已创建');
   } catch (err) {
     ElMessage.error('工作台标签创建失败');
@@ -524,6 +613,7 @@ async function handleManualGroupsChange(manualGroupIds) {
   savingManualGroups.value = true;
   try {
     await persistManualGroups(manualGroupIds);
+    await loadWorkspace({ silent: true });
     ElMessage.success('会话标签已更新');
   } catch (err) {
     ElMessage.error('会话标签保存失败');
@@ -541,6 +631,171 @@ async function persistManualGroups(manualGroupIds) {
   await loadGroups({ silent: true, clearSelectionOnMissing: true });
 }
 
+async function handleWorkspaceSave(payload) {
+  if (!selectedGroup.value) return;
+  try {
+    const profile = await saveGroupWorkspace(selectedGroup.value, payload);
+    workspaceDetail.value = {
+      ...workspaceDetail.value,
+      profile,
+    };
+    patchSelectedGroup(profileToGroupPatch(profile, workspaceDetail.value));
+    await loadWorkspace({ silent: true });
+    await loadGroups({ silent: true, clearSelectionOnMissing: true });
+    ElMessage.success('会话资料已保存');
+  } catch (err) {
+    ElMessage.error('会话资料保存失败');
+  }
+}
+
+async function handleNoteCreate(body) {
+  if (!selectedGroup.value || !String(body || '').trim()) return;
+  try {
+    const note = await createGroupNote(selectedGroup.value, body);
+    workspaceDetail.value = {
+      ...workspaceDetail.value,
+      notes: note ? [note, ...(workspaceDetail.value.notes || [])] : workspaceDetail.value.notes,
+    };
+    await loadWorkspace({ silent: true });
+    await loadGroups({ silent: true });
+    ElMessage.success('内部备注已添加');
+  } catch (err) {
+    ElMessage.error('内部备注添加失败');
+  }
+}
+
+function profileToGroupPatch(profile, detail = {}) {
+  if (!profile) return {};
+  return {
+    conversation_status: profile.status,
+    status: profile.status,
+    priority: profile.priority,
+    starred: Boolean(profile.starred),
+    follow_up_at: profile.follow_up_at,
+    internal_display_name: profile.internal_display_name,
+    customer_type: profile.customer_type,
+    owner_note: profile.owner_note,
+    notes_count: (detail.notes || workspaceDetail.value.notes || []).length,
+    presence: detail.presence || workspaceDetail.value.presence || [],
+  };
+}
+
+function handleQuote(message) {
+  if (!message) return;
+  quoteMessage.value = message;
+}
+
+function clearQuote() {
+  quoteMessage.value = null;
+}
+
+async function handleMessageSearchChange(filters) {
+  messageFilters.value = {
+    message_search: String(filters.message_search || '').trim(),
+    sender: String(filters.sender || '').trim(),
+    date_from: filters.date_from || '',
+    date_to: filters.date_to || '',
+    has_attachment: Boolean(filters.has_attachment),
+  };
+  stickToBottom.value = false;
+  await loadMessages();
+}
+
+async function handleTypingState(active) {
+  if (!selectedGroup.value) return;
+  clearTimeout(typingPresenceTimer);
+  if (!active) {
+    updateGroupPresence(selectedGroup.value, 'typing', false).catch(() => {});
+    return;
+  }
+  updateGroupPresence(selectedGroup.value, 'typing', true).catch(() => {});
+  typingPresenceTimer = setTimeout(() => {
+    if (selectedGroup.value) updateGroupPresence(selectedGroup.value, 'typing', false).catch(() => {});
+  }, 4500);
+}
+
+function startPresenceHeartbeat() {
+  stopPresenceHeartbeat();
+  if (!selectedGroup.value) return;
+  sendPresenceHeartbeat();
+  presenceHeartbeatTimer = setInterval(sendPresenceHeartbeat, 45000);
+}
+
+function stopPresenceHeartbeat() {
+  if (presenceHeartbeatTimer) clearInterval(presenceHeartbeatTimer);
+  presenceHeartbeatTimer = null;
+}
+
+function sendPresenceHeartbeat() {
+  if (!selectedGroup.value) return;
+  updateGroupPresence(selectedGroup.value, 'viewing', true)
+    .then((presence) => {
+      workspaceDetail.value = { ...workspaceDetail.value, presence };
+      patchSelectedGroup({ presence });
+    })
+    .catch(() => {});
+}
+
+function clearPresence(group = selectedGroup.value) {
+  stopPresenceHeartbeat();
+  if (!group) return;
+  updateGroupPresence(group, 'viewing', false).catch(() => {});
+  updateGroupPresence(group, 'typing', false).catch(() => {});
+}
+
+function handleBulkToggle(group) {
+  if (!group) return;
+  const ids = new Set(selectedBulkIds.value);
+  if (ids.has(group.id)) ids.delete(group.id);
+  else ids.add(group.id);
+  selectedBulkIds.value = [...ids];
+}
+
+async function handleBulkAction(action) {
+  const selectedGroups = groups.value.filter((group) => selectedBulkIds.value.includes(group.id));
+  if (!selectedGroups.length) return;
+  const payload = {};
+  let actionName = action;
+  if (action === 'assign') payload.assigned_to = currentOperatorId.value;
+  if (action === 'status_in_progress') {
+    actionName = 'status';
+    payload.status = 'in_progress';
+  }
+  if (action === 'status_resolved') {
+    actionName = 'status';
+    payload.status = 'resolved';
+  }
+  if (action === 'star') payload.starred = true;
+  if (action === 'add_tags') {
+    const manualIds = selectedManualGroupIds(selectedGroup.value);
+    if (!manualIds.length) {
+      ElMessage.warning('请先在当前会话右侧选择至少一个工作台标签');
+      return;
+    }
+    payload.manual_group_ids = manualIds;
+  }
+  try {
+    const result = await bulkGroupAction(actionName, selectedGroups.map(bulkItemFromGroup), payload);
+    selectedBulkIds.value = [];
+    await loadLabels();
+    await loadManualGroups();
+    await loadGroups({ silent: true, clearSelectionOnMissing: true });
+    if (selectedGroup.value) await loadWorkspace({ silent: true });
+    ElMessage.success(`批量处理完成：${result.changed}/${result.requested}`);
+  } catch (err) {
+    ElMessage.error('批量处理失败');
+  }
+}
+
+function bulkItemFromGroup(group) {
+  return {
+    platform: group.platform,
+    account: group.account,
+    group_id: group.group_id,
+    last_message_id: group.last_message_id,
+  };
+}
+
 async function handleMarkRead() {
   if (!selectedGroup.value) return;
   const lastRaw = [...messages.value].reverse().find((message) => message.raw_id);
@@ -553,6 +808,7 @@ async function handleMarkRead() {
   });
   readProgressByGroup.set(selectedGroup.value.id, Number(lastReadMessageId) || 0);
   patchSelectedGroup({ unread_count: Number(result.unread_count || 0) });
+  await loadWorkspace({ silent: true });
 }
 
 async function handleAssign() {
@@ -560,10 +816,12 @@ async function handleAssign() {
   if (selectedGroup.value.assignment && selectedGroup.value.assignment.assigned_to === currentOperatorId.value) {
     await releaseGroup(selectedGroup.value);
     patchSelectedGroup({ assignment: null });
+    await loadWorkspace({ silent: true });
     ElMessage.success('已释放当前会话');
   } else {
     const result = await assignGroup(selectedGroup.value, currentOperatorId.value);
     patchSelectedGroup({ assignment: result.assignment || null });
+    await loadWorkspace({ silent: true });
     ElMessage.success('已认领当前会话');
   }
 }
@@ -593,6 +851,7 @@ async function handleRetry(message) {
   await retryOutbound(message.outbound_id);
   stickToBottom.value = true;
   await loadMessages();
+  await loadWorkspace({ silent: true });
   startPendingRefresh();
 }
 
@@ -602,6 +861,7 @@ async function handleCancel(message) {
   ElMessage.success('已取消外发任务');
   stickToBottom.value = true;
   await loadMessages();
+  await loadWorkspace({ silent: true });
 }
 
 async function handleLoadOlder() {
@@ -690,6 +950,46 @@ function groupMatchesActiveScope(group) {
   return true;
 }
 
+function handleGlobalShortcut(event) {
+  if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey) return;
+  const target = event.target;
+  const tagName = String(target && target.tagName || '').toLowerCase();
+  const isEditable = tagName === 'input' || tagName === 'textarea' || tagName === 'select' || target?.isContentEditable;
+  if (isEditable) return;
+  if (event.key === 'Escape') {
+    if (quoteMessage.value) {
+      quoteMessage.value = null;
+      event.preventDefault();
+    }
+    return;
+  }
+  if (!groups.value.length) return;
+  if (event.key === 'j' || event.key === 'J') {
+    moveSelection(1);
+    event.preventDefault();
+  } else if (event.key === 'k' || event.key === 'K') {
+    moveSelection(-1);
+    event.preventDefault();
+  } else if (event.key === 'm' || event.key === 'M') {
+    handleMarkRead().catch(() => {});
+    event.preventDefault();
+  } else if (event.key === 'a' || event.key === 'A') {
+    handleAssign().catch(() => {});
+    event.preventDefault();
+  }
+}
+
+function moveSelection(delta) {
+  if (!groups.value.length) return;
+  const currentIndex = selectedGroup.value
+    ? groups.value.findIndex((group) => group.id === selectedGroup.value.id)
+    : -1;
+  const nextIndex = currentIndex < 0
+    ? 0
+    : Math.max(0, Math.min(groups.value.length - 1, currentIndex + delta));
+  selectGroup(groups.value[nextIndex]);
+}
+
 function startAutoRefresh() {
   stopAutoRefresh();
   autoRefreshTimer = setInterval(() => {
@@ -723,7 +1023,10 @@ async function refreshActiveConversation({ keepStickToBottom = false } = {}) {
   try {
     if (keepStickToBottom && previousStickToBottom) stickToBottom.value = true;
     await loadGroups({ silent: true });
-    if (selectedGroup.value) await loadMessages();
+    if (selectedGroup.value) {
+      await loadMessages();
+      await loadWorkspace({ silent: true });
+    }
     updatePendingRefreshState();
   } finally {
     if (!keepStickToBottom) stickToBottom.value = previousStickToBottom;

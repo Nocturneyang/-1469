@@ -156,6 +156,73 @@ CREATE TABLE IF NOT EXISTS send_circuit_breaker (
   UNIQUE(platform, account)
 );
 
+CREATE TABLE IF NOT EXISTS conversation_profiles (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  platform TEXT NOT NULL,
+  account TEXT NOT NULL,
+  group_id TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending',
+  priority TEXT NOT NULL DEFAULT 'normal',
+  starred INTEGER NOT NULL DEFAULT 0,
+  follow_up_at TEXT,
+  internal_display_name TEXT,
+  customer_type TEXT,
+  owner_note TEXT,
+  updated_by TEXT,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(platform, account, group_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_conversation_profiles_status
+  ON conversation_profiles(platform, account, status, follow_up_at);
+
+CREATE INDEX IF NOT EXISTS idx_conversation_profiles_starred
+  ON conversation_profiles(platform, account, starred, priority);
+
+CREATE TABLE IF NOT EXISTS conversation_notes (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  platform TEXT NOT NULL,
+  account TEXT NOT NULL,
+  group_id TEXT NOT NULL,
+  body TEXT NOT NULL,
+  created_by TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_conversation_notes_group
+  ON conversation_notes(platform, account, group_id, created_at);
+
+CREATE TABLE IF NOT EXISTS conversation_presence (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  operator_id TEXT NOT NULL,
+  platform TEXT NOT NULL,
+  account TEXT NOT NULL,
+  group_id TEXT NOT NULL,
+  mode TEXT NOT NULL DEFAULT 'viewing',
+  expires_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(operator_id, platform, account, group_id, mode)
+);
+
+CREATE INDEX IF NOT EXISTS idx_conversation_presence_group
+  ON conversation_presence(platform, account, group_id, expires_at);
+
+CREATE TABLE IF NOT EXISTS conversation_timeline (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  platform TEXT NOT NULL,
+  account TEXT NOT NULL,
+  group_id TEXT NOT NULL,
+  action_type TEXT NOT NULL,
+  actor_id TEXT NOT NULL,
+  payload_json TEXT,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_conversation_timeline_group
+  ON conversation_timeline(platform, account, group_id, created_at);
+
 CREATE TABLE IF NOT EXISTS channel_labels (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   platform TEXT NOT NULL,

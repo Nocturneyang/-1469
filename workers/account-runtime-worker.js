@@ -394,22 +394,125 @@ async function sendMessageViaChannel(task) {
   if (!channelReady || !channelClient) {
     throw Object.assign(new Error('channel runtime is not ready'), { code: 'CHANNEL_NOT_READY' });
   }
+  const attachments = parseTaskAttachments(task);
   if (PLATFORM === 'wa') {
-    const sent = await channelClient.sendMessage(task.chat_id || task.group_id, task.text || '');
-    return {
-      remote_msg_id: sent?.id?._serialized || sent?.id?.id || '',
-    };
+    return sendWhatsAppTask(task, attachments);
   }
   if (channelKind === 'tg-bot') {
-    const sent = await channelClient.sendMessage(task.chat_id || task.group_id, task.text || '');
-    return {
-      remote_msg_id: String(sent?.message_id || sent?.id || ''),
-    };
+    return sendTelegramBotTask(task, attachments);
   }
-  const sent = await channelClient.sendMessage(task.chat_id || task.group_id, { message: task.text || '' });
+  return sendTelegramUserTask(task, attachments);
+}
+
+async function sendWhatsAppTask(task, attachments) {
+  const chatId = task.chat_id || task.group_id;
+  if (!attachments.length) {
+    const sent = await channelClient.sendMessage(chatId, task.text || '');
+    return { remote_msg_id: whatsappMessageId(sent) };
+  }
+  let lastMessageId = '';
+  const { MessageMedia } = require('whatsapp-web.js');
+  for (let index = 0; index < attachments.length; index += 1) {
+    const attachment = attachments[index];
+    const media = new MessageMedia(attachment.type, attachment.base64, attachment.name);
+    const options = index === 0 && task.text ? { caption: task.text } : undefined;
+    const sent = await channelClient.sendMessage(chatId, media, options);
+    lastMessageId = whatsappMessageId(sent) || lastMessageId;
+  }
+  return { remote_msg_id: lastMessageId };
+}
+
+async function sendTelegramBotTask(task, attachments) {
+  const chatId = task.chat_id || task.group_id;
+  if (!attachments.length) {
+    const sent = await channelClient.sendMessage(chatId, task.text || '');
+    return { remote_msg_id: telegramMessageId(sent) };
+  }
+  let lastMessageId = '';
+  for (let index = 0; index < attachments.length; index += 1) {
+    const attachment = attachments[index];
+    const caption = index === 0 && task.text ? task.text : undefined;
+    const options = caption ? { caption } : {};
+    const fileOptions = { filename: attachment.name, contentType: attachment.type };
+    let sent;
+    if (attachment.kind === 'sticker') {
+      sent = await channelClient.sendSticker(chatId, attachment.buffer, {}, fileOptions);
+    } else if (attachment.type.startsWith('image/') && attachment.kind !== 'file') {
+      sent = await channelClient.sendPhoto(chatId, attachment.buffer, options, fileOptions);
+    } else {
+      sent = await channelClient.sendDocument(chatId, attachment.buffer, options, fileOptions);
+    }
+    lastMessageId = telegramMessageId(sent) || lastMessageId;
+  }
+  return { remote_msg_id: lastMessageId };
+}
+
+async function sendTelegramUserTask(task, attachments) {
+  const chatId = task.chat_id || task.group_id;
+  if (!attachments.length) {
+    const sent = await channelClient.sendMessage(chatId, { message: task.text || '' });
+    return { remote_msg_id: telegramMessageId(sent) };
+  }
+  if (typeof channelClient.sendFile !== 'function') {
+    throw Object.assign(new Error('Telegram user attachment sending is not supported by this runtime'), { code: 'ATTACHMENT_UNSUPPORTED' });
+  }
+  let lastMessageId = '';
+  for (let index = 0; index < attachments.length; index += 1) {
+    const attachment = attachments[index];
+    const sent = await channelClient.sendFile(chatId, {
+      file: attachment.buffer,
+      caption: index === 0 ? task.text || '' : '',
+      fileName: attachment.name,
+      forceDocument: attachment.kind === 'file',
+    });
+    lastMessageId = telegramMessageId(sent) || lastMessageId;
+  }
+  return { remote_msg_id: lastMessageId };
+}
+
+function parseTaskAttachments(task) {
+  if (!task || !task.attachment_json) return [];
+  let parsed;
+  try {
+    parsed = JSON.parse(task.attachment_json);
+  } catch (err) {
+    throw Object.assign(new Error('attachment_json is invalid'), { code: 'ATTACHMENT_INVALID' });
+  }
+  const list = Array.isArray(parsed) ? parsed : [parsed];
+  return list.filter(Boolean).map(decodeAttachment);
+}
+
+function decodeAttachment(attachment) {
+  const dataUrl = String(attachment.data_url || attachment.dataUrl || '').trim();
+  const match = dataUrl.match(/^data:([^;,]+)?;base64,(.+)$/s);
+  if (!match) {
+    throw Object.assign(new Error('attachment data_url is missing or invalid'), { code: 'ATTACHMENT_DATA_INVALID' });
+  }
+  const type = String(attachment.type || match[1] || 'application/octet-stream').trim() || 'application/octet-stream';
+  const base64 = String(match[2] || '').replace(/\s/g, '');
+  if (!base64) {
+    throw Object.assign(new Error('attachment data is empty'), { code: 'ATTACHMENT_DATA_EMPTY' });
+  }
+  const buffer = Buffer.from(base64, 'base64');
+  if (!buffer.length) {
+    throw Object.assign(new Error('attachment decoded to empty file'), { code: 'ATTACHMENT_DATA_EMPTY' });
+  }
   return {
-    remote_msg_id: String(sent?.id || sent?.message_id || ''),
+    id: attachment.id,
+    name: String(attachment.name || 'attachment').replace(/[\\/\r\n]/g, '_').slice(0, 180) || 'attachment',
+    type,
+    kind: String(attachment.kind || (type.startsWith('image/') ? 'image' : 'file')).trim().toLowerCase(),
+    base64,
+    buffer,
   };
+}
+
+function whatsappMessageId(sent) {
+  return sent?.id?._serialized || sent?.id?.id || '';
+}
+
+function telegramMessageId(sent) {
+  return String(sent?.message_id || sent?.id || '');
 }
 
 function processSyncRequests() {

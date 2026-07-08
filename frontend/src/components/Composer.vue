@@ -55,6 +55,15 @@
           {{ emoji }}
         </button>
       </div>
+      <div v-if="quoteMessage" class="quote-preview">
+        <div>
+          <strong>引用</strong>
+          <span>{{ quoteSummary }}</span>
+        </div>
+        <button type="button" title="取消引用" @click="$emit('clear-quote')">
+          <el-icon><Close /></el-icon>
+        </button>
+      </div>
       <div v-if="attachments.length" class="attachment-tray">
         <div
           v-for="attachment in attachments"
@@ -89,6 +98,7 @@
         :placeholder="composerPlaceholder"
         :disabled="disabled"
         @keydown.enter="handleEnter"
+        @keydown.esc.prevent="$emit('clear-quote')"
         @paste="handlePaste"
       ></textarea>
       <div class="composer-foot">
@@ -108,7 +118,7 @@
 </template>
 
 <script setup>
-import { computed, nextTick, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
 import { ElMessage } from 'element-plus';
 import {
   ChatDotRound,
@@ -142,15 +152,20 @@ const props = defineProps({
     type: Boolean,
     default: false,
   },
+  quoteMessage: {
+    type: Object,
+    default: null,
+  },
 });
 
-const emit = defineEmits(['send']);
+const emit = defineEmits(['send', 'clear-quote', 'typing-state']);
 const draft = ref('');
 const attachments = ref([]);
 const emojiOpen = ref(false);
 const fileInputRef = ref(null);
 const stickerInputRef = ref(null);
 const textareaRef = ref(null);
+let typingTimer = null;
 const sendAllowed = computed(() => (
   props.group &&
   props.group.send_enabled !== false &&
@@ -176,14 +191,35 @@ const composerPlaceholder = computed(() => {
   return '输入消息，Enter 发送，Shift + Enter 换行；可直接粘贴图片';
 });
 
+const quoteSummary = computed(() => {
+  if (!props.quoteMessage) return '';
+  const author = props.quoteMessage.direction === 'outbound'
+    ? accountDisplayName.value
+    : props.quoteMessage.sender_name || '客户';
+  const text = props.quoteMessage.display_text || props.quoteMessage.text || (props.quoteMessage.has_media ? '[媒体消息]' : '');
+  return `${author}: ${text}`.slice(0, 120);
+});
+
 watch(
   () => props.group && props.group.id,
   () => {
     draft.value = '';
     attachments.value = [];
     emojiOpen.value = false;
+    emit('clear-quote');
+    emitTyping(false);
   },
 );
+
+watch(draft, (value) => {
+  if (!props.group || disabled.value) return;
+  emitTyping(Boolean(String(value || '').trim()));
+});
+
+onBeforeUnmount(() => {
+  clearTimeout(typingTimer);
+  emit('typing-state', false);
+});
 
 function handleEnter(event) {
   if (event.shiftKey) return;
@@ -313,9 +349,24 @@ function submit() {
   emit('send', {
     text,
     attachments: attachments.value.filter(Boolean).map((attachment) => ({ ...attachment })),
+    quote_msg_id: props.quoteMessage && (
+      props.quoteMessage.message_id ||
+      props.quoteMessage.raw_id ||
+      props.quoteMessage.outbound_id ||
+      props.quoteMessage.id
+    ),
   });
   draft.value = '';
   attachments.value = [];
   emojiOpen.value = false;
+  emitTyping(false);
+}
+
+function emitTyping(active) {
+  clearTimeout(typingTimer);
+  emit('typing-state', active);
+  if (active) {
+    typingTimer = setTimeout(() => emit('typing-state', false), 2200);
+  }
 }
 </script>

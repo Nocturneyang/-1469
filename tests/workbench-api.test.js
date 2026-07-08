@@ -258,6 +258,97 @@ async function main() {
     assert.strictEqual(saveManualGroups.labels[0].name, 'VIP 客户');
     assert.strictEqual(saveManualGroups.labels[0].parent_name, '售后支持');
 
+    const savedWorkspace = await requestJson(`${baseUrl}/groups/group-1/workspace`, {
+      method: 'PATCH',
+      body: {
+        platform: 'wa',
+        account: 'nanya_wa',
+        status: 'in_progress',
+        priority: 'high',
+        starred: true,
+        follow_up_at: '2026-07-09T10:30:00.000Z',
+        internal_display_name: '重点 VIP 群',
+        customer_type: 'VIP',
+        owner_note: '交由白班继续跟进',
+      },
+    });
+    assert.strictEqual(savedWorkspace.ok, true);
+    assert.strictEqual(savedWorkspace.profile.status, 'in_progress');
+    assert.strictEqual(savedWorkspace.profile.priority, 'high');
+    assert.strictEqual(savedWorkspace.profile.starred, true);
+    assert.strictEqual(savedWorkspace.profile.internal_display_name, '重点 VIP 群');
+
+    const note = await requestJson(`${baseUrl}/groups/group-1/notes`, {
+      method: 'POST',
+      body: {
+        platform: 'wa',
+        account: 'nanya_wa',
+        body: '客户催发货，已备注仓库。',
+      },
+    });
+    assert.strictEqual(note.ok, true);
+    assert.strictEqual(note.note.body, '客户催发货，已备注仓库。');
+    assert.strictEqual(note.note.actor_name, '1469');
+
+    const presence = await requestJson(`${baseUrl}/groups/group-1/presence`, {
+      method: 'POST',
+      body: {
+        platform: 'wa',
+        account: 'nanya_wa',
+        mode: 'viewing',
+        active: true,
+      },
+    });
+    assert.strictEqual(presence.ok, true);
+    assert.strictEqual(presence.presence.some((item) => item.operator_id === '1469' && item.mode === 'viewing'), true);
+
+    const workspace = await requestJson(`${baseUrl}/groups/group-1/workspace?platform=wa&account=nanya_wa`);
+    assert.strictEqual(workspace.profile.customer_type, 'VIP');
+    assert.strictEqual(workspace.notes.length, 1);
+    assert.strictEqual(workspace.timeline.some((event) => event.action_type === 'conversation.note.create'), true);
+
+    const bulkStatus = await requestJson(`${baseUrl}/groups/bulk`, {
+      method: 'POST',
+      body: {
+        action: 'status',
+        status: 'resolved',
+        items: [{
+          platform: 'wa',
+          account: 'nanya_wa',
+          group_id: 'group-1',
+          last_message_id: 2,
+        }],
+      },
+    });
+    assert.strictEqual(bulkStatus.changed, 1);
+    const bulkStar = await requestJson(`${baseUrl}/groups/bulk`, {
+      method: 'POST',
+      body: {
+        action: 'star',
+        starred: true,
+        items: [{
+          platform: 'wa',
+          account: 'nanya_wa',
+          group_id: 'group-1',
+          last_message_id: 2,
+        }],
+      },
+    });
+    assert.strictEqual(bulkStar.changed, 1);
+    const bulkTag = await requestJson(`${baseUrl}/groups/bulk`, {
+      method: 'POST',
+      body: {
+        action: 'add_tags',
+        manual_group_ids: [manualLevelOne.group.native_group_id],
+        items: [{
+          platform: 'wa',
+          account: 'nanya_wa',
+          group_id: 'group-1',
+        }],
+      },
+    });
+    assert.strictEqual(bulkTag.changed, 1);
+
     const manualChildFilter = await requestJson(`${baseUrl}/groups?platforms=wa&scope=all&label_id=${encodeURIComponent(manualLevelTwo.group.native_group_id)}`);
     assert.strictEqual(manualChildFilter.groups.some((group) => group.group_id === 'group-1'), true);
     const manualParentFilter = await requestJson(`${baseUrl}/groups?platforms=wa&scope=all&label_id=${encodeURIComponent(manualLevelOne.group.native_group_id)}`);
@@ -281,6 +372,7 @@ async function main() {
       account: 'nanya_wa',
       group_id: 'group-1',
       text: '已为您查询，请稍等。',
+      quote_msg_id: 'm-2',
     };
     const firstReply = await requestJson(`${baseUrl}/reply`, {
       method: 'POST',
@@ -434,8 +526,20 @@ async function main() {
     assert.strictEqual(messages.messages.some((message) => message.source === 'workbench'), true);
     const attachmentMessage = messages.messages.find((message) => message.outbound_id === attachmentReply.outbound_id);
     assert.strictEqual(attachmentMessage.attachments[0].name, 'paste.png');
+    const quotedMessage = messages.messages.find((message) => message.outbound_id === firstReply.outbound_id);
+    assert.strictEqual(quotedMessage.quote_msg_id, 'm-2');
+    const searchedMessages = await requestJson(`${baseUrl}/groups/group-1/messages?platform=wa&account=nanya_wa&message_search=${encodeURIComponent('谢谢')}`);
+    assert.strictEqual(searchedMessages.messages.length, 1);
+    assert.strictEqual(searchedMessages.messages[0].message_id, 'm-2');
+    const senderMessages = await requestJson(`${baseUrl}/groups/group-1/messages?platform=wa&account=nanya_wa&sender=${encodeURIComponent('客户')}`);
+    assert.ok(senderMessages.messages.length >= 2);
+    const attachmentMessages = await requestJson(`${baseUrl}/groups/group-1/messages?platform=wa&account=nanya_wa&has_attachment=1`);
+    assert.strictEqual(attachmentMessages.messages.some((message) => message.outbound_id === attachmentReply.outbound_id), true);
     const openedGroups = await requestJson(`${baseUrl}/groups?scope=all`);
     assert.strictEqual(openedGroups.groups.find((group) => group.group_id === 'group-1').unread_count, 2);
+    assert.strictEqual(openedGroups.groups.find((group) => group.group_id === 'group-1').conversation_status, 'resolved');
+    assert.strictEqual(openedGroups.groups.find((group) => group.group_id === 'group-1').starred, true);
+    assert.strictEqual(openedGroups.groups.find((group) => group.group_id === 'group-1').notes_count, 1);
 
     const sentOutbound = workbenchDb.prepare(`
       INSERT INTO outbound_messages (

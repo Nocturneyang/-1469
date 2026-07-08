@@ -40,6 +40,9 @@ const { createAccountDataAccess } = require('../../lib/account-data-access');
 
 const ALLOWED_PLATFORMS = new Set(WORKBENCH_PLATFORMS);
 const OUTBOUND_STATUSES = new Set(['pending', 'sending', 'sent', 'delivered', 'failed', 'dead', 'paused', 'canceled']);
+const CONVERSATION_STATUSES = new Set(['pending', 'in_progress', 'resolved', 'paused']);
+const CONVERSATION_PRIORITIES = new Set(['low', 'normal', 'high', 'urgent']);
+const PRESENCE_MODES = new Set(['viewing', 'typing', 'replying']);
 const MAX_ATTACHMENTS = 4;
 const MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024;
 const MAX_TOTAL_ATTACHMENT_BYTES = 12 * 1024 * 1024;
@@ -540,13 +543,15 @@ function createWorkbenchRouter({ workbenchDb, runtimeDb, rawDbPath = DEFAULT_RAW
     requireVisibleAccount(visibleAccountScope, platform, account);
     const groupId = req.params.groupId;
     requireConversationCapability(workbenchDb, operator, platform, account, groupId, 'can_view');
+    const messageFilters = normalizeMessageFilters(req.query);
+    const requestedLimit = Number(req.query.limit) || 80;
     const page = accountData.listMessagesPage({
       platform,
       account,
       accountScope: visibleAccountScope,
       groupId,
       beforeId: req.query.before_id,
-      limit: req.query.limit,
+      limit: messageFilters.active ? Math.max(requestedLimit, 200) : requestedLimit,
     });
     const inbound = page.messages.map(mapRawMessage);
     const outbound = accountData.withWorkbenchDb(platform, account, {}, (accountDb) => listOutboundMessages(accountDb, {
@@ -555,8 +560,110 @@ function createWorkbenchRouter({ workbenchDb, runtimeDb, rawDbPath = DEFAULT_RAW
       groupId,
       scopedIds: accountData.isolated,
     }));
-    const messages = applyMentionDisplayNames(mergeConversationMessages(inbound, outbound));
-    res.json({ ok: true, messages, paging: page.paging });
+    const merged = applyMentionDisplayNames(mergeConversationMessages(inbound, outbound));
+    const messages = messageFilters.active ? filterConversationMessages(merged, messageFilters) : merged;
+    res.json({
+      ok: true,
+      messages,
+      paging: messageFilters.active ? { has_more: false, before_id: null } : page.paging,
+    });
+  });
+
+  router.get('/groups/:groupId/workspace', (req, res) => {
+    const accountScope = getAccountScope();
+    const operator = currentOperatorContext(workbenchDb, req);
+    const visibleAccountScope = allowedAccountScope(workbenchDb, operator, accountScope, 'can_view');
+    const platform = requirePlatform(req.query.platform);
+    const account = requireText(req.query.account, 'account');
+    requireVisibleAccount(visibleAccountScope, platform, account);
+    const groupId = req.params.groupId;
+    requireConversationCapability(workbenchDb, operator, platform, account, groupId, 'can_view');
+    const workspace = accountData.withWorkbenchDb(platform, account, { create: true }, (accountDb) => (
+      buildConversationWorkspace(accountDb, workbenchDb, platform, account, groupId)
+    ));
+    res.json({ ok: true, ...workspace });
+  });
+
+  router.patch('/groups/:groupId/workspace', (req, res) => {
+    const accountScope = getAccountScope();
+    const operator = currentOperatorContext(workbenchDb, req);
+    const visibleAccountScope = allowedAccountScope(workbenchDb, operator, accountScope, 'can_view');
+    const manageAccountScope = allowedAccountScope(workbenchDb, operator, accountScope, 'can_manage');
+    const operatorId = operator.id;
+    const body = req.body || {};
+    const platform = requirePlatform(body.platform || req.query.platform);
+    const account = requireText(body.account || req.query.account, 'account');
+    requireVisibleAccount(visibleAccountScope, platform, account);
+    const groupId = req.params.groupId;
+    requireConversationCapability(workbenchDb, operator, platform, account, groupId, 'can_view');
+    if (hasProfileManageFields(body)) {
+      requireVisibleAccount(manageAccountScope, platform, account);
+      requireConversationCapability(workbenchDb, operator, platform, account, groupId, 'can_manage');
+    }
+    const profile = accountData.withWorkbenchDb(platform, account, { create: true }, (accountDb) => {
+      const next = upsertConversationProfile(accountDb, platform, account, groupId, body, operatorId);
+      writeAction(accountDb, operatorId, 'conversation.profile.update', platform, account, groupId, groupId, {
+        status: next.status,
+        priority: next.priority,
+        starred: next.starred,
+        follow_up_at: next.follow_up_at,
+      });
+      return next;
+    });
+    res.json({ ok: true, profile });
+  });
+
+  router.post('/groups/:groupId/notes', (req, res) => {
+    const accountScope = getAccountScope();
+    const operator = currentOperatorContext(workbenchDb, req);
+    const visibleAccountScope = allowedAccountScope(workbenchDb, operator, accountScope, 'can_view');
+    const operatorId = operator.id;
+    const body = req.body || {};
+    const platform = requirePlatform(body.platform || req.query.platform);
+    const account = requireText(body.account || req.query.account, 'account');
+    requireVisibleAccount(visibleAccountScope, platform, account);
+    const groupId = req.params.groupId;
+    requireConversationCapability(workbenchDb, operator, platform, account, groupId, 'can_view');
+    const note = accountData.withWorkbenchDb(platform, account, { create: true }, (accountDb) => {
+      const row = createConversationNote(accountDb, platform, account, groupId, body.body || body.note, operatorId);
+      writeAction(accountDb, operatorId, 'conversation.note.create', platform, account, groupId, row.id, {
+        note_length: row.body.length,
+      });
+      return attachActorName(row, loadOperatorNameMap(workbenchDb), 'created_by');
+    });
+    res.status(201).json({ ok: true, note });
+  });
+
+  router.post('/groups/:groupId/presence', (req, res) => {
+    const accountScope = getAccountScope();
+    const operator = currentOperatorContext(workbenchDb, req);
+    const visibleAccountScope = allowedAccountScope(workbenchDb, operator, accountScope, 'can_view');
+    const body = req.body || {};
+    const platform = requirePlatform(body.platform || req.query.platform);
+    const account = requireText(body.account || req.query.account, 'account');
+    requireVisibleAccount(visibleAccountScope, platform, account);
+    const groupId = req.params.groupId;
+    requireConversationCapability(workbenchDb, operator, platform, account, groupId, 'can_view');
+    const presence = accountData.withWorkbenchDb(platform, account, { create: true }, (accountDb) => {
+      saveConversationPresence(accountDb, platform, account, groupId, operator.id, body.mode, body.active !== false);
+      return loadConversationPresence(accountDb, workbenchDb, platform, account, groupId);
+    });
+    res.json({ ok: true, presence });
+  });
+
+  router.get('/groups/:groupId/timeline', (req, res) => {
+    const accountScope = getAccountScope();
+    const operator = currentOperatorContext(workbenchDb, req);
+    const visibleAccountScope = allowedAccountScope(workbenchDb, operator, accountScope, 'can_view');
+    const platform = requirePlatform(req.query.platform);
+    const account = requireText(req.query.account, 'account');
+    requireVisibleAccount(visibleAccountScope, platform, account);
+    const groupId = req.params.groupId;
+    requireConversationCapability(workbenchDb, operator, platform, account, groupId, 'can_view');
+    const timeline = accountData.withWorkbenchDb(platform, account, {}, (accountDb) => (
+      loadConversationTimeline(accountDb, workbenchDb, platform, account, groupId, req.query.limit)
+    ));
+    res.json({ ok: true, timeline });
   });
 
   router.put('/groups/:groupId/manual-groups', (req, res) => {
@@ -606,6 +713,9 @@ function createWorkbenchRouter({ workbenchDb, runtimeDb, rawDbPath = DEFAULT_RAW
           insert.run({ platform, account, groupId, nativeGroupId, syncedAt });
         });
         writeAction(accountDb, operatorId, 'conversation.manual_groups.update', platform, account, groupId, groupId, {
+          manual_group_ids: manualGroupIds,
+        });
+        writeConversationTimeline(accountDb, operatorId, 'conversation.manual_groups.update', platform, account, groupId, {
           manual_group_ids: manualGroupIds,
         });
         return loadConversationLabels(accountDb, platform, account, groupId);
@@ -672,6 +782,12 @@ function createWorkbenchRouter({ workbenchDb, runtimeDb, rawDbPath = DEFAULT_RAW
           status: outbound.status,
           has_attachment: Boolean(attachmentJson),
         });
+        writeConversationTimeline(accountDb, operatorId, 'reply.create', platform, account, groupId, {
+          outbound_id: outbound.id,
+          status: outbound.status,
+          quote_msg_id: outbound.quote_msg_id,
+          has_attachment: Boolean(attachmentJson),
+        });
         if (outbound.status === 'pending') writeDoorbell(doorbellRoot, outbound);
       }
       return { insert, outbound, breaker };
@@ -711,6 +827,9 @@ function createWorkbenchRouter({ workbenchDb, runtimeDb, rawDbPath = DEFAULT_RAW
       writeAction(accountDb, operatorId, 'conversation.read', platform, account, groupId, groupId, {
         last_read_message_id: lastReadMessageId,
       });
+      writeConversationTimeline(accountDb, operatorId, 'conversation.read', platform, account, groupId, {
+        last_read_message_id: lastReadMessageId,
+      });
     });
     const unreadCount = Math.min(accountData.countUnread({
       platform,
@@ -720,6 +839,45 @@ function createWorkbenchRouter({ workbenchDb, runtimeDb, rawDbPath = DEFAULT_RAW
       lastReadMessageId,
     }), 99);
     res.json({ ok: true, unread_count: unreadCount });
+  });
+
+  router.post('/groups/bulk', (req, res) => {
+    const accountScope = getAccountScope();
+    const operator = currentOperatorContext(workbenchDb, req);
+    const body = req.body || {};
+    const action = normalizeBulkAction(body.action);
+    const capability = bulkActionCapability(action);
+    const scopedAccountScope = allowedAccountScope(workbenchDb, operator, accountScope, capability);
+    const viewAccountScope = allowedAccountScope(workbenchDb, operator, accountScope, 'can_view');
+    const operatorId = operator.id;
+    const items = normalizeBulkConversationItems(body.items || body.groups || body.conversations);
+    if (!items.length) throw createHttpError(400, 'bulk items are required');
+    const result = {
+      action,
+      requested: items.length,
+      changed: 0,
+      failed: 0,
+      results: [],
+    };
+    items.forEach((item) => {
+      try {
+        requireVisibleAccount(scopedAccountScope, item.platform, item.account);
+        requireConversationCapability(workbenchDb, operator, item.platform, item.account, item.group_id, capability);
+        const itemResult = runBulkConversationAction(accountData, workbenchDb, {
+          action,
+          item,
+          body,
+          operatorId,
+          accountScope: viewAccountScope,
+        });
+        result.changed += itemResult.changed ? 1 : 0;
+        result.results.push({ ...item, ok: true, ...itemResult });
+      } catch (err) {
+        result.failed += 1;
+        result.results.push({ ...item, ok: false, error: err.message });
+      }
+    });
+    res.json({ ok: true, ...result });
   });
 
   router.post('/groups/:groupId/assign', (req, res) => {
@@ -749,6 +907,9 @@ function createWorkbenchRouter({ workbenchDb, runtimeDb, rawDbPath = DEFAULT_RAW
         writeAction(accountDb, operatorId, 'conversation.assign', platform, account, groupId, result.lastInsertRowid, {
           assigned_to: assignedTo,
         });
+        writeConversationTimeline(accountDb, operatorId, 'conversation.assign', platform, account, groupId, {
+          assigned_to: assignedTo,
+        });
         return result.lastInsertRowid;
       });
       const id = tx();
@@ -775,6 +936,9 @@ function createWorkbenchRouter({ workbenchDb, runtimeDb, rawDbPath = DEFAULT_RAW
         WHERE platform = @platform AND account = @account AND group_id = @groupId AND status = 'active'
       `).run({ platform, account, groupId });
       writeAction(accountDb, operatorId, 'conversation.release', platform, account, groupId, groupId, {
+        released: result.changes,
+      });
+      writeConversationTimeline(accountDb, operatorId, 'conversation.release', platform, account, groupId, {
         released: result.changes,
       });
       return result.changes;
@@ -811,6 +975,9 @@ function createWorkbenchRouter({ workbenchDb, runtimeDb, rawDbPath = DEFAULT_RAW
         WHERE id = @id
       `).run({ id: row.id });
       writeAction(accountDb, operatorId, 'outbound.cancel', row.platform, row.account, row.group_id, row.id, {});
+      writeConversationTimeline(accountDb, operatorId, 'outbound.cancel', row.platform, row.account, row.group_id, {
+        outbound_id: row.id,
+      });
       return getOutbound(accountDb, row.id);
     });
     res.json({ ok: true, outbound: mapOutboundRow(outbound, { scopedIds: accountData.isolated }) });
@@ -859,6 +1026,10 @@ function createWorkbenchRouter({ workbenchDb, runtimeDb, rawDbPath = DEFAULT_RAW
       writeAction(accountDb, operatorId, 'outbound.retry', next.platform, next.account, next.group_id, next.id, {
         retry_of: previous.id,
       });
+      writeConversationTimeline(accountDb, operatorId, 'outbound.retry', next.platform, next.account, next.group_id, {
+        outbound_id: next.id,
+        retry_of: previous.id,
+      });
       if (next.status === 'pending') writeDoorbell(doorbellRoot, next);
       return next;
     });
@@ -882,6 +1053,9 @@ function enrichGroupsWithAccountData(accountData, workbenchDb, rawDbPath, groups
   const assignments = mergeMaps(accountData.mapWorkbenchDbs({ accountScope }, loadActiveAssignments));
   const reads = mergeMaps(accountData.mapWorkbenchDbs({ accountScope }, (db) => loadReads(db, operatorId)));
   const labels = mergeLabelMaps(accountData.mapWorkbenchDbs({ accountScope }, loadLabelMap));
+  const profiles = mergeMaps(accountData.mapWorkbenchDbs({ accountScope }, loadConversationProfileMap));
+  const notesCounts = mergeMaps(accountData.mapWorkbenchDbs({ accountScope }, loadConversationNotesCountMap));
+  const presence = mergePresenceMaps(accountData.mapWorkbenchDbs({ accountScope }, (db) => loadPresenceMap(db, workbenchDb)));
   const unreadCounts = accountData.countUnreadForGroups({
     accountScope,
     groups: groups.map((group) => {
@@ -899,13 +1073,16 @@ function enrichGroupsWithAccountData(accountData, workbenchDb, rawDbPath, groups
     accountKey(profile.platform, profile.account),
     profile,
   ]));
-  return mapEnrichedGroups(groups, accountProfiles, assignments, labels, unreadCounts);
+  return mapEnrichedGroups(groups, accountProfiles, assignments, labels, unreadCounts, profiles, notesCounts, presence);
 }
 
 function enrichGroups(workbenchDb, rawDbPath, groups, operatorId, accountScope) {
   const assignments = loadActiveAssignments(workbenchDb);
   const reads = loadReads(workbenchDb, operatorId);
   const labels = loadLabelMap(workbenchDb);
+  const profiles = loadConversationProfileMap(workbenchDb);
+  const notesCounts = loadConversationNotesCountMap(workbenchDb);
+  const presence = loadPresenceMap(workbenchDb, workbenchDb);
   const unreadCounts = countUnreadForGroups({
     rawDbPath,
     accountScope,
@@ -924,13 +1101,14 @@ function enrichGroups(workbenchDb, rawDbPath, groups, operatorId, accountScope) 
     accountKey(profile.platform, profile.account),
     profile,
   ]));
-  return mapEnrichedGroups(groups, accountProfiles, assignments, labels, unreadCounts);
+  return mapEnrichedGroups(groups, accountProfiles, assignments, labels, unreadCounts, profiles, notesCounts, presence);
 }
 
-function mapEnrichedGroups(groups, accountProfiles, assignments, labels, unreadCounts) {
+function mapEnrichedGroups(groups, accountProfiles, assignments, labels, unreadCounts, conversationProfiles = new Map(), notesCounts = new Map(), presence = new Map()) {
   return groups.map((group) => {
     const key = groupKey(group.platform, group.account, group.group_id);
     const profile = accountProfiles.get(accountKey(group.platform, group.account));
+    const conversationProfile = conversationProfiles.get(key) || defaultConversationProfile(group.platform, group.account, group.group_id);
     const unreadCount = Math.min(Number(unreadCounts.get(key) || 0), 99);
     return {
       id: key,
@@ -944,6 +1122,7 @@ function mapEnrichedGroups(groups, accountProfiles, assignments, labels, unreadC
       risk_level: profile && profile.risk_level ? profile.risk_level : 'low',
       group_id: group.group_id,
       group_name: group.group_name,
+      display_group_name: conversationProfile.internal_display_name || group.group_name,
       last_message_id: group.id,
       last_message_time: group.id ? normalizeTimestamp(group.timestamp, group.created_at) : null,
       last_sender_name: group.sender_name,
@@ -951,6 +1130,16 @@ function mapEnrichedGroups(groups, accountProfiles, assignments, labels, unreadC
       has_media: Boolean(group.has_media),
       message_count: group.message_count,
       unread_count: unreadCount,
+      conversation_status: conversationProfile.status,
+      status: conversationProfile.status,
+      priority: conversationProfile.priority,
+      starred: Boolean(Number(conversationProfile.starred)),
+      follow_up_at: conversationProfile.follow_up_at,
+      internal_display_name: conversationProfile.internal_display_name,
+      customer_type: conversationProfile.customer_type,
+      owner_note: conversationProfile.owner_note,
+      notes_count: Number(notesCounts.get(key) || 0),
+      presence: presence.get(key) || [],
       assignment: assignments.get(key) || null,
       labels: labels.get(key) || [],
     };
@@ -973,6 +1162,18 @@ function mergeLabelMaps(maps) {
     map.forEach((labels, key) => {
       if (!merged.has(key)) merged.set(key, []);
       merged.get(key).push(...labels);
+    });
+  });
+  return merged;
+}
+
+function mergePresenceMaps(maps) {
+  const merged = new Map();
+  maps.forEach((map) => {
+    if (!map) return;
+    map.forEach((rows, key) => {
+      if (!merged.has(key)) merged.set(key, []);
+      merged.get(key).push(...rows);
     });
   });
   return merged;
@@ -1163,6 +1364,315 @@ function loadConversationLabels(db, platform, account, groupId) {
   });
 }
 
+function defaultConversationProfile(platform, account, groupId) {
+  return {
+    platform: normalizePlatform(platform),
+    account: String(account || '').trim(),
+    group_id: String(groupId || '').trim(),
+    status: 'pending',
+    priority: 'normal',
+    starred: 0,
+    follow_up_at: null,
+    internal_display_name: '',
+    customer_type: '',
+    owner_note: '',
+    updated_by: null,
+    created_at: null,
+    updated_at: null,
+  };
+}
+
+function serializeConversationProfile(row) {
+  const profile = row || {};
+  return {
+    id: profile.id || null,
+    platform: profile.platform,
+    account: profile.account,
+    group_id: profile.group_id,
+    status: sanitizeConversationStatus(profile.status),
+    priority: sanitizeConversationPriority(profile.priority),
+    starred: Boolean(Number(profile.starred || 0)),
+    follow_up_at: profile.follow_up_at || null,
+    internal_display_name: profile.internal_display_name || '',
+    customer_type: profile.customer_type || '',
+    owner_note: profile.owner_note || '',
+    updated_by: profile.updated_by || null,
+    created_at: profile.created_at || null,
+    updated_at: profile.updated_at || null,
+  };
+}
+
+function loadConversationProfile(db, platform, account, groupId) {
+  const normalized = {
+    platform: normalizePlatform(platform),
+    account: String(account || '').trim(),
+    groupId: String(groupId || '').trim(),
+  };
+  const row = db.prepare(`
+    SELECT *
+    FROM conversation_profiles
+    WHERE platform = @platform
+      AND account = @account
+      AND group_id = @groupId
+  `).get(normalized);
+  return serializeConversationProfile(row || defaultConversationProfile(normalized.platform, normalized.account, normalized.groupId));
+}
+
+function loadConversationProfileMap(db) {
+  const map = new Map();
+  const rows = db.prepare(`
+    SELECT *
+    FROM conversation_profiles
+  `).all();
+  rows.forEach((row) => {
+    map.set(groupKey(row.platform, row.account, row.group_id), serializeConversationProfile(row));
+  });
+  return map;
+}
+
+function loadConversationNotesCountMap(db) {
+  const map = new Map();
+  const rows = db.prepare(`
+    SELECT platform, account, group_id, COUNT(*) AS count
+    FROM conversation_notes
+    GROUP BY platform, account, group_id
+  `).all();
+  rows.forEach((row) => {
+    map.set(groupKey(row.platform, row.account, row.group_id), Number(row.count || 0));
+  });
+  return map;
+}
+
+function loadConversationNotes(db, centralDb, platform, account, groupId, limit = 20) {
+  const actorNames = loadOperatorNameMap(centralDb);
+  return db.prepare(`
+    SELECT *
+    FROM conversation_notes
+    WHERE platform = @platform
+      AND account = @account
+      AND group_id = @groupId
+    ORDER BY created_at DESC, id DESC
+    LIMIT @limit
+  `).all({
+    platform,
+    account,
+    groupId,
+    limit: Math.max(1, Math.min(Number(limit) || 20, 50)),
+  }).map((row) => attachActorName(row, actorNames, 'created_by'));
+}
+
+function createConversationNote(db, platform, account, groupId, body, operatorId) {
+  const noteBody = sanitizeLongText(body, 2000);
+  if (!noteBody) throw createHttpError(400, 'note body is required');
+  const result = db.prepare(`
+    INSERT INTO conversation_notes (
+      platform, account, group_id, body, created_by
+    )
+    VALUES (@platform, @account, @groupId, @body, @operatorId)
+  `).run({
+    platform,
+    account,
+    groupId,
+    body: noteBody,
+    operatorId,
+  });
+  writeConversationTimeline(db, operatorId, 'conversation.note.create', platform, account, groupId, {
+    note_id: result.lastInsertRowid,
+    note_length: noteBody.length,
+  });
+  return db.prepare('SELECT * FROM conversation_notes WHERE id = ?').get(result.lastInsertRowid);
+}
+
+function upsertConversationProfile(db, platform, account, groupId, patch = {}, operatorId = 'system') {
+  const existing = loadConversationProfile(db, platform, account, groupId);
+  const next = {
+    ...existing,
+    platform,
+    account,
+    group_id: groupId,
+    updated_by: operatorId,
+  };
+  if (hasPatchValue(patch, 'status') || hasPatchValue(patch, 'conversation_status')) {
+    next.status = sanitizeConversationStatus(patch.status ?? patch.conversation_status);
+  }
+  if (hasPatchValue(patch, 'priority')) next.priority = sanitizeConversationPriority(patch.priority);
+  if (hasPatchValue(patch, 'starred')) next.starred = boolToInt(patch.starred);
+  if (hasPatchValue(patch, 'follow_up_at') || hasPatchValue(patch, 'followUpAt')) {
+    next.follow_up_at = normalizeFollowUpAt(patch.follow_up_at ?? patch.followUpAt);
+  }
+  if (hasPatchValue(patch, 'internal_display_name') || hasPatchValue(patch, 'internalDisplayName')) {
+    next.internal_display_name = sanitizeShortText(patch.internal_display_name ?? patch.internalDisplayName, 120);
+  }
+  if (hasPatchValue(patch, 'customer_type') || hasPatchValue(patch, 'customerType')) {
+    next.customer_type = sanitizeShortText(patch.customer_type ?? patch.customerType, 80);
+  }
+  if (hasPatchValue(patch, 'owner_note') || hasPatchValue(patch, 'ownerNote')) {
+    next.owner_note = sanitizeLongText(patch.owner_note ?? patch.ownerNote, 1000);
+  }
+
+  db.prepare(`
+    INSERT INTO conversation_profiles (
+      platform, account, group_id, status, priority, starred, follow_up_at,
+      internal_display_name, customer_type, owner_note, updated_by, updated_at
+    )
+    VALUES (
+      @platform, @account, @group_id, @status, @priority, @starred, @follow_up_at,
+      @internal_display_name, @customer_type, @owner_note, @updated_by, CURRENT_TIMESTAMP
+    )
+    ON CONFLICT(platform, account, group_id) DO UPDATE SET
+      status = excluded.status,
+      priority = excluded.priority,
+      starred = excluded.starred,
+      follow_up_at = excluded.follow_up_at,
+      internal_display_name = excluded.internal_display_name,
+      customer_type = excluded.customer_type,
+      owner_note = excluded.owner_note,
+      updated_by = excluded.updated_by,
+      updated_at = CURRENT_TIMESTAMP
+  `).run({
+    ...next,
+    starred: boolToInt(next.starred),
+  });
+
+  const saved = loadConversationProfile(db, platform, account, groupId);
+  const changes = changedProfileFields(existing, saved);
+  if (changes.length) {
+    writeConversationTimeline(db, operatorId, 'conversation.profile.update', platform, account, groupId, {
+      fields: changes,
+      status: saved.status,
+      priority: saved.priority,
+      starred: saved.starred,
+      follow_up_at: saved.follow_up_at,
+    });
+  }
+  return saved;
+}
+
+function changedProfileFields(before, after) {
+  return [
+    'status',
+    'priority',
+    'starred',
+    'follow_up_at',
+    'internal_display_name',
+    'customer_type',
+    'owner_note',
+  ].filter((field) => String(before[field] ?? '') !== String(after[field] ?? ''));
+}
+
+function buildConversationWorkspace(db, centralDb, platform, account, groupId) {
+  return {
+    profile: loadConversationProfile(db, platform, account, groupId),
+    notes: loadConversationNotes(db, centralDb, platform, account, groupId),
+    timeline: loadConversationTimeline(db, centralDb, platform, account, groupId),
+    presence: loadConversationPresence(db, centralDb, platform, account, groupId),
+  };
+}
+
+function saveConversationPresence(db, platform, account, groupId, operatorId, modeValue, active = true) {
+  const mode = sanitizePresenceMode(modeValue);
+  if (!active) {
+    db.prepare(`
+      DELETE FROM conversation_presence
+      WHERE operator_id = @operatorId
+        AND platform = @platform
+        AND account = @account
+        AND group_id = @groupId
+        AND mode = @mode
+    `).run({ operatorId, platform, account, groupId, mode });
+    return;
+  }
+  const expiresAt = new Date(Date.now() + 90 * 1000).toISOString();
+  db.prepare(`
+    INSERT INTO conversation_presence (
+      operator_id, platform, account, group_id, mode, expires_at, updated_at
+    )
+    VALUES (@operatorId, @platform, @account, @groupId, @mode, @expiresAt, CURRENT_TIMESTAMP)
+    ON CONFLICT(operator_id, platform, account, group_id, mode) DO UPDATE SET
+      expires_at = excluded.expires_at,
+      updated_at = CURRENT_TIMESTAMP
+  `).run({ operatorId, platform, account, groupId, mode, expiresAt });
+}
+
+function loadPresenceMap(db, centralDb) {
+  db.prepare(`
+    DELETE FROM conversation_presence
+    WHERE datetime(expires_at) <= datetime('now')
+  `).run();
+  const map = new Map();
+  const actorNames = loadOperatorNameMap(centralDb);
+  const rows = db.prepare(`
+    SELECT *
+    FROM conversation_presence
+    WHERE datetime(expires_at) > datetime('now')
+    ORDER BY updated_at DESC
+  `).all();
+  rows.forEach((row) => {
+    const key = groupKey(row.platform, row.account, row.group_id);
+    if (!map.has(key)) map.set(key, []);
+    map.get(key).push(attachActorName(row, actorNames, 'operator_id'));
+  });
+  return map;
+}
+
+function loadConversationPresence(db, centralDb, platform, account, groupId) {
+  return loadPresenceMap(db, centralDb).get(groupKey(platform, account, groupId)) || [];
+}
+
+function loadConversationTimeline(db, centralDb, platform, account, groupId, limit = 50) {
+  const actorNames = loadOperatorNameMap(centralDb);
+  return db.prepare(`
+    SELECT *
+    FROM conversation_timeline
+    WHERE platform = @platform
+      AND account = @account
+      AND group_id = @groupId
+    ORDER BY created_at DESC, id DESC
+    LIMIT @limit
+  `).all({
+    platform,
+    account,
+    groupId,
+    limit: Math.max(1, Math.min(Number(limit) || 50, 100)),
+  }).map((row) => ({
+    ...attachActorName(row, actorNames, 'actor_id'),
+    payload: parseJson(row.payload_json, {}),
+  }));
+}
+
+function writeConversationTimeline(db, actorId, actionType, platform, account, groupId, payload) {
+  if (!groupId) return;
+  db.prepare(`
+    INSERT INTO conversation_timeline (
+      platform, account, group_id, action_type, actor_id, payload_json
+    )
+    VALUES (@platform, @account, @groupId, @actionType, @actorId, @payloadJson)
+  `).run({
+    platform,
+    account,
+    groupId,
+    actionType,
+    actorId: String(actorId || 'system'),
+    payloadJson: safeJson(payload || {}),
+  });
+}
+
+function loadOperatorNameMap(db) {
+  const rows = db.prepare(`
+    SELECT id, display_name, username
+    FROM operators
+  `).all();
+  return new Map(rows.map((row) => [String(row.id), row.display_name || row.username || row.id]));
+}
+
+function attachActorName(row, actorNames, fieldName) {
+  const actorId = String(row[fieldName] || '');
+  return {
+    ...row,
+    actor_name: actorNames.get(actorId) || actorId,
+  };
+}
+
 function listOutboundMessages(db, { platform, account, groupId, scopedIds = false }) {
   return db.prepare(`
     SELECT *
@@ -1195,6 +1705,7 @@ function mergeConversationMessages(rawMessages, outboundMessages) {
       delivered_at: outbound.delivered_at,
       error_code: outbound.error_code,
       error_message: outbound.error_message,
+      error_display: outbound.error_display,
       retry_of: outbound.retry_of,
       retry_count: outbound.retry_count,
     };
@@ -1227,6 +1738,12 @@ function mapRawMessage(row) {
     display_text: text,
     has_media: Boolean(row.has_media),
     media_path: row.media_path,
+    attachments: row.has_media || row.media_path ? [{
+      id: `raw-media-${row.id}`,
+      name: row.media_path ? path.basename(String(row.media_path)) : '媒体消息',
+      kind: 'file',
+      media_path: row.media_path || null,
+    }] : [],
     status: direction === 'outbound' ? 'sent' : 'received',
     created_at: row.created_at,
     timestamp,
@@ -1260,6 +1777,7 @@ function mapOutboundRow(row, { scopedIds = false } = {}) {
     retry_count: row.retry_count,
     error_code: row.error_code,
     error_message: row.error_message,
+    error_display: humanizeOutboundFailure(row),
     created_at: row.created_at,
     sent_at: row.sent_at,
     delivered_at: row.delivered_at,
@@ -1440,6 +1958,305 @@ function normalizeAttachmentData(item, fallbackType) {
     size,
     mimeType,
   };
+}
+
+function normalizeMessageFilters(query = {}) {
+  const search = sanitizeShortText(query.message_search ?? query.q ?? query.search, 160).toLowerCase();
+  const sender = sanitizeShortText(query.sender ?? query.sender_name, 120).toLowerCase();
+  const dateFrom = parseFilterTime(query.date_from ?? query.from);
+  const dateTo = parseFilterTime(query.date_to ?? query.to, true);
+  const hasAttachment = hasQueryValue(query.has_attachment)
+    ? ['1', 'true', 'yes', 'on'].includes(String(query.has_attachment).trim().toLowerCase())
+    : null;
+  return {
+    search,
+    sender,
+    dateFrom,
+    dateTo,
+    hasAttachment,
+    active: Boolean(search || sender || dateFrom || dateTo || hasAttachment !== null),
+  };
+}
+
+function filterConversationMessages(messages, filters) {
+  return messages.filter((message) => {
+    if (filters.search) {
+      const text = [
+        message.display_text,
+        message.text,
+        message.sender_name,
+        message.message_id,
+        ...(message.attachments || []).map((attachment) => attachment.name),
+      ].filter(Boolean).join(' ').toLowerCase();
+      if (!text.includes(filters.search)) return false;
+    }
+    if (filters.sender) {
+      const sender = String(message.sender_name || '').toLowerCase();
+      if (!sender.includes(filters.sender)) return false;
+    }
+    const time = messageTimestampMs(message);
+    if (filters.dateFrom && (!time || time < filters.dateFrom)) return false;
+    if (filters.dateTo && (!time || time > filters.dateTo)) return false;
+    if (filters.hasAttachment !== null && messageHasAttachment(message) !== filters.hasAttachment) return false;
+    return true;
+  });
+}
+
+function parseFilterTime(value, endOfDay = false) {
+  const text = String(value || '').trim();
+  if (!text) return null;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(text)) {
+    const dateOnly = Date.parse(`${text}T${endOfDay ? '23:59:59.999' : '00:00:00.000'}`);
+    return Number.isFinite(dateOnly) ? dateOnly : null;
+  }
+  const parsed = Date.parse(text);
+  if (Number.isFinite(parsed)) return parsed;
+  return null;
+}
+
+function messageTimestampMs(message) {
+  const timestamp = Number(message.timestamp || message.sort_time || 0);
+  if (Number.isFinite(timestamp) && timestamp > 0) return timestamp > 1000000000000 ? timestamp : timestamp * 1000;
+  return parseSqlTimestamp(message.created_at);
+}
+
+function messageHasAttachment(message) {
+  return Boolean(
+    message &&
+    (
+      message.has_media ||
+      message.media_path ||
+      (Array.isArray(message.attachments) && message.attachments.length)
+    )
+  );
+}
+
+function sanitizeConversationStatus(value) {
+  const status = String(value || '').trim().toLowerCase();
+  return CONVERSATION_STATUSES.has(status) ? status : 'pending';
+}
+
+function sanitizeConversationPriority(value) {
+  const priority = String(value || '').trim().toLowerCase();
+  return CONVERSATION_PRIORITIES.has(priority) ? priority : 'normal';
+}
+
+function sanitizePresenceMode(value) {
+  const mode = String(value || '').trim().toLowerCase();
+  return PRESENCE_MODES.has(mode) ? mode : 'viewing';
+}
+
+function sanitizeShortText(value, maxLength = 120) {
+  return String(value ?? '')
+    .replace(/[\r\n\t]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, maxLength);
+}
+
+function sanitizeLongText(value, maxLength = 2000) {
+  return String(value ?? '')
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+    .trim()
+    .slice(0, maxLength);
+}
+
+function normalizeFollowUpAt(value) {
+  const text = String(value ?? '').trim();
+  if (!text) return null;
+  const parsed = Date.parse(text);
+  if (!Number.isFinite(parsed)) throw createHttpError(400, 'follow_up_at is invalid');
+  return new Date(parsed).toISOString();
+}
+
+function hasPatchValue(object, key) {
+  return Object.prototype.hasOwnProperty.call(object || {}, key);
+}
+
+function hasProfileManageFields(body = {}) {
+  return [
+    'internal_display_name',
+    'internalDisplayName',
+    'customer_type',
+    'customerType',
+    'owner_note',
+    'ownerNote',
+  ].some((key) => hasPatchValue(body, key));
+}
+
+function normalizeBulkAction(value) {
+  const action = String(value || '').trim().toLowerCase();
+  if (['mark_read', 'assign', 'release', 'status', 'star', 'add_tags'].includes(action)) return action;
+  throw createHttpError(400, 'unsupported bulk action');
+}
+
+function bulkActionCapability(action) {
+  if (action === 'assign' || action === 'release') return 'can_assign';
+  if (action === 'add_tags') return 'can_manage';
+  return 'can_view';
+}
+
+function normalizeBulkConversationItems(value) {
+  const list = Array.isArray(value) ? value : [];
+  return list.slice(0, 100).map((item) => ({
+    platform: requirePlatform(item.platform),
+    account: requireText(item.account, 'account'),
+    group_id: requireText(item.group_id || item.groupId, 'group_id'),
+    last_message_id: item.last_message_id ?? item.lastMessageId ?? null,
+    last_read_message_id: item.last_read_message_id ?? item.lastReadMessageId ?? null,
+  }));
+}
+
+function runBulkConversationAction(accountData, centralDb, {
+  action,
+  item,
+  body,
+  operatorId,
+  accountScope,
+}) {
+  if (action === 'mark_read') {
+    const lastReadMessageId = Number(
+      item.last_read_message_id ||
+      body.last_read_message_id ||
+      item.last_message_id ||
+      body.last_message_id ||
+      0,
+    );
+    if (!lastReadMessageId) throw createHttpError(400, 'last_read_message_id is required for mark_read');
+    accountData.withWorkbenchDb(item.platform, item.account, { create: true }, (accountDb) => {
+      accountDb.prepare(`
+        INSERT INTO conversation_reads (
+          operator_id, platform, account, group_id, last_read_message_id, last_read_at, updated_at
+        )
+        VALUES (@operatorId, @platform, @account, @groupId, @lastReadMessageId, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        ON CONFLICT(operator_id, platform, account, group_id) DO UPDATE SET
+          last_read_message_id = MAX(COALESCE(conversation_reads.last_read_message_id, 0), excluded.last_read_message_id),
+          last_read_at = CURRENT_TIMESTAMP,
+          updated_at = CURRENT_TIMESTAMP
+      `).run({
+        operatorId,
+        platform: item.platform,
+        account: item.account,
+        groupId: item.group_id,
+        lastReadMessageId,
+      });
+      writeConversationTimeline(accountDb, operatorId, 'conversation.bulk.mark_read', item.platform, item.account, item.group_id, {
+        last_read_message_id: lastReadMessageId,
+      });
+    });
+    const unreadCount = Math.min(accountData.countUnread({
+      platform: item.platform,
+      account: item.account,
+      accountScope,
+      groupId: item.group_id,
+      lastReadMessageId,
+    }), 99);
+    return { changed: true, unread_count: unreadCount };
+  }
+
+  if (action === 'assign') {
+    const assignedTo = String(body.assigned_to || operatorId).trim();
+    ensureOperator(centralDb, assignedTo, body.assigned_to_name || assignedTo);
+    const assignment = accountData.withWorkbenchDb(item.platform, item.account, { create: true }, (accountDb) => {
+      const tx = accountDb.transaction(() => {
+        accountDb.prepare(`
+          UPDATE group_assignments
+          SET status = 'released', released_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+          WHERE platform = @platform AND account = @account AND group_id = @groupId AND status = 'active'
+        `).run({ platform: item.platform, account: item.account, groupId: item.group_id });
+        const result = accountDb.prepare(`
+          INSERT INTO group_assignments (platform, account, group_id, assigned_to, assigned_by)
+          VALUES (@platform, @account, @groupId, @assignedTo, @operatorId)
+        `).run({ platform: item.platform, account: item.account, groupId: item.group_id, assignedTo, operatorId });
+        writeConversationTimeline(accountDb, operatorId, 'conversation.bulk.assign', item.platform, item.account, item.group_id, {
+          assigned_to: assignedTo,
+        });
+        return result.lastInsertRowid;
+      });
+      return accountDb.prepare('SELECT * FROM group_assignments WHERE id = ?').get(tx());
+    });
+    return { changed: true, assignment };
+  }
+
+  if (action === 'release') {
+    const released = accountData.withWorkbenchDb(item.platform, item.account, { create: true }, (accountDb) => {
+      const result = accountDb.prepare(`
+        UPDATE group_assignments
+        SET status = 'released', released_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+        WHERE platform = @platform AND account = @account AND group_id = @groupId AND status = 'active'
+      `).run({ platform: item.platform, account: item.account, groupId: item.group_id });
+      writeConversationTimeline(accountDb, operatorId, 'conversation.bulk.release', item.platform, item.account, item.group_id, {
+        released: result.changes,
+      });
+      return result.changes;
+    });
+    return { changed: Boolean(released), released };
+  }
+
+  if (action === 'status') {
+    const profile = accountData.withWorkbenchDb(item.platform, item.account, { create: true }, (accountDb) => (
+      upsertConversationProfile(accountDb, item.platform, item.account, item.group_id, { status: body.status }, operatorId)
+    ));
+    return { changed: true, profile };
+  }
+
+  if (action === 'star') {
+    const profile = accountData.withWorkbenchDb(item.platform, item.account, { create: true }, (accountDb) => (
+      upsertConversationProfile(accountDb, item.platform, item.account, item.group_id, { starred: body.starred !== false }, operatorId)
+    ));
+    return { changed: true, profile };
+  }
+
+  if (action === 'add_tags') {
+    const manualGroupIds = normalizeManualGroupIds(body.manual_group_ids ?? body.native_group_ids ?? body.group_ids ?? []);
+    if (!manualGroupIds.length) throw createHttpError(400, 'manual_group_ids are required');
+    const labels = accountData.withWorkbenchDb(item.platform, item.account, { create: true }, (accountDb) => {
+      const manualGroups = loadManualServiceGroupsByIds(accountDb, item.platform, item.account, manualGroupIds);
+      if (manualGroups.length !== manualGroupIds.length) {
+        throw createHttpError(400, 'manual_group_ids contains unknown or non-manual groups');
+      }
+      const insert = accountDb.prepare(`
+        INSERT INTO conversation_service_group_map (
+          platform, service_account, chat_id, native_group_id, synced_at
+        )
+        VALUES (@platform, @account, @groupId, @nativeGroupId, @syncedAt)
+        ON CONFLICT(platform, service_account, chat_id, native_group_id) DO UPDATE SET
+          synced_at = excluded.synced_at,
+          updated_at = CURRENT_TIMESTAMP
+      `);
+      const syncedAt = new Date().toISOString();
+      manualGroupIds.forEach((nativeGroupId) => {
+        insert.run({
+          platform: item.platform,
+          account: item.account,
+          groupId: item.group_id,
+          nativeGroupId,
+          syncedAt,
+        });
+      });
+      writeConversationTimeline(accountDb, operatorId, 'conversation.bulk.add_tags', item.platform, item.account, item.group_id, {
+        manual_group_ids: manualGroupIds,
+      });
+      return loadConversationLabels(accountDb, item.platform, item.account, item.group_id);
+    });
+    return { changed: true, labels };
+  }
+
+  throw createHttpError(400, 'unsupported bulk action');
+}
+
+function humanizeOutboundFailure(row) {
+  const code = String(row.error_code || '').trim();
+  const message = String(row.error_message || '').trim();
+  if (!code && !message) return '';
+  if (code === 'CIRCUIT_BREAKER') return '该服务账号短时间失败过多，已暂停发送，稍后可重试。';
+  if (code === 'SEND_DISABLED') return '生产发送开关未开启，消息没有真实外发。';
+  if (code === 'CHANNEL_NOT_READY') return '服务账号 worker 尚未在线，请确认账号已登录。';
+  if (code === 'STALE_SENDING_RECOVERED') return 'worker 重启后已恢复该发送任务。';
+  if (/floodwait|peerflood/i.test(`${code} ${message}`)) return 'Telegram 触发频控，当前账号应暂停外发。';
+  if (/not.*found|chat.*invalid|peer/i.test(message)) return '找不到目标会话，可能群已退出或账号无权限。';
+  return message || code || '发送失败，请稍后重试。';
 }
 
 function currentOperatorContext(db, req) {

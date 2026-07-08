@@ -11,6 +11,16 @@
       </button>
     </div>
 
+    <div v-if="selectedCount" class="bulk-toolbar">
+      <strong>已选 {{ selectedCount }}</strong>
+      <button type="button" @click="emit('bulk-action', 'mark_read')">标已读</button>
+      <button type="button" @click="emit('bulk-action', 'assign')">认领</button>
+      <button type="button" @click="emit('bulk-action', 'status_in_progress')">跟进中</button>
+      <button type="button" @click="emit('bulk-action', 'status_resolved')">已解决</button>
+      <button type="button" @click="emit('bulk-action', 'star')">星标</button>
+      <button type="button" @click="emit('bulk-action', 'add_tags')">套用标签</button>
+    </div>
+
     <div v-if="loading" class="list-state">加载中...</div>
     <div v-else-if="!groups.length" class="list-state">暂无会话</div>
 
@@ -20,17 +30,32 @@
         :key="group.id"
         type="button"
         class="conversation-row"
-        :class="{ selected: selectedId === group.id }"
+        :class="{ selected: selectedId === group.id, 'bulk-selected': isBulkSelected(group) }"
         @click="$emit('select', group)"
       >
+        <span
+          class="bulk-check"
+          :class="{ checked: isBulkSelected(group) }"
+          role="checkbox"
+          :aria-checked="isBulkSelected(group)"
+          @click.stop="emit('bulk-toggle', group)"
+        >
+          <el-icon v-if="isBulkSelected(group)"><Check /></el-icon>
+        </span>
         <div class="platform-icon" :class="platformClass(group.platform)">
           {{ platformShort(group.platform) }}
         </div>
 
         <div class="conversation-copy">
           <div class="row-head">
-            <strong :title="group.group_name">{{ group.group_name }}</strong>
+            <strong :title="displayName(group)">{{ displayName(group) }}</strong>
             <time>{{ formatTime(group.last_message_time) }}</time>
+          </div>
+          <div class="workflow-line">
+            <span v-if="group.starred" class="workflow-pill starred">星标</span>
+            <span class="workflow-pill">{{ statusText(group.conversation_status || group.status) }}</span>
+            <span v-if="group.priority && group.priority !== 'normal'" class="workflow-pill priority">{{ priorityText(group.priority) }}</span>
+            <span v-if="group.follow_up_at" class="workflow-pill follow">提醒 {{ formatTime(group.follow_up_at) }}</span>
           </div>
           <div class="label-line">
             <el-icon><Folder /></el-icon>
@@ -42,7 +67,7 @@
           </div>
           <div class="row-foot">
             <em>{{ accountDisplayName(group) }}</em>
-            <span>{{ assignmentText(group) }}</span>
+            <span>{{ assignmentText(group) }} · {{ presenceText(group) }}</span>
           </div>
         </div>
 
@@ -53,10 +78,11 @@
 </template>
 
 <script setup>
-import { Folder, Sort } from '@element-plus/icons-vue';
+import { computed } from 'vue';
+import { Check, Folder, Sort } from '@element-plus/icons-vue';
 import { formatTime, platformClass } from '../utils/format';
 
-defineProps({
+const props = defineProps({
   groups: {
     type: Array,
     default: () => [],
@@ -73,9 +99,14 @@ defineProps({
     type: String,
     default: '全部',
   },
+  selectedBulkIds: {
+    type: Array,
+    default: () => [],
+  },
 });
 
-defineEmits(['select', 'refresh']);
+const emit = defineEmits(['select', 'refresh', 'bulk-toggle', 'bulk-action']);
+const selectedCount = computed(() => props.selectedBulkIds.length);
 
 function platformShort(platform) {
   if (platform === 'wa') return 'W';
@@ -89,6 +120,10 @@ function preview(group) {
   return `${sender}${group.last_content || ''}`.trim() || '[空消息]';
 }
 
+function displayName(group) {
+  return group.internal_display_name || group.display_group_name || group.group_name;
+}
+
 function accountDisplayName(group) {
   return group.account_display_name || group.account || '';
 }
@@ -96,6 +131,38 @@ function accountDisplayName(group) {
 function assignmentText(group) {
   if (!group.assignment) return '未认领';
   return group.assignment.assigned_to_name || group.assignment.assigned_to || '已认领';
+}
+
+function presenceText(group) {
+  const rows = Array.isArray(group.presence) ? group.presence : [];
+  const active = rows.filter((row) => row.operator_id && row.mode);
+  if (!active.length) return '无协作占用';
+  const typing = active.find((row) => row.mode === 'typing');
+  if (typing) return `${typing.actor_name || typing.operator_id} 正在输入`;
+  return `${active[0].actor_name || active[0].operator_id} 正在查看`;
+}
+
+function isBulkSelected(group) {
+  return props.selectedBulkIds.includes(group.id);
+}
+
+function statusText(status) {
+  const map = {
+    pending: '待处理',
+    in_progress: '跟进中',
+    resolved: '已解决',
+    paused: '暂停',
+  };
+  return map[status] || '待处理';
+}
+
+function priorityText(priority) {
+  const map = {
+    low: '低',
+    high: '高',
+    urgent: '紧急',
+  };
+  return map[priority] || priority;
 }
 
 function labelText(label) {

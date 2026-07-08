@@ -26,6 +26,29 @@
       </div>
     </header>
 
+    <div v-if="group" class="message-search-bar">
+      <input
+        v-model="localSearch.message_search"
+        type="search"
+        placeholder="搜索当前会话"
+        @keydown.enter.prevent="applyMessageSearch"
+      >
+      <input
+        v-model="localSearch.sender"
+        type="search"
+        placeholder="发送人"
+        @keydown.enter.prevent="applyMessageSearch"
+      >
+      <input v-model="localSearch.date_from" type="date" aria-label="开始日期">
+      <input v-model="localSearch.date_to" type="date" aria-label="结束日期">
+      <label>
+        <input v-model="localSearch.has_attachment" type="checkbox">
+        附件
+      </label>
+      <button type="button" @click="applyMessageSearch">筛选</button>
+      <button type="button" @click="clearMessageSearch">清空</button>
+    </div>
+
     <div v-if="!group" class="thread-empty">
       <div class="empty-illustration">IN</div>
       <strong>选择一个会话查看消息</strong>
@@ -66,14 +89,21 @@
               </span>
             </div>
           </div>
-          <div v-if="message.error_message" class="status-detail">
-            {{ message.error_message }}
+          <div v-if="message.error_display || message.error_message" class="status-detail">
+            {{ message.error_display || message.error_message }}
           </div>
           <footer>
             <time>{{ formatMessageTime(message.timestamp || message.created_at) }}</time>
             <span v-if="statusText(message.status)" class="status" :class="`status-${message.status}`">
               {{ statusText(message.status) }}
             </span>
+            <button
+              type="button"
+              class="message-action-button"
+              @click="$emit('quote', message)"
+            >
+              引用
+            </button>
             <button
               v-if="['pending', 'paused'].includes(message.status) && canSend(group)"
               type="button"
@@ -98,7 +128,7 @@
 </template>
 
 <script setup>
-import { computed, nextTick, ref, watch } from 'vue';
+import { computed, nextTick, reactive, ref, watch } from 'vue';
 import { Check, Document, Switch, TopRight } from '@element-plus/icons-vue';
 import { formatMessageTime, platformClass, platformName, statusText } from '../utils/format';
 
@@ -127,6 +157,10 @@ const props = defineProps({
     type: String,
     default: 'demo-operator',
   },
+  messageFilters: {
+    type: Object,
+    default: () => ({}),
+  },
 });
 
 const emit = defineEmits([
@@ -138,9 +172,18 @@ const emit = defineEmits([
   'load-older',
   'read-progress',
   'stick-state-change',
+  'quote',
+  'message-search-change',
 ]);
 
 const scrollRef = ref(null);
+const localSearch = reactive({
+  message_search: '',
+  sender: '',
+  date_from: '',
+  date_to: '',
+  has_attachment: false,
+});
 const lastStickState = ref(true);
 const lastReadProgress = ref({ groupId: '', rawId: 0 });
 const BOTTOM_THRESHOLD_PX = 96;
@@ -160,6 +203,18 @@ watch(
   () => {
     lastStickState.value = true;
   },
+);
+
+watch(
+  () => props.messageFilters,
+  (filters = {}) => {
+    localSearch.message_search = filters.message_search || '';
+    localSearch.sender = filters.sender || '';
+    localSearch.date_from = filters.date_from || '';
+    localSearch.date_to = filters.date_to || '';
+    localSearch.has_attachment = Boolean(filters.has_attachment);
+  },
+  { immediate: true, deep: true },
 );
 
 const assignmentActionText = computed(() => {
@@ -207,6 +262,19 @@ function attachmentPreview(attachment) {
   const type = attachment.type || '';
   if (attachment.kind === 'image' || attachment.kind === 'sticker' || type.startsWith('image/')) return dataUrl;
   return '';
+}
+
+function applyMessageSearch() {
+  emit('message-search-change', { ...localSearch });
+}
+
+function clearMessageSearch() {
+  localSearch.message_search = '';
+  localSearch.sender = '';
+  localSearch.date_from = '';
+  localSearch.date_to = '';
+  localSearch.has_attachment = false;
+  applyMessageSearch();
 }
 
 function scrollToBottom() {
