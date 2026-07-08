@@ -49,6 +49,8 @@ WORKBENCH_ACCOUNT_DATA_DIR=/data/accounts
 
 隔离模式下，总控 `workbench.sqlite` 只保留工作台用户、角色、入口权限和服务账号/分组授权范围；每个 WA/TG 服务账号自己的 raw 消息、登录任务、已读、认领/释放、人工分组、渠道分组映射、外发账本和发送熔断写入 `/data/accounts/{wa|tg}/{account}/` 下的账号库。
 
+生产容器默认开启账号隔离模式。当前 `social-workbench-login-worker` 兼容单 worker 编排：它会根据登录门铃里的 `platform/account` 自动打开对应账号的 `runtime.sqlite`、`raw.sqlite` 和 `session/`。后续账号数量增加后，再把它拆成每账号独立 `account-worker`。
+
 ## 主要入口
 
 前端页面：

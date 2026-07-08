@@ -52,6 +52,8 @@ API/UI 在隔离模式下负责跨账号聚合读取：账号列表、会话列�
 
 账号 worker 优先使用账号目录内的 raw/runtime/workbench/session 路径，不因容器全局 `WORKBENCH_RAW_DB_PATH`、`WORKBENCH_RUNTIME_DB_PATH` 或 `WORKBENCH_DB_PATH` 回写全局库。同账号 worker 通过 `account_worker_leases` 续租，防止两个进程同时持有同一渠道 session。
 
+2026-07-08 追加：生产当前没有已登录服务账号，因此可以直接开启 `WORKBENCH_ACCOUNT_DB_MODE=isolated`，不会迁移旧 session。为了避免 API 写入账号 runtime 后单 worker 读不到任务，`social-workbench-login-worker` 已兼容账号隔离模式：非账号专属 worker 会按登录门铃 payload 的 `platform/account` 打开对应账号库和 session 目录。该兼容层适合无账号或少量账号启动阶段；多账号长期运行仍应按账号拆成独立 `account-worker`。
+
 ## 部署
 
 新增独立部署材料：

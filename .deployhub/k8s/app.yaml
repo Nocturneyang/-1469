@@ -82,6 +82,10 @@ spec:
               value: /data/db/runtime.sqlite
             - name: WORKBENCH_OUTBOX_DIR
               value: /data/outbox
+            - name: WORKBENCH_ACCOUNT_DB_MODE
+              value: isolated
+            - name: WORKBENCH_ACCOUNT_DATA_DIR
+              value: /data/accounts
             - name: SSO_ENABLED
               value: "true"
             - name: SSO_LOGIN_URL

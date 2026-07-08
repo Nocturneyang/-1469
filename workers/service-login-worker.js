@@ -8,6 +8,8 @@ const { DEFAULT_RUNTIME_DB_PATH, openRuntimeDb } = require('../db/runtime-db');
 const { resolveDataDir } = require('../db/paths');
 const {
   ensureAccountDatabases,
+  isAccountDbModeEnabled,
+  listAccountRefs,
   normalizeAccountPlatform,
   sanitizeAccountSegment,
 } = require('../db/account-db');
@@ -17,6 +19,7 @@ const DATA_DIR = resolveDataDir();
 const WORKER_PLATFORM = normalizeAccountPlatform(process.env.WORKBENCH_WORKER_PLATFORM);
 const WORKER_ACCOUNT = String(process.env.WORKBENCH_WORKER_ACCOUNT || '').trim();
 const WORKER_ROLE = String(process.env.WORKBENCH_WORKER_ROLE || 'login-worker').trim();
+const ACCOUNT_DB_MODE = isAccountDbModeEnabled(process.env.WORKBENCH_ACCOUNT_DB_MODE);
 const ACCOUNT_SCOPED = WORKER_ROLE === 'account-runtime' || Boolean(WORKER_PLATFORM || WORKER_ACCOUNT);
 if (ACCOUNT_SCOPED && (!['wa', 'tg'].includes(WORKER_PLATFORM) || !WORKER_ACCOUNT)) {
   throw new Error('WORKBENCH_WORKER_PLATFORM and WORKBENCH_WORKER_ACCOUNT are required for account-runtime worker');
@@ -50,7 +53,7 @@ fs.mkdirSync(OUTBOX_DIR, { recursive: true });
 fs.mkdirSync(WA_AUTH_DATA_PATH, { recursive: true });
 fs.mkdirSync(TG_SESSION_DIR, { recursive: true });
 
-log(`started, outbox=${OUTBOX_DIR}${ACCOUNT_SCOPED ? `, account=${WORKER_PLATFORM}:${WORKER_ACCOUNT}` : ''}`);
+log(`started, outbox=${OUTBOX_DIR}${ACCOUNT_SCOPED ? `, account=${WORKER_PLATFORM}:${WORKER_ACCOUNT}` : ''}${ACCOUNT_DB_MODE ? ', account-db-mode=isolated' : ''}`);
 tick().catch((err) => log(`initial tick failed: ${err.stack || err.message}`));
 const pollTimer = setInterval(() => {
   tick().catch((err) => log(`tick failed: ${err.stack || err.message}`));
@@ -116,7 +119,7 @@ async function handleLoginPayload(payload) {
   if (ACCOUNT_SCOPED && (payload.platform !== WORKER_PLATFORM || payload.account !== WORKER_ACCOUNT)) {
     return;
   }
-  const request = getRequest(payload.request_id);
+  const request = getRequest(payload.request_id, payload);
   if (!request) {
     throw new Error(`login request not found: ${payload.request_id}`);
   }
@@ -139,39 +142,46 @@ async function handleLoginPayload(payload) {
 
 function resumeWaitingWaRequests() {
   if (ACCOUNT_SCOPED && WORKER_PLATFORM !== 'wa') return;
-  const rows = runtimeDb.prepare(`
-    SELECT *
-    FROM service_account_login_requests
-    WHERE platform = 'wa'
-      AND login_mode = 'wa_qr'
-      ${ACCOUNT_SCOPED ? 'AND account = @account' : ''}
-      AND status IN ('waiting_qr', 'waiting_verification', 'requested')
-      AND (expires_at IS NULL OR expires_at > datetime('now'))
-    ORDER BY created_at ASC
-    LIMIT 10
-  `).all(ACCOUNT_SCOPED ? { account: WORKER_ACCOUNT } : {});
-  for (const row of rows) {
-    startWaLogin(mapRequestRow(row));
-  }
+  forEachRuntimeDb((db, context) => {
+    const rows = db.prepare(`
+      SELECT *
+      FROM service_account_login_requests
+      WHERE platform = 'wa'
+        AND login_mode = 'wa_qr'
+        ${ACCOUNT_SCOPED || context.account ? 'AND account = @account' : ''}
+        AND status IN ('waiting_qr', 'waiting_verification', 'requested')
+        AND (expires_at IS NULL OR expires_at > datetime('now'))
+      ORDER BY created_at ASC
+      LIMIT 10
+    `).all(ACCOUNT_SCOPED || context.account ? { account: WORKER_ACCOUNT || context.account } : {});
+    for (const row of rows) {
+      startWaLogin(mapRequestRow(row));
+    }
+  });
 }
 
 function expireRequests() {
-  const rows = runtimeDb.prepare(`
-    SELECT request_id, platform, account, display_name, login_mode
-    FROM service_account_login_requests
-    WHERE status IN ('requested', 'waiting_qr', 'waiting_verification')
-      ${ACCOUNT_SCOPED ? 'AND platform = @platform AND account = @account' : ''}
-      AND expires_at IS NOT NULL
-      AND julianday(expires_at) <= julianday('now')
-  `).all(ACCOUNT_SCOPED ? { platform: WORKER_PLATFORM, account: WORKER_ACCOUNT } : {});
-  for (const row of rows) {
-    patchRequest(row.request_id, {
-      status: 'expired',
-      qr_payload: '',
-      worker_message: '登录任务已过期，请重新发起登录',
-    }, row);
-    stopWaRequest(row.request_id);
-  }
+  forEachRuntimeDb((db, context) => {
+    const rows = db.prepare(`
+      SELECT request_id, platform, account, display_name, login_mode
+      FROM service_account_login_requests
+      WHERE status IN ('requested', 'waiting_qr', 'waiting_verification')
+        ${ACCOUNT_SCOPED || context.account ? 'AND platform = @platform AND account = @account' : ''}
+        AND expires_at IS NOT NULL
+        AND julianday(expires_at) <= julianday('now')
+    `).all(ACCOUNT_SCOPED || context.account ? {
+      platform: WORKER_PLATFORM || context.platform,
+      account: WORKER_ACCOUNT || context.account,
+    } : {});
+    for (const row of rows) {
+      patchRequest(row.request_id, {
+        status: 'expired',
+        qr_payload: '',
+        worker_message: '登录任务已过期，请重新发起登录',
+      }, row);
+      stopWaRequest(row.request_id);
+    }
+  });
 }
 
 function startWaLogin(request) {
@@ -193,16 +203,17 @@ function startWaLogin(request) {
     }, request);
     return;
   }
+  const waSessionDir = waSessionDirFor(request);
 
   const client = new wa.Client({
     authStrategy: new wa.LocalAuth({
       clientId: sanitizeSegment(request.account),
-      dataPath: WA_AUTH_DATA_PATH,
+      dataPath: waSessionDir,
       rmMaxRetries: 10,
     }),
     authTimeoutMs: Number(process.env.WORKBENCH_WA_AUTH_TIMEOUT_MS || 300000),
     qrMaxRetries: Number(process.env.WORKBENCH_WA_QR_MAX_RETRIES || 0),
-    puppeteer: buildChromeLaunchConfig(),
+    puppeteer: buildChromeLaunchConfig(waSessionDir),
   });
 
   const state = {
@@ -413,12 +424,12 @@ function loadWhatsAppRuntime() {
   return require('whatsapp-web.js');
 }
 
-function buildChromeLaunchConfig() {
+function buildChromeLaunchConfig(sessionDir = WA_AUTH_DATA_PATH) {
   const executablePath = existingPath(process.env.PUPPETEER_EXECUTABLE_PATH) ||
     existingPath('/usr/bin/chromium') ||
     existingPath('/usr/bin/google-chrome') ||
     undefined;
-  const chromeStateDir = path.join(WA_AUTH_DATA_PATH, '.chromium');
+  const chromeStateDir = path.join(sessionDir, '.chromium');
   const xdgConfigDir = path.join(chromeStateDir, 'config');
   const xdgCacheDir = path.join(chromeStateDir, 'cache');
   const xdgRuntimeDir = path.join(chromeStateDir, 'runtime');
@@ -553,8 +564,9 @@ function releaseAccountLease() {
 }
 
 function saveTgCredential(request, data) {
-  fs.mkdirSync(TG_SESSION_DIR, { recursive: true });
-  const filePath = path.join(TG_SESSION_DIR, `${sanitizeSegment(request.account)}.json`);
+  const sessionDir = tgSessionDirFor(request);
+  fs.mkdirSync(sessionDir, { recursive: true });
+  const filePath = path.join(sessionDir, `${sanitizeSegment(request.account)}.json`);
   fs.writeFileSync(filePath, JSON.stringify({
     platform: 'tg',
     account: request.account,
@@ -565,22 +577,24 @@ function saveTgCredential(request, data) {
 }
 
 function patchRequest(requestId, patch, requestLike = {}) {
-  const request = updateServiceAccountLoginRequest(runtimeDb, requestId, patch);
-  if (request) {
-    upsertProfile({
-      platform: request.platform,
-      account: request.account,
-      display_name: requestLike.display_name || request.display_name,
-      login_mode: request.login_mode,
-    }, request.status, requestLike.display_name || request.display_name);
-    reportHeartbeat(request, patch.error_message ? 'error' : request.status, patch.worker_message || patch.error_message || '');
-  }
-  return request;
+  return withRuntimeDbFor(requestLike, (db) => {
+    const request = updateServiceAccountLoginRequest(db, requestId, patch);
+    if (request) {
+      upsertProfile({
+        platform: request.platform,
+        account: request.account,
+        display_name: requestLike.display_name || request.display_name,
+        login_mode: request.login_mode,
+      }, request.status, requestLike.display_name || request.display_name);
+      reportHeartbeat(db, request, patch.error_message ? 'error' : request.status, patch.worker_message || patch.error_message || '');
+    }
+    return request;
+  });
 }
 
 function upsertProfile(request, status, displayName) {
   upsertServiceAccountProfile({
-    dbPath: RAW_DB_PATH,
+    dbPath: rawDbPathFor(request),
     platform: request.platform,
     account: request.account,
     displayName: displayName || request.display_name || request.account,
@@ -589,9 +603,9 @@ function upsertProfile(request, status, displayName) {
   });
 }
 
-function reportHeartbeat(request, status, message) {
+function reportHeartbeat(db, request, status, message) {
   const accountId = `${request.platform}-${request.account}`;
-  runtimeDb.prepare(`
+  db.prepare(`
     INSERT INTO collector_heartbeats (
       account_id, platform, collector_id, run_id, status, phase, health_status,
       last_error, last_ready_at, started_at, updated_at
@@ -621,13 +635,99 @@ function reportHeartbeat(request, status, message) {
   });
 }
 
-function getRequest(requestId) {
-  const row = runtimeDb.prepare(`
-    SELECT *
-    FROM service_account_login_requests
-    WHERE request_id = ?
-  `).get(requestId);
-  return row ? mapRequestRow(row) : null;
+function forEachRuntimeDb(fn) {
+  if (ACCOUNT_DB_MODE && !ACCOUNT_SCOPED) {
+    for (const ref of listAccountRefs()) {
+      if (!fs.existsSync(ref.paths.runtimeDbPath)) continue;
+      const db = openRuntimeDb(ref.paths.runtimeDbPath);
+      try {
+        fn(db, { platform: ref.platform, account: ref.account, paths: ref.paths });
+      } finally {
+        db.close();
+      }
+    }
+    return;
+  }
+  fn(runtimeDb, {
+    platform: WORKER_PLATFORM,
+    account: WORKER_ACCOUNT,
+    paths: ACCOUNT_PATHS,
+  });
+}
+
+function withRuntimeDbFor(requestLike = {}, fn) {
+  if (ACCOUNT_DB_MODE && !ACCOUNT_SCOPED && requestLike.platform && requestLike.account) {
+    const paths = ensureAccountDatabases(requestLike.platform, requestLike.account);
+    const db = openRuntimeDb(paths.runtimeDbPath);
+    try {
+      return fn(db, { platform: paths.platform, account: paths.account, paths });
+    } finally {
+      db.close();
+    }
+  }
+  return fn(runtimeDb, {
+    platform: WORKER_PLATFORM,
+    account: WORKER_ACCOUNT,
+    paths: ACCOUNT_PATHS,
+  });
+}
+
+function pathsFor(requestLike = {}) {
+  if ((ACCOUNT_DB_MODE || ACCOUNT_SCOPED) && requestLike.platform && requestLike.account) {
+    return ensureAccountDatabases(requestLike.platform, requestLike.account);
+  }
+  return ACCOUNT_PATHS;
+}
+
+function rawDbPathFor(requestLike = {}) {
+  const paths = pathsFor(requestLike);
+  return paths ? paths.rawDbPath : RAW_DB_PATH;
+}
+
+function waSessionDirFor(requestLike = {}) {
+  const paths = pathsFor(requestLike);
+  const sessionDir = paths && normalizeAccountPlatform(requestLike.platform) === 'wa'
+    ? paths.sessionDir
+    : WA_AUTH_DATA_PATH;
+  fs.mkdirSync(sessionDir, { recursive: true });
+  return sessionDir;
+}
+
+function tgSessionDirFor(requestLike = {}) {
+  const paths = pathsFor(requestLike);
+  const sessionDir = paths && normalizeAccountPlatform(requestLike.platform) === 'tg'
+    ? paths.sessionDir
+    : TG_SESSION_DIR;
+  fs.mkdirSync(sessionDir, { recursive: true });
+  return sessionDir;
+}
+
+function getRequest(requestId, requestLike = {}) {
+  if (ACCOUNT_DB_MODE && !ACCOUNT_SCOPED && (!requestLike.platform || !requestLike.account)) {
+    for (const ref of listAccountRefs()) {
+      if (!fs.existsSync(ref.paths.runtimeDbPath)) continue;
+      const db = openRuntimeDb(ref.paths.runtimeDbPath);
+      try {
+        const row = db.prepare(`
+          SELECT *
+          FROM service_account_login_requests
+          WHERE request_id = ?
+        `).get(requestId);
+        if (row) return mapRequestRow(row);
+      } finally {
+        db.close();
+      }
+    }
+    return null;
+  }
+  return withRuntimeDbFor(requestLike, (db) => {
+    const row = db.prepare(`
+      SELECT *
+      FROM service_account_login_requests
+      WHERE request_id = ?
+    `).get(requestId);
+    return row ? mapRequestRow(row) : null;
+  });
 }
 
 function mapRequestRow(row) {
