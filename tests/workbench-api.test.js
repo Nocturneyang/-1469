@@ -159,6 +159,16 @@ async function main() {
     assert.ok(tgLoginFiles.length >= 1);
     const tgDoorbell = JSON.parse(fs.readFileSync(path.join(outboxDir, 'login-worker-tg-tg-login-bot', tgLoginFiles[0]), 'utf8'));
     assert.strictEqual(tgDoorbell.credential.value, '123456:super-secret-token');
+    const deletedTgLogin = await requestJson(`${baseUrl}/service-account-logins/${tgLogin.request.request_id}`, {
+      method: 'DELETE',
+    });
+    assert.strictEqual(deletedTgLogin.ok, true);
+    assert.strictEqual(deletedTgLogin.request.request_id, tgLogin.request.request_id);
+    const loginRequestsAfterDelete = await requestJson(`${baseUrl}/service-account-logins`);
+    assert.strictEqual(loginRequestsAfterDelete.requests.some((request) => request.request_id === tgLogin.request.request_id), false);
+    const tgLoginFilesAfterDelete = fs.readdirSync(path.join(outboxDir, 'login-worker-tg-tg-login-bot'))
+      .filter((file) => file.endsWith('.json'));
+    assert.strictEqual(tgLoginFilesAfterDelete.some((file) => file.includes(tgLogin.request.request_id)), false);
 
     insertRawAccount(rawDbPath, {
       id: 'wa-no-messages',

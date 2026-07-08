@@ -44,6 +44,7 @@ const {
 } = require('../../lib/access-control');
 const {
   createServiceAccountLoginRequest,
+  deleteServiceAccountLoginRequest,
   getServiceAccountLoginRequest,
   listServiceAccountLoginRequests,
   updateServiceAccountLoginRequest,
@@ -227,6 +228,27 @@ function createWorkbenchRouter({ workbenchDb, runtimeDb, rawDbPath = DEFAULT_RAW
         status: request.status,
       });
     }
+    res.json({ ok: true, request });
+  });
+
+  router.delete('/service-account-logins/:id', requireAdmin, (req, res) => {
+    const operator = currentOperatorContext(workbenchDb, req);
+    const request = deleteServiceAccountLoginRequest(runtimeDb, req.params.id, { outboxDir: doorbellRoot });
+    if (!request) throw createHttpError(404, 'login request not found');
+    writeAction(
+      workbenchDb,
+      operator.id,
+      'service_account.login.delete',
+      request.platform,
+      request.account,
+      null,
+      request.request_id,
+      {
+        login_mode: request.login_mode,
+        status: request.status,
+        deleted_doorbells: request.deleted_doorbells,
+      },
+    );
     res.json({ ok: true, request });
   });
 

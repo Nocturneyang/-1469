@@ -108,8 +108,8 @@
               :key="request.request_id"
               class="service-login-request"
               :class="[
-                `platform-${request.platform || 'unknown'}`,
-                `status-${request.status || 'unknown'}`,
+                `service-login-platform-${request.platform || 'unknown'}`,
+                `service-login-status-${request.status || 'unknown'}`,
               ]"
             >
               <div class="service-login-account">
@@ -122,6 +122,17 @@
                 <strong>{{ request.display_name || request.account }}</strong>
                 <span>{{ platformText(request.platform) }} · {{ request.account }}</span>
                 <small>{{ loginModeText(request.login_mode) }}</small>
+                <el-button
+                  class="service-login-delete-button"
+                  text
+                  type="danger"
+                  size="small"
+                  :icon="Delete"
+                  :loading="isDeleting(request)"
+                  @click="confirmDelete(request)"
+                >
+                  删除
+                </el-button>
               </div>
 
               <div class="service-login-request-main">
@@ -195,11 +206,13 @@
 
 <script setup>
 import { computed, onMounted, onUnmounted, reactive, ref } from 'vue';
-import { ElMessage } from 'element-plus';
+import { ElMessage, ElMessageBox } from 'element-plus';
+import { Delete } from '@element-plus/icons-vue';
 import QRCodeModel from 'qrcode-terminal/vendor/QRCode/index.js';
 import QRErrorCorrectLevel from 'qrcode-terminal/vendor/QRCode/QRErrorCorrectLevel.js';
 import {
   createServiceAccountLoginRequest,
+  deleteServiceAccountLoginRequest,
   fetchServiceAccountLoginRequests,
 } from '../api';
 
@@ -224,6 +237,7 @@ const form = reactive({
 const requests = ref([]);
 const loading = ref(false);
 const submitting = ref(false);
+const deletingIds = ref(new Set());
 const showCredential = ref(false);
 const qrMatrices = reactive({});
 let refreshTimer = null;
@@ -346,6 +360,47 @@ async function submit() {
   } finally {
     submitting.value = false;
   }
+}
+
+async function confirmDelete(request) {
+  if (!request || isDeleting(request)) return;
+  try {
+    await ElMessageBox.confirm(
+      `删除后仅移除这条登录任务记录，不会删除 ${request.account} 的账号档案或已存在 session。`,
+      '删除登录任务',
+      {
+        type: 'warning',
+        confirmButtonText: '删除',
+        cancelButtonText: '取消',
+      },
+    );
+  } catch (err) {
+    return;
+  }
+
+  setDeleting(request.request_id, true);
+  try {
+    await deleteServiceAccountLoginRequest(request.request_id);
+    requests.value = requests.value.filter((item) => item.request_id !== request.request_id);
+    delete qrMatrices[request.request_id];
+    syncAutoRefresh();
+    ElMessage.success('登录任务已删除');
+  } catch (err) {
+    ElMessage.error(err.response?.data?.error || '删除登录任务失败');
+  } finally {
+    setDeleting(request.request_id, false);
+  }
+}
+
+function isDeleting(request) {
+  return deletingIds.value.has(request.request_id);
+}
+
+function setDeleting(requestId, deleting) {
+  const next = new Set(deletingIds.value);
+  if (deleting) next.add(requestId);
+  else next.delete(requestId);
+  deletingIds.value = next;
 }
 
 function renderQrMatrices() {
