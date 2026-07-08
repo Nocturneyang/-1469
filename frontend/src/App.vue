@@ -35,7 +35,6 @@
       @open-permissions="openWorkbenchPermissions"
       @open-account-settings="openAccountSettings"
       @open-service-access="openServiceAccounts"
-      @open-service-login="openServiceLogin"
     />
 
     <div class="workspace-shell">
@@ -91,7 +90,7 @@
     </div>
 
     <div v-if="error" class="toast-error">{{ error }}</div>
-    <div v-else-if="noServiceAccount" class="toast-warn">请先通过账号登录接入至少 1 个服务账号，并在权限配置中授权可见范围。</div>
+    <div v-else-if="noServiceAccount" class="toast-warn">请先在服务账号中接入至少 1 个账号，并在权限管理中授权可见范围。</div>
   </div>
 </template>
 

@@ -1225,7 +1225,8 @@ button {
 .rail-all-button,
 .rail-account,
 .portal-shortcut,
-.rail-permission-button {
+.rail-permission-button,
+.rail-profile-button {
   width: 100%;
   min-width: 0;
   border: 1px solid transparent;
@@ -1253,7 +1254,8 @@ button {
 .rail-all-button:hover,
 .rail-account:hover,
 .portal-shortcut:hover,
-.rail-permission-button:hover {
+.rail-permission-button:hover,
+.rail-profile-button:hover {
   background: var(--surface-muted);
 }
 
@@ -1317,7 +1319,9 @@ button {
 .rail-account strong,
 .rail-account small,
 .rail-permission-button strong,
-.rail-permission-button small {
+.rail-permission-button small,
+.rail-profile-button strong,
+.rail-profile-button small {
   min-width: 0;
   display: block;
   overflow: hidden;
@@ -1327,14 +1331,16 @@ button {
 
 .rail-all-button strong,
 .rail-account strong,
-.rail-permission-button strong {
+.rail-permission-button strong,
+.rail-profile-button strong {
   font-size: 13px;
   font-weight: 760;
 }
 
 .rail-all-button small,
 .rail-account small,
-.rail-permission-button small {
+.rail-permission-button small,
+.rail-profile-button small {
   margin-top: 3px;
   color: var(--muted);
   font-size: 11px;
@@ -1393,13 +1399,18 @@ button {
   box-shadow: 0 6px 18px rgba(24, 35, 30, 0.05);
 }
 
-.rail-permission-button {
+.rail-permission-button,
+.rail-profile-button {
   min-height: 56px;
   display: grid;
   grid-template-columns: 34px minmax(0, 1fr);
   gap: 10px;
   align-items: center;
   padding: 10px;
+}
+
+.rail-profile-button {
+  margin-top: 10px;
 }
 
 .scope-card strong {
@@ -1429,6 +1440,7 @@ button {
 .service-rail.collapsed .brand-copy,
 .service-rail.collapsed .rail-all-button span:not(.rail-icon),
 .service-rail.collapsed .rail-permission-button span:not(.rail-icon),
+.service-rail.collapsed .rail-profile-button span:not(.rail-icon),
 .service-rail.collapsed .portal-shortcut strong,
 .service-rail.collapsed .rail-section-title,
 .service-rail.collapsed .rail-account-copy,
@@ -1440,7 +1452,8 @@ button {
 .service-rail.collapsed .rail-all-button,
 .service-rail.collapsed .rail-account,
 .service-rail.collapsed .portal-shortcut,
-.service-rail.collapsed .rail-permission-button {
+.service-rail.collapsed .rail-permission-button,
+.service-rail.collapsed .rail-profile-button {
   width: 44px;
   height: 44px;
   min-height: 44px;
@@ -2646,6 +2659,7 @@ button {
   .brand-copy,
   .rail-all-button span:not(.rail-icon),
   .rail-permission-button span:not(.rail-icon),
+  .rail-profile-button span:not(.rail-icon),
   .rail-account-copy,
   .rail-account em,
   .scope-card,
@@ -2656,6 +2670,7 @@ button {
   .rail-brand,
   .rail-all-button,
   .rail-permission-button,
+  .rail-profile-button,
   .rail-account {
     grid-template-columns: 1fr;
     justify-items: center;
@@ -2842,6 +2857,7 @@ button {
   .brand-copy,
   .rail-all-button span:not(.rail-icon),
   .rail-permission-button span:not(.rail-icon),
+  .rail-profile-button span:not(.rail-icon),
   .rail-account-copy,
   .rail-account em,
   .rail-section-title {
@@ -2862,7 +2878,8 @@ button {
     justify-items: start;
   }
 
-  .rail-permission-button {
+  .rail-permission-button,
+  .rail-profile-button {
     min-width: 100%;
     margin-top: 10px;
     grid-template-columns: 34px minmax(0, 1fr);
@@ -2967,6 +2984,7 @@ button {
   .service-rail.collapsed .brand-copy,
   .service-rail.collapsed .rail-all-button span:not(.rail-icon),
   .service-rail.collapsed .rail-permission-button span:not(.rail-icon),
+  .service-rail.collapsed .rail-profile-button span:not(.rail-icon),
   .service-rail.collapsed .rail-account-copy,
   .service-rail.collapsed .rail-account em,
   .service-rail.collapsed .rail-section-title {
@@ -2983,7 +3001,8 @@ button {
     padding: 10px;
   }
 
-  .service-rail.collapsed .rail-permission-button {
+  .service-rail.collapsed .rail-permission-button,
+  .service-rail.collapsed .rail-profile-button {
     width: 100%;
     min-width: 100%;
     height: auto;

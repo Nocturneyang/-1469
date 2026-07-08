@@ -2,8 +2,8 @@
   <main class="account-page">
     <header class="account-header">
       <div>
-        <h1>账户设置</h1>
-        <p>当前工作台登录身份与服务范围</p>
+        <h1>我的账户</h1>
+        <p>当前登录身份、入口权限与服务账号范围</p>
       </div>
       <div class="account-header-actions">
         <el-button @click="$emit('back')">返回工作台</el-button>
@@ -63,7 +63,7 @@
       </section>
 
       <section class="account-panel account-note">
-        <h2>服务账号登录位置</h2>
+        <h2>服务账号接入说明</h2>
         <p>WA/TG 服务账号从工作台自己的登录入口发起，由工作台运行态 worker 执行登录和维护，账号权限与会话数据不与监控项目共用。</p>
       </section>
     </section>
@@ -131,7 +131,7 @@ const roleText = computed(() => {
 
 const portalText = computed(() => {
   const items = ['工作台'];
-  if (props.portalAccess?.can_admin) items.push('权限配置');
+  if (props.portalAccess?.can_admin) items.push('权限管理');
   return items.join(' / ');
 });
 

@@ -2,11 +2,11 @@
   <main class="service-access-page">
     <header class="service-access-header">
       <div>
-        <h1>服务账号接入</h1>
-        <p>WA/TG 服务账号状态与工作台独立可见范围</p>
+        <h1>服务账号</h1>
+        <p>WA/TG 账号状态、登录入口与工作台可见范围</p>
       </div>
       <div class="service-access-actions">
-        <el-button type="primary" @click="$emit('open-login')">登录服务账号</el-button>
+        <el-button type="primary" @click="$emit('open-login')">新增登录</el-button>
         <el-button @click="$emit('back')">返回工作台</el-button>
       </div>
     </header>

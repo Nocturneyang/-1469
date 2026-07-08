@@ -28,39 +28,21 @@
       <button
         type="button"
         class="portal-shortcut"
-        title="服务账号接入"
+        title="服务账号总览与登录"
         @click="$emit('open-service-access')"
       >
-        <span>接</span>
-        <strong>服务接入</strong>
-      </button>
-      <button
-        type="button"
-        class="portal-shortcut"
-        title="服务账号登录"
-        @click="$emit('open-service-login')"
-      >
-        <span>登</span>
-        <strong>账号登录</strong>
-      </button>
-      <button
-        type="button"
-        class="portal-shortcut"
-        title="账户设置"
-        @click="$emit('open-account-settings')"
-      >
-        <span>账</span>
-        <strong>账户设置</strong>
+        <span>号</span>
+        <strong>服务账号</strong>
       </button>
       <a
         v-if="canOpenAdmin"
         class="portal-shortcut"
         href="/admin"
-        title="权限配置"
+        title="坐席权限管理"
         @click.prevent="$emit('open-permissions')"
       >
         <span>权</span>
-        <strong>权限配置</strong>
+        <strong>权限管理</strong>
       </a>
     </div>
 
@@ -111,16 +93,15 @@
     </div>
 
     <button
-      v-if="operator && operator.is_super_admin"
       type="button"
-      class="rail-permission-button"
-      title="工作台权限配置"
-      @click="$emit('open-permissions')"
+      class="rail-profile-button"
+      title="我的账户"
+      @click="$emit('open-account-settings')"
     >
-      <span class="rail-icon">权</span>
+      <span class="rail-icon">我</span>
       <span>
-        <strong>权限配置</strong>
-        <small>全局入口与坐席范围</small>
+        <strong>{{ operatorName }}</strong>
+        <small>我的账户 / 退出</small>
       </span>
     </button>
   </aside>
@@ -165,7 +146,6 @@ defineEmits([
   'open-permissions',
   'open-account-settings',
   'open-service-access',
-  'open-service-login',
 ]);
 
 const totalMessageCount = computed(() => props.accounts.reduce((sum, account) => (
@@ -188,6 +168,12 @@ const scopeTitle = computed(() => {
 const canOpenAdmin = computed(() => Boolean(
   props.operator && props.operator.is_super_admin
 ) || Boolean(props.portalAccess && props.portalAccess.can_admin));
+
+const operatorName = computed(() => (
+  props.operator?.display_name ||
+  props.operator?.username ||
+  '我的账户'
+));
 
 const scopeDescription = computed(() => {
   if (!props.accountScope || !props.accountScope.active) return '来自工作台独立数据源的服务账号';

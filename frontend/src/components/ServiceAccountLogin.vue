@@ -2,7 +2,7 @@
   <main class="service-login-page">
     <header class="service-login-header">
       <div>
-        <h1>服务账号登录</h1>
+        <h1>新增服务账号</h1>
         <p>工作台独立 WA/TG 接入入口，任务、二维码和运行状态只写入工作台运行库</p>
       </div>
       <div class="service-login-actions">

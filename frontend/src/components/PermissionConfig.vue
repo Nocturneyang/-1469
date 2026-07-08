@@ -2,7 +2,7 @@
   <main class="permission-page">
     <header class="permission-header">
       <div>
-        <h1>权限配置</h1>
+        <h1>权限管理</h1>
         <p>工作台坐席身份、入口权限与服务账号范围</p>
       </div>
       <div class="permission-header-actions">
@@ -127,11 +127,11 @@
             </div>
             <div class="portal-access-grid">
               <el-checkbox v-model="portalDraft.can_workbench" border>工作台</el-checkbox>
-              <el-checkbox v-model="portalDraft.can_admin" border>权限配置</el-checkbox>
+              <el-checkbox v-model="portalDraft.can_admin" border>权限管理</el-checkbox>
               <el-select v-model="portalDraft.default_entry" placeholder="默认入口">
                 <el-option label="自动" value="auto" />
                 <el-option label="工作台" value="workbench" />
-                <el-option label="权限配置" value="admin" />
+                <el-option label="权限管理" value="admin" />
               </el-select>
             </div>
           </div>
@@ -299,7 +299,7 @@ async function load() {
       selectedUserId.value = users.value[0]?.id || '';
     }
   } catch (err) {
-    ElMessage.error(err.response?.data?.error || '无法加载权限配置');
+    ElMessage.error(err.response?.data?.error || '无法加载权限管理');
   } finally {
     loading.value = false;
   }
@@ -472,7 +472,7 @@ function initialOf(user = {}) {
 }
 
 function entryLabel(value) {
-  if (value === 'admin') return '权限配置';
+  if (value === 'admin') return '权限管理';
   if (value === 'workbench') return '工作台';
   return '自动';
 }
