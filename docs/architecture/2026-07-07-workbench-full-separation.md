@@ -13,7 +13,7 @@
 - 独立权限：`/admin` 只管理工作台坐席、角色、入口权限、服务账号和分组范围。
 - 独立前端：工作台不展示监控入口，不复用监控项目路由或页面。
 - 独立服务账号登录：`/service-account-login` 发起 WA/TG 登录任务，状态写入 `runtime.sqlite`，账号档案写入 `raw.sqlite`。
-- 独立 worker：工作台 runtime worker 消费 `outbox/login-worker-*` 和 `outbox/worker-*`，持有工作台服务账号 session。
+- 独立 worker：`social-workbench-login-worker` 消费 `outbox/login-worker-*`，持有工作台 WA/TG 登录 session；后续发送/同步 worker 消费 `outbox/worker-*`。
 
 ## SQLite 分层
 
@@ -41,12 +41,14 @@ runtime.sqlite
 -> runtime.sqlite 写 service_account_login_requests
 -> raw.sqlite 写服务账号档案
 -> outbox/login-worker-{platform}-{account}/request.json
--> 工作台 runtime worker 执行 WA 扫码或 TG token/session 登录
+-> social-workbench-login-worker 执行 WA 扫码或 TG token/session 登录
 -> worker 回写 runtime.sqlite 状态和 raw.sqlite 账号状态
 -> /service-accounts 展示已接入状态
 ```
 
-工作台 API 只创建登录任务，不在请求线程里长期持有 WA/TG client。真正持有 session 的进程必须是工作台 runtime worker。
+工作台 API 只创建登录任务，不在请求线程里长期持有 WA/TG client。真正持有 session 的进程必须是工作台自己的 worker。WA 登录参考监控项目 `worker-wa.js` 的 `whatsapp-web.js + LocalAuth + qr/authenticated/ready` 事件模型，但 session 路径、SQLite 写入和 PM2 进程均属于工作台项目，不复用监控项目 worker。
+
+生产中如果页面停留在“等待二维码”，优先检查 `social-workbench-login-worker` 是否已启动、是否能访问 Chromium、是否能写入 `/data/db/runtime.sqlite` 和 `/data/sessions/wa`。
 
 ## 当前入口
 
@@ -62,6 +64,8 @@ runtime.sqlite
 - 域名：`social-workbench.tyhark.com`
 - Deploy Hub 配置：`workbench/.deployhub/`
 - 生产数据目录：`/data/db/`
+- WA session 目录：`/data/sessions/wa`
+- TG session 目录：`/data/sessions/tg`
 - 平台外层 SSO：`sso: true`
 
 Deploy Hub 的 SSO 是公网网关认证要求，不代表工作台可以复用监控项目登录或权限。工作台应用内仍保持自己的用户、角色、入口权限和服务账号范围。

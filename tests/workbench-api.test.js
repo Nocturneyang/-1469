@@ -128,6 +128,17 @@ async function main() {
     assert.strictEqual(waLogin.request.status, 'waiting_qr');
     assert.ok(fs.readdirSync(path.join(outboxDir, 'login-worker-wa-wa-login-test')).some((file) => file.endsWith('.json')));
 
+    const waQrPatch = await requestJson(`${baseUrl}/service-account-logins/${waLogin.request.request_id}`, {
+      method: 'PATCH',
+      body: {
+        status: 'waiting_qr',
+        qr_payload: 'wa-qr-payload-for-render-test',
+        worker_message: 'QR ready',
+      },
+    });
+    assert.strictEqual(waQrPatch.request.qr_payload, 'wa-qr-payload-for-render-test');
+    assert.strictEqual(waQrPatch.request.worker_message, 'QR ready');
+
     const tgLogin = await requestJson(`${baseUrl}/service-account-logins`, {
       method: 'POST',
       body: {

@@ -92,6 +92,24 @@
                 <dd>{{ timeText(request.expires_at) }}</dd>
               </div>
             </dl>
+            <div v-if="request.login_mode === 'wa_qr'" class="service-login-qr">
+              <div
+                v-if="qrMatrices[request.request_id]"
+                class="service-login-qr-grid"
+                :style="{ '--qr-size': qrMatrices[request.request_id].size }"
+                aria-label="WA 登录二维码"
+              >
+                <i
+                  v-for="(cell, index) in qrMatrices[request.request_id].cells"
+                  :key="`${request.request_id}-${index}`"
+                  :class="{ dark: cell }"
+                />
+              </div>
+              <div v-else-if="request.status === 'waiting_qr'" class="service-login-qr-pending">
+                正在等待 WA worker 生成二维码
+              </div>
+              <span v-if="qrMatrices[request.request_id]">打开 WhatsApp 扫描二维码完成登录</span>
+            </div>
             <p v-if="request.worker_message">{{ request.worker_message }}</p>
             <p v-if="request.error_message" class="service-login-error">{{ request.error_message }}</p>
           </article>
@@ -102,8 +120,10 @@
 </template>
 
 <script setup>
-import { computed, onMounted, reactive, ref } from 'vue';
+import { computed, onMounted, onUnmounted, reactive, ref } from 'vue';
 import { ElMessage } from 'element-plus';
+import QRCodeModel from 'qrcode-terminal/vendor/QRCode/index.js';
+import QRErrorCorrectLevel from 'qrcode-terminal/vendor/QRCode/QRErrorCorrectLevel.js';
 import {
   createServiceAccountLoginRequest,
   fetchServiceAccountLoginRequests,
@@ -131,6 +151,10 @@ const requests = ref([]);
 const loading = ref(false);
 const submitting = ref(false);
 const showCredential = ref(false);
+const qrMatrices = reactive({});
+let refreshTimer = null;
+
+const activeStatuses = new Set(['requested', 'waiting_qr', 'waiting_verification']);
 
 const modeOptions = computed(() => (
   form.platform === 'wa'
@@ -155,7 +179,13 @@ const submitHint = computed(() => {
   return '提交后由工作台 TG worker 校验并接管登录。';
 });
 
-onMounted(loadRequests);
+onMounted(async () => {
+  await loadRequests();
+});
+
+onUnmounted(() => {
+  stopAutoRefresh();
+});
 
 function handlePlatformChange() {
   form.login_mode = form.platform === 'wa' ? 'wa_qr' : 'tg_bot_token';
@@ -166,6 +196,8 @@ async function loadRequests() {
   loading.value = true;
   try {
     requests.value = await fetchServiceAccountLoginRequests();
+    renderQrMatrices();
+    syncAutoRefresh();
   } catch (err) {
     ElMessage.error('无法加载登录任务');
   } finally {
@@ -199,6 +231,55 @@ async function submit() {
   } finally {
     submitting.value = false;
   }
+}
+
+function renderQrMatrices() {
+  const nextKeys = new Set();
+  requests.value.forEach((request) => {
+    if (!request.qr_payload) return;
+    nextKeys.add(request.request_id);
+    qrMatrices[request.request_id] = buildQrMatrix(request.qr_payload);
+  });
+  Object.keys(qrMatrices).forEach((key) => {
+    if (!nextKeys.has(key)) delete qrMatrices[key];
+  });
+}
+
+function buildQrMatrix(payload) {
+  const qr = new QRCodeModel(-1, QRErrorCorrectLevel.M);
+  qr.addData(payload);
+  qr.make();
+  const quietZone = 4;
+  const moduleCount = qr.getModuleCount();
+  const size = moduleCount + quietZone * 2;
+  const cells = [];
+  for (let row = 0; row < size; row += 1) {
+    for (let col = 0; col < size; col += 1) {
+      const qrRow = row - quietZone;
+      const qrCol = col - quietZone;
+      const dark = qrRow >= 0 && qrRow < moduleCount && qrCol >= 0 && qrCol < moduleCount
+        ? qr.isDark(qrRow, qrCol)
+        : false;
+      cells.push(dark);
+    }
+  }
+  return { size, cells };
+}
+
+function syncAutoRefresh() {
+  const shouldRefresh = requests.value.some((request) => activeStatuses.has(request.status));
+  if (shouldRefresh && !refreshTimer) {
+    refreshTimer = window.setInterval(() => {
+      loadRequests();
+    }, 3000);
+  }
+  if (!shouldRefresh) stopAutoRefresh();
+}
+
+function stopAutoRefresh() {
+  if (!refreshTimer) return;
+  window.clearInterval(refreshTimer);
+  refreshTimer = null;
 }
 
 function platformText(platform) {

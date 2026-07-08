@@ -27,6 +27,16 @@
 
 公网入口统一经过 skyline-ark-sso 网关，工作台应用内的坐席身份、角色、入口权限和服务账号范围写入 `workbench.sqlite`。`1469` 工号默认是工作台超级管理员。服务账号登录入口位于 `/service-account-login`，登录任务写入 `runtime.sqlite`，账号档案写入 `raw.sqlite`。`JWT_SECRET`、SSO 配置和后续渠道密钥必须放在 K8s/Deploy Hub Secret 或工作台 runtime worker 的独立安全存储中。
 
+## 服务账号登录 worker
+
+2026-07-07 追加：生产环境必须启动 `social-workbench-login-worker`，否则 WA 登录任务只会停留在 `waiting_qr`，不会生成二维码。
+
+- WA：参考监控项目 WA 登录方式，使用 `whatsapp-web.js`、`LocalAuth`、Chromium 和 `qr/authenticated/ready` 事件；二维码写回工作台 `runtime.sqlite` 的 `qr_payload`。
+- TG Bot：参考监控项目 TG Bot 登录方式，使用 `node-telegram-bot-api` 调用 `getMe()` 校验 token；token 只通过一次性 outbox 文件交给 worker，处理后删除 outbox 文件。
+- TG 用户 Session：参考监控项目 TG 用户号方式，使用 GramJS `TelegramClient + StringSession` 校验 session；需要配置 `WORKBENCH_TG_API_ID` / `WORKBENCH_TG_API_HASH` 或账号专属变量。
+- Session 路径独立：WA 使用 `/data/sessions/wa`，TG 使用 `/data/sessions/tg`。
+- 状态独立：登录任务写 `runtime.sqlite`，账号档案写 `raw.sqlite`，不写监控项目数据库。
+
 ## 部署
 
 新增独立部署材料：
@@ -37,7 +47,7 @@
 - `.deployhub/deploy.yaml`
 - `.deployhub/k8s/app.yaml`
 
-默认服务名为 `social-workbench`，域名为 `social-workbench.tyhark.com`，PVC 为 `social-workbench-sqlite-pvc`。
+默认服务名为 `social-workbench`，域名为 `social-workbench.tyhark.com`，PVC 为 `social-workbench-sqlite-pvc`。PM2 生产进程包括 API/UI `social-workbench` 和登录执行层 `social-workbench-login-worker`。
 
 ## 验证
 

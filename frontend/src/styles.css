@@ -682,6 +682,55 @@ button {
   line-height: 1.45;
 }
 
+.service-login-qr {
+  display: grid;
+  justify-items: start;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.service-login-qr-grid {
+  width: 220px;
+  height: 220px;
+  display: grid;
+  grid-template-columns: repeat(var(--qr-size), 1fr);
+  grid-template-rows: repeat(var(--qr-size), 1fr);
+  border: 1px solid var(--line-soft);
+  border-radius: 6px;
+  background: #fff;
+  overflow: hidden;
+}
+
+.service-login-qr-grid i {
+  display: block;
+  background: #fff;
+}
+
+.service-login-qr-grid i.dark {
+  background: #111827;
+}
+
+.service-login-qr span {
+  white-space: normal;
+}
+
+.service-login-qr-pending {
+  width: 220px;
+  height: 220px;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  color: var(--muted);
+  font-size: 13px;
+  text-align: center;
+  border: 1px dashed var(--line);
+  border-radius: 6px;
+  background: var(--surface-muted);
+}
+
 .service-login-error {
   color: #b42318 !important;
 }

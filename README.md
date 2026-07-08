@@ -72,9 +72,9 @@ runtime.sqlite    # 工作台运行态、服务账号登录任务和 worker 状�
 
 服务账号登录入口 `/service-account-login` 用于在工作台内发起 WA/TG 登录任务：
 
-- WA：创建扫码登录任务，等待工作台 WA worker 回写二维码和登录状态。
-- TG Bot：提交 Bot Token，工作台只在一次性登录任务中交给工作台 TG worker 校验和接管。
-- TG 用户号：提交或导入 session，工作台 TG worker 接管后写入工作台自己的运行态/session 存储。
+- WA：创建扫码登录任务，由工作台 `social-workbench-login-worker` 启动独立 `whatsapp-web.js` LocalAuth session，回写二维码和登录状态。
+- TG Bot：提交 Bot Token，工作台只在一次性登录任务中交给 `social-workbench-login-worker` 校验，校验成功后写入工作台自己的 TG session 存储。
+- TG 用户号：提交或导入 session，`social-workbench-login-worker` 使用工作台自己的 API ID/API Hash 校验，接管后写入工作台自己的运行态/session 存储。
 
 服务账号接入页 `/service-accounts` 用于查看 WA/TG 服务账号状态、用途、发送开关、分组同步和风险等级。服务账号登录任务、状态和账号档案只写入工作台自己的 `runtime.sqlite` / `raw.sqlite`。
 
@@ -110,8 +110,24 @@ workbench/.local-data/db/
 npm run build
 npm test
 npm run init-db
+npm run login-worker
 npm run seed:demo
 npm run seed:demo-workbench
+```
+
+本地调试 WA 二维码登录时，需要同时启动 API/UI 和登录 worker，并确保本机可用 Chromium：
+
+```bash
+npm run dev
+npm run login-worker
+```
+
+登录 worker 使用工作台自己的目录：
+
+```text
+WORKBENCH_WA_AUTH_DATA_PATH=.local-data/sessions/wa
+WORKBENCH_TG_SESSION_DIR=.local-data/sessions/tg
+WORKBENCH_OUTBOX_DIR=.local-data/outbox
 ```
 
 ## 部署
@@ -132,6 +148,11 @@ sso: true
 ```
 
 Deploy Hub 当前要求公网服务必须开启 skyline-ark-sso 外层认证，因此 `sso: true` 是平台部署合规要求。工作台应用内的身份、角色、入口权限、服务账号登录任务和服务范围写入工作台自己的 SQLite，不与监控项目共用 SQLite。
+
+生产容器通过 `ecosystem.cloud.config.js` 同时启动：
+
+- `social-workbench`：API/UI。
+- `social-workbench-login-worker`：工作台独立 WA/TG 服务账号登录执行层。
 
 部署前建议执行：
 

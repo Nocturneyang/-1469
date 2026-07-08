@@ -5,7 +5,9 @@ WORKDIR /app
 ENV NODE_ENV=production \
     PORT=3000 \
     DATA_DIR=/data \
-    WORKBENCH_DB_DIR=/data/db
+    WORKBENCH_DB_DIR=/data/db \
+    PUPPETEER_SKIP_DOWNLOAD=true \
+    PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
 
 RUN sed -i 's|deb.debian.org|mirrors.aliyun.com|g' /etc/apt/sources.list.d/debian.sources 2>/dev/null || \
     sed -i 's|deb.debian.org|mirrors.aliyun.com|g' /etc/apt/sources.list 2>/dev/null || true
@@ -13,6 +15,10 @@ RUN sed -i 's|deb.debian.org|mirrors.aliyun.com|g' /etc/apt/sources.list.d/debia
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     ca-certificates \
+    chromium \
+    fonts-liberation \
+    fonts-noto-cjk \
+    procps \
     python3 \
     && rm -rf /var/lib/apt/lists/*
 

@@ -113,11 +113,11 @@ spec:
               mountPath: /data
           resources:
             requests:
-              cpu: 300m
-              memory: 512Mi
+              cpu: 500m
+              memory: 768Mi
             limits:
-              cpu: "1"
-              memory: 1Gi
+              cpu: "2"
+              memory: 2Gi
       volumes:
         - name: data
           persistentVolumeClaim:
