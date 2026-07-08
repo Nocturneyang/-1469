@@ -61,7 +61,7 @@ function ensureRawDb(dbPath = DEFAULT_RAW_DB_PATH) {
       account_role TEXT NOT NULL DEFAULT 'service',
       workbench_visible INTEGER NOT NULL DEFAULT 1,
       collect_enabled INTEGER NOT NULL DEFAULT 1,
-      send_enabled INTEGER NOT NULL DEFAULT 0,
+      send_enabled INTEGER NOT NULL DEFAULT 1,
       sync_groups_enabled INTEGER NOT NULL DEFAULT 0,
       risk_level TEXT NOT NULL DEFAULT 'low',
       owner_team TEXT,
@@ -92,7 +92,7 @@ function migrateRawDbSchema(db) {
   ensureColumn(db, 'channel_account_registry', 'account_role', "TEXT NOT NULL DEFAULT 'service'");
   ensureColumn(db, 'channel_account_registry', 'workbench_visible', 'INTEGER NOT NULL DEFAULT 1');
   ensureColumn(db, 'channel_account_registry', 'collect_enabled', 'INTEGER NOT NULL DEFAULT 1');
-  ensureColumn(db, 'channel_account_registry', 'send_enabled', 'INTEGER NOT NULL DEFAULT 0');
+  ensureColumn(db, 'channel_account_registry', 'send_enabled', 'INTEGER NOT NULL DEFAULT 1');
   ensureColumn(db, 'channel_account_registry', 'sync_groups_enabled', 'INTEGER NOT NULL DEFAULT 0');
   ensureColumn(db, 'channel_account_registry', 'risk_level', "TEXT NOT NULL DEFAULT 'low'");
   ensureColumn(db, 'channel_account_registry', 'status', 'TEXT');
@@ -113,6 +113,7 @@ function upsertServiceAccountProfile({
   loginType = 'workbench_login',
   status = 'login_requested',
   accountRole = 'service',
+  sendEnabled = 1,
 } = {}) {
   const normalizedPlatform = normalizePlatform(platform);
   const normalizedAccount = String(account || '').trim();
@@ -144,7 +145,7 @@ function upsertServiceAccountProfile({
       )
       VALUES (
         @platform, @account, @displayName, @loginType, @accountRole,
-        1, 1, 0, 1, 'low', @status, @now
+        1, 1, @sendEnabled, 1, 'low', @status, @now
       )
       ON CONFLICT(account) DO UPDATE SET
         platform = excluded.platform,
@@ -160,6 +161,7 @@ function upsertServiceAccountProfile({
       displayName: String(displayName || normalizedAccount).trim() || normalizedAccount,
       loginType,
       accountRole,
+      sendEnabled: Number(sendEnabled) === 0 ? 0 : 1,
       status,
       now,
     });

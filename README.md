@@ -172,7 +172,7 @@ npm run account-supervisor
 WORKBENCH_SEND_ENABLED=1
 ```
 
-如果需要紧急切到只收不发，可以把该环境变量改为 `0` 后重新部署。账号自身的 `send_enabled` 和发送熔断仍会继续生效。
+新登录的服务账号默认 `send_enabled=1`，可以直接发送。后续如果需要把某个账号改成只收不发，可单独关闭该账号的 `send_enabled`；如果需要全局紧急切到只收不发，可以把 `WORKBENCH_SEND_ENABLED` 改为 `0` 后重新部署。账号自身的 `send_enabled` 和发送熔断仍会继续生效。
 
 账号隔离目录结构：
 

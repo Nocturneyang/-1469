@@ -53,7 +53,7 @@ supervisor 默认只拉起满足以下条件的账号：
 WORKBENCH_SEND_ENABLED=1
 ```
 
-账号 worker 会消费 `outbound_messages(status=pending)`，按账号串行调用真实渠道发送。入站采集和群列表同步不依赖这个开关。需要紧急只收不发时，可以把 `WORKBENCH_SEND_ENABLED=0` 后重新部署；账号自身 `send_enabled`、坐席权限和发送熔断仍然是独立保护。
+新登录的服务账号默认 `send_enabled=1`，账号 worker 会消费 `outbound_messages(status=pending)`，按账号串行调用真实渠道发送。入站采集和群列表同步不依赖这个开关。需要单账号只收不发时，可关闭该账号的 `send_enabled`；需要全局紧急只收不发时，可以把 `WORKBENCH_SEND_ENABLED=0` 后重新部署。账号自身 `send_enabled`、坐席权限和发送熔断仍然是独立保护。
 
 ## 第一版范围
 

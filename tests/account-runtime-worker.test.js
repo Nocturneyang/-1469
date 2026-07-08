@@ -71,6 +71,17 @@ async function main() {
       loginType: 'wa_qr',
       status: 'authenticated',
     });
+    assert.strictEqual(readSendEnabled(waPaths.rawDbPath, 'wa-runtime'), 1);
+    upsertServiceAccountProfile({
+      dbPath: waPaths.rawDbPath,
+      platform: 'wa',
+      account: 'wa-runtime',
+      displayName: 'WA Runtime',
+      loginType: 'wa_qr',
+      status: 'ready',
+      sendEnabled: 0,
+    });
+    assert.strictEqual(readSendEnabled(waPaths.rawDbPath, 'wa-runtime'), 1);
 
     const tgPaths = ensureAccountDatabases('tg', 'tg-waiting', { accountDataDir });
     upsertServiceAccountProfile({
@@ -110,6 +121,20 @@ async function main() {
     assert.deepStrictEqual(forced.map((ref) => accountKey(ref.platform, ref.account)), ['tg:tg-waiting']);
   } finally {
     fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+}
+
+function readSendEnabled(rawDbPath, account) {
+  const db = ensureRawDb(rawDbPath);
+  try {
+    const row = db.prepare(`
+      SELECT send_enabled
+      FROM channel_account_registry
+      WHERE account = ?
+    `).get(account);
+    return row ? Number(row.send_enabled) : null;
+  } finally {
+    db.close();
   }
 }
 
