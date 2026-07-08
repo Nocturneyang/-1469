@@ -86,6 +86,14 @@ spec:
               value: isolated
             - name: WORKBENCH_ACCOUNT_DATA_DIR
               value: /data/accounts
+            - name: WORKBENCH_ACCOUNT_WORKER_MAX_WORKERS
+              value: "4"
+            - name: WORKBENCH_CHAT_SYNC_ENABLED
+              value: "1"
+            - name: WORKBENCH_LABEL_SYNC_ENABLED
+              value: "1"
+            - name: WORKBENCH_SEND_ENABLED
+              value: "1"
             - name: SSO_ENABLED
               value: "true"
             - name: SSO_LOGIN_URL

@@ -49,7 +49,7 @@ WORKBENCH_ACCOUNT_DATA_DIR=/data/accounts
 
 隔离模式下，总控 `workbench.sqlite` 只保留工作台用户、角色、入口权限和服务账号/分组授权范围；每个 WA/TG 服务账号自己的 raw 消息、登录任务、已读、认领/释放、人工分组、渠道分组映射、外发账本和发送熔断写入 `/data/accounts/{wa|tg}/{account}/` 下的账号库。
 
-生产容器默认开启账号隔离模式。当前 `social-workbench-login-worker` 兼容单 worker 编排：它会根据登录门铃里的 `platform/account` 自动打开对应账号的 `runtime.sqlite`、`raw.sqlite` 和 `session/`。后续账号数量增加后，再把它拆成每账号独立 `account-worker`。
+生产容器默认开启账号隔离模式。`social-workbench-login-worker` 只负责服务账号登录和 session 接管校验；扫码或 token/session 校验完成后，会释放登录 client。`social-workbench-account-supervisor` 会发现已认证且允许采集的账号，并为每个账号 fork 一个独立 `account-runtime-worker`，由账号 worker 长期持有自己的 WA/TG session、写入自己的 `raw.sqlite` / `runtime.sqlite` / `workbench.sqlite`。
 
 ## 主要入口
 
@@ -127,6 +127,7 @@ npm test
 npm run init-db
 npm run login-worker
 npm run account-worker
+npm run account-supervisor
 npm run seed:demo
 npm run seed:demo-workbench
 ```
@@ -155,6 +156,23 @@ WORKBENCH_WORKER_PLATFORM=wa \
 WORKBENCH_WORKER_ACCOUNT=nanya_wa \
 npm run account-worker
 ```
+
+多账号长期运行时推荐启动 supervisor，由它按账号状态自动拉起独立 worker：
+
+```bash
+WORKBENCH_ACCOUNT_DB_MODE=isolated \
+WORKBENCH_ACCOUNT_DATA_DIR=/Users/a2026/Desktop/工作台/.local-data/accounts \
+WORKBENCH_ACCOUNT_WORKER_MAX_WORKERS=4 \
+npm run account-supervisor
+```
+
+生产配置默认开启真实外发，登录账号后坐席可以直接在线回复客户：
+
+```text
+WORKBENCH_SEND_ENABLED=1
+```
+
+如果需要紧急切到只收不发，可以把该环境变量改为 `0` 后重新部署。账号自身的 `send_enabled` 和发送熔断仍会继续生效。
 
 账号隔离目录结构：
 
@@ -191,6 +209,7 @@ Deploy Hub 当前要求公网服务必须开启 skyline-ark-sso 外层认证，�
 
 - `social-workbench`：API/UI。
 - `social-workbench-login-worker`：工作台独立 WA/TG 服务账号登录执行层。
+- `social-workbench-account-supervisor`：按账号发现并拉起独立 `account-runtime-worker`，每个账号一个子进程长期采集消息。
 
 部署前建议执行：
 

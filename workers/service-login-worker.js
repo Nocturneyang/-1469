@@ -40,6 +40,7 @@ const TG_SESSION_DIR = ACCOUNT_SCOPED && WORKER_PLATFORM === 'tg'
   : path.resolve(process.env.WORKBENCH_TG_SESSION_DIR || path.join(DATA_DIR, 'sessions', 'tg'));
 const TERMINAL_STATUSES = new Set(['authenticated', 'failed', 'expired', 'canceled']);
 const LEASE_TTL_MS = Number(process.env.WORKBENCH_WORKER_LEASE_TTL_MS || 45000);
+const WA_LOGIN_HANDOFF_DELAY_MS = Number(process.env.WORKBENCH_LOGIN_HANDOFF_DELAY_MS || 5000);
 const WORKER_HOLDER_ID = process.env.HOSTNAME || `${process.pid}`;
 const WORKER_RUN_ID = `${Date.now()}-${process.pid}`;
 
@@ -221,6 +222,7 @@ function startWaLogin(request) {
     account: request.account,
     client,
     ready: false,
+    intentionalStop: false,
   };
   activeWaByRequest.set(request.request_id, state);
   activeWaByAccount.set(request.account, state);
@@ -259,6 +261,15 @@ function startWaLogin(request) {
       error_message: '',
     }, { ...request, display_name: displayName });
     log(`WA authenticated for ${request.account}`);
+    if (WA_LOGIN_HANDOFF_DELAY_MS >= 0) {
+      setTimeout(() => {
+        const active = activeWaByRequest.get(request.request_id);
+        if (!active || active.intentionalStop) return;
+        active.intentionalStop = true;
+        log(`WA login handoff for ${request.account}; releasing login client`);
+        stopWaRequest(request.request_id);
+      }, WA_LOGIN_HANDOFF_DELAY_MS);
+    }
   });
 
   client.on('auth_failure', (message) => {
@@ -272,6 +283,10 @@ function startWaLogin(request) {
   });
 
   client.on('disconnected', (reason) => {
+    if (state.intentionalStop) {
+      log(`WA login client released for ${request.account}`);
+      return;
+    }
     upsertProfile(request, 'disconnected', request.display_name);
     if (!state.ready) {
       patchRequest(request.request_id, {

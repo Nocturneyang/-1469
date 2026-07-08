@@ -168,6 +168,104 @@ function upsertServiceAccountProfile({
   }
 }
 
+function upsertRawMessage({
+  db,
+  dbPath = DEFAULT_RAW_DB_PATH,
+  platform,
+  account,
+  messageId,
+  groupId,
+  groupName,
+  senderId,
+  senderName,
+  content = '',
+  hasMedia = 0,
+  mediaPath = null,
+  timestamp,
+  rawData = null,
+  nativeChatId,
+  nativeMessageId,
+  observerRole = 'service',
+} = {}) {
+  const normalizedPlatform = normalizePlatform(platform);
+  const normalizedAccount = String(account || '').trim();
+  const normalizedMessageId = String(messageId || '').trim();
+  if (!['wa', 'tg'].includes(normalizedPlatform)) throw new Error('platform must be one of wa, tg');
+  if (!normalizedAccount) throw new Error('account is required');
+  if (!normalizedMessageId) throw new Error('messageId is required');
+
+  const rawDb = db || ensureRawDb(dbPath);
+  const closeOwned = !db;
+  const row = {
+    platform: normalizedPlatform,
+    account: normalizedAccount,
+    messageId: normalizedMessageId,
+    groupId: String(groupId || nativeChatId || '').trim() || null,
+    groupName: String(groupName || groupId || nativeChatId || '').trim() || null,
+    senderId: String(senderId || '').trim() || null,
+    senderName: String(senderName || '').trim() || null,
+    content: String(content || ''),
+    hasMedia: hasMedia ? 1 : 0,
+    mediaPath: mediaPath || null,
+    timestamp: normalizeMessageTimestamp(timestamp),
+    rawJson: safeJson(rawData),
+    nativeChatId: String(nativeChatId || groupId || '').trim() || null,
+    nativeMessageId: String(nativeMessageId || messageId || '').trim() || normalizedMessageId,
+    observerRole: String(observerRole || 'service').trim() || 'service',
+  };
+
+  try {
+    return rawDb.transaction(() => {
+      rawDb.prepare(`
+        INSERT INTO messages (
+          platform, receiver_account, message_id, group_id, group_name,
+          sender_id, sender_name, content, has_media, media_path, timestamp, raw_data
+        )
+        VALUES (
+          @platform, @account, @messageId, @groupId, @groupName,
+          @senderId, @senderName, @content, @hasMedia, @mediaPath, @timestamp, @rawJson
+        )
+        ON CONFLICT(platform, message_id) DO UPDATE SET
+          receiver_account = excluded.receiver_account,
+          group_id = excluded.group_id,
+          group_name = COALESCE(NULLIF(excluded.group_name, ''), messages.group_name),
+          sender_id = COALESCE(NULLIF(excluded.sender_id, ''), messages.sender_id),
+          sender_name = COALESCE(NULLIF(excluded.sender_name, ''), messages.sender_name),
+          content = excluded.content,
+          has_media = excluded.has_media,
+          media_path = COALESCE(excluded.media_path, messages.media_path),
+          timestamp = COALESCE(excluded.timestamp, messages.timestamp),
+          raw_data = COALESCE(excluded.raw_data, messages.raw_data)
+      `).run(row);
+
+      rawDb.prepare(`
+        INSERT INTO message_observations (
+          platform, canonical_message_id, observer_account, observer_role,
+          native_chat_id, native_message_id, raw_json
+        )
+        VALUES (
+          @platform, @messageId, @account, @observerRole,
+          @nativeChatId, @nativeMessageId, @rawJson
+        )
+        ON CONFLICT(platform, canonical_message_id, observer_account) DO UPDATE SET
+          observer_role = excluded.observer_role,
+          native_chat_id = excluded.native_chat_id,
+          native_message_id = excluded.native_message_id,
+          observed_at = CURRENT_TIMESTAMP,
+          raw_json = COALESCE(excluded.raw_json, message_observations.raw_json)
+      `).run(row);
+
+      return rawDb.prepare(`
+        SELECT id
+        FROM messages
+        WHERE platform = @platform AND message_id = @messageId
+      `).get(row).id;
+    })();
+  } finally {
+    if (closeOwned) rawDb.close();
+  }
+}
+
 function normalizePlatform(platform) {
   const value = String(platform || '').trim().toLowerCase();
   if (value === 'whatsapp') return 'wa';
@@ -175,8 +273,25 @@ function normalizePlatform(platform) {
   return value;
 }
 
+function normalizeMessageTimestamp(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric <= 0) return Math.floor(Date.now() / 1000);
+  return numeric > 1000000000000 ? Math.floor(numeric / 1000) : Math.floor(numeric);
+}
+
+function safeJson(value) {
+  if (value === undefined || value === null || value === '') return null;
+  if (typeof value === 'string') return value;
+  try {
+    return JSON.stringify(value);
+  } catch (_) {
+    return JSON.stringify({ unserializable: true });
+  }
+}
+
 module.exports = {
   DEFAULT_RAW_DB_PATH,
   ensureRawDb,
+  upsertRawMessage,
   upsertServiceAccountProfile,
 };
