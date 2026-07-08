@@ -2467,6 +2467,21 @@ button {
   background: #eef2f0;
 }
 
+.group-tag.workbench-tag {
+  color: #075985;
+  background: #e0f2fe;
+}
+
+.group-tag.channel-tag {
+  color: var(--accent-strong);
+  background: var(--accent-soft);
+}
+
+.workbench-tags-section {
+  display: grid;
+  gap: 9px;
+}
+
 .manual-groups-section {
   display: grid;
   gap: 9px;
@@ -2495,6 +2510,12 @@ button {
 
 .manual-helper {
   min-width: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.manual-tag-helper {
   color: var(--muted);
   font-size: 12px;
   line-height: 1.45;

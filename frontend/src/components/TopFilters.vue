@@ -59,7 +59,7 @@
     <el-select
       class="label-select"
       :model-value="modelValue.labelId"
-      placeholder="分组"
+      placeholder="标签/分组"
       clearable
       @change="(labelId) => update({ labelId })"
     >
@@ -83,7 +83,7 @@
       :disabled="!modelValue.platforms.length"
       @click="$emit('sync-channels')"
     >
-      同步分组
+      同步渠道分组
     </el-button>
 
     <el-input
@@ -158,7 +158,7 @@ const toolbarSubtitle = computed(() => {
   if (props.modelValue.accountKeys && props.modelValue.accountKeys.length) {
     return `${props.modelValue.accountKeys.length} 个服务账号`;
   }
-  return '服务账号 -> 分组 -> 会话';
+  return '服务账号 -> 标签/分组 -> 会话';
 });
 
 const scopes = [
@@ -195,10 +195,10 @@ function labelDisplayName(label) {
 
 function labelSourceText(label) {
   if (Number(label.is_manual) === 1 || String(label.source || '').startsWith('manual')) {
-    return Number(label.group_level || 1) === 2 ? '人工二级分组' : '人工一级分组';
+    return '工作台标签';
   }
   if (label.source === 'wa_label') return 'WA 同步标签';
   if (label.source === 'tg_group') return 'TG 同步分组';
-  return label.source || '分组';
+  return label.source || '渠道分组';
 }
 </script>

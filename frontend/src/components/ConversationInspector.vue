@@ -11,22 +11,20 @@
         </div>
       </section>
 
-      <section class="inspector-section">
-        <div class="section-title">分组</div>
+      <section class="inspector-section workbench-tags-section">
+        <div class="section-title">工作台标签</div>
         <div class="tag-stack">
           <span
-            v-for="label in group.labels"
+            v-for="label in workbenchTags"
             :key="label.id || label.native_label_id"
-            class="group-tag"
+            class="group-tag workbench-tag"
+            :title="labelTitle(label)"
           >
-            {{ label.name }}
+            {{ labelDisplayName(label) }}
           </span>
-          <span v-if="!group.labels || !group.labels.length" class="group-tag muted">未分组</span>
+          <span v-if="!workbenchTags.length" class="group-tag muted">暂无标签</span>
         </div>
-      </section>
 
-      <section class="inspector-section manual-groups-section">
-        <div class="section-title">人工分组</div>
         <el-select
           class="manual-group-select"
           :model-value="selectedManualGroupIds"
@@ -34,7 +32,7 @@
           clearable
           collapse-tags
           collapse-tags-tooltip
-          placeholder="选择一级或二级分组"
+          placeholder="选择或移除工作台标签"
           :disabled="!canManageManualGroups || savingManualGroups"
           @change="emitManualGroupsChange"
         >
@@ -56,35 +54,9 @@
             v-model="manualDraft.name"
             size="small"
             clearable
-            placeholder="新分组名称"
+            placeholder="新标签名称"
             :disabled="!canManageManualGroups || savingManualGroups"
           />
-          <el-select
-            v-model="manualDraft.level"
-            size="small"
-            class="manual-level-select"
-            :disabled="!canManageManualGroups || savingManualGroups"
-          >
-            <el-option label="一级" :value="1" />
-            <el-option label="二级" :value="2" />
-          </el-select>
-        </div>
-
-        <div v-if="manualDraft.level === 2" class="manual-create-row">
-          <el-select
-            v-model="manualDraft.parent_native_group_id"
-            size="small"
-            class="manual-parent-select"
-            placeholder="选择一级分组"
-            :disabled="!canManageManualGroups || savingManualGroups || !levelOneManualGroups.length"
-          >
-            <el-option
-              v-for="parent in levelOneManualGroups"
-              :key="parent.native_group_id"
-              :label="parent.name"
-              :value="parent.native_group_id"
-            />
-          </el-select>
           <el-button
             size="small"
             type="primary"
@@ -92,21 +64,27 @@
             :disabled="!canSubmitManualGroup"
             @click="submitManualGroup"
           >
-            新建
+            新建并打标
           </el-button>
         </div>
 
-        <div v-else class="manual-create-row">
-          <span class="manual-helper">{{ manualHelperText }}</span>
-          <el-button
-            size="small"
-            type="primary"
-            :loading="savingManualGroups"
-            :disabled="!canSubmitManualGroup"
-            @click="submitManualGroup"
+        <div class="manual-tag-helper">
+          {{ manualHelperText }}
+        </div>
+      </section>
+
+      <section class="inspector-section">
+        <div class="section-title">渠道分组</div>
+        <div class="tag-stack">
+          <span
+            v-for="label in channelGroups"
+            :key="label.id || label.native_label_id"
+            class="group-tag channel-tag"
+            :title="labelTitle(label)"
           >
-            新建
-          </el-button>
+            {{ labelDisplayName(label) }}
+          </span>
+          <span v-if="!channelGroups.length" class="group-tag muted">暂无同步分组</span>
         </div>
       </section>
 
@@ -181,7 +159,7 @@
       <section class="inspector-empty">
         <div class="empty-symbol">i</div>
         <strong>选择会话后显示详情</strong>
-        <span>这里会显示服务账号、分组、权限和发送安全状态。</span>
+        <span>这里会显示服务账号、标签、渠道分组、权限和发送安全状态。</span>
       </section>
     </template>
   </aside>
@@ -213,8 +191,6 @@ const props = defineProps({
 const emit = defineEmits(['manual-groups-change', 'manual-group-create']);
 const manualDraft = reactive({
   name: '',
-  level: 1,
-  parent_native_group_id: '',
 });
 
 const isOnline = computed(() => {
@@ -252,9 +228,16 @@ const levelOneManualGroups = computed(() => (
     .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'zh-Hans-CN'))
 ));
 
+const workbenchTags = computed(() => (
+  ((props.group && props.group.labels) || []).filter(isWorkbenchTag)
+));
+
+const channelGroups = computed(() => (
+  ((props.group && props.group.labels) || []).filter((label) => !isWorkbenchTag(label))
+));
+
 const selectedManualGroupIds = computed(() => (
-  ((props.group && props.group.labels) || [])
-    .filter((label) => Number(label.is_manual) === 1 || String(label.source || '').startsWith('manual'))
+  workbenchTags.value
     .map((label) => String(label.native_group_id || label.native_label_id || '').trim())
     .filter(Boolean)
 ));
@@ -270,7 +253,7 @@ const manualGroupOptions = computed(() => {
         name: item.name,
         level,
         label: parent ? `${parent.name} / ${item.name}` : item.name,
-        subtitle: parent ? '二级人工分组' : '一级人工分组',
+        subtitle: parent ? '工作台标签 · 子标签' : '工作台标签',
         sortKey: `${parent ? parent.name : item.name}:${level}:${item.name}`,
       };
     })
@@ -280,35 +263,17 @@ const manualGroupOptions = computed(() => {
 const canSubmitManualGroup = computed(() => {
   if (!canManageManualGroups.value || props.savingManualGroups) return false;
   if (!manualDraft.name.trim()) return false;
-  if (manualDraft.level === 2 && !manualDraft.parent_native_group_id) return false;
   return true;
 });
 
 const manualHelperText = computed(() => (
-  canManageManualGroups.value ? '一级分组可直接打到群上，也可作为二级分组的父级。' : '当前账号没有管理权限'
+  canManageManualGroups.value ? '标签保存在工作台自己的数据库中，不会写回 WA/TG 原生分组。' : '当前账号没有标签管理权限'
 ));
 
 watch(
   () => props.group && props.group.id,
   () => {
     manualDraft.name = '';
-    manualDraft.level = 1;
-    manualDraft.parent_native_group_id = '';
-  },
-);
-
-watch(levelOneManualGroups, (parents) => {
-  if (manualDraft.level === 2 && !parents.some((item) => item.native_group_id === manualDraft.parent_native_group_id)) {
-    manualDraft.parent_native_group_id = parents[0]?.native_group_id || '';
-  }
-});
-
-watch(
-  () => manualDraft.level,
-  (level) => {
-    if (level === 2 && !manualDraft.parent_native_group_id) {
-      manualDraft.parent_native_group_id = levelOneManualGroups.value[0]?.native_group_id || '';
-    }
   },
 );
 
@@ -320,10 +285,24 @@ function submitManualGroup() {
   if (!canSubmitManualGroup.value) return;
   emit('manual-group-create', {
     name: manualDraft.name.trim(),
-    group_level: manualDraft.level,
-    parent_native_group_id: manualDraft.level === 2 ? manualDraft.parent_native_group_id : undefined,
+    group_level: 1,
   });
   manualDraft.name = '';
+}
+
+function isWorkbenchTag(label) {
+  return Number(label?.is_manual) === 1 || String(label?.source || '').startsWith('manual');
+}
+
+function labelDisplayName(label) {
+  if (!label) return '';
+  const name = label.name || label.native_label_id || label.native_group_id || '';
+  return isWorkbenchTag(label) && label.parent_name ? `${label.parent_name} / ${name}` : name;
+}
+
+function labelTitle(label) {
+  const prefix = isWorkbenchTag(label) ? '工作台标签' : '渠道分组';
+  return `${prefix} · ${labelDisplayName(label)}`;
 }
 
 function platformShort(platform) {

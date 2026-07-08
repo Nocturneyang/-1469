@@ -511,9 +511,9 @@ async function handleManualGroupCreate(payload) {
       const currentIds = selectedManualGroupIds(selectedGroup.value);
       await persistManualGroups([...new Set([...currentIds, group.native_group_id])]);
     }
-    ElMessage.success('人工分组已创建');
+    ElMessage.success('工作台标签已创建');
   } catch (err) {
-    ElMessage.error('人工分组创建失败');
+    ElMessage.error('工作台标签创建失败');
   } finally {
     savingManualGroups.value = false;
   }
@@ -524,9 +524,9 @@ async function handleManualGroupsChange(manualGroupIds) {
   savingManualGroups.value = true;
   try {
     await persistManualGroups(manualGroupIds);
-    ElMessage.success('会话分组已更新');
+    ElMessage.success('会话标签已更新');
   } catch (err) {
-    ElMessage.error('会话分组保存失败');
+    ElMessage.error('会话标签保存失败');
   } finally {
     savingManualGroups.value = false;
   }

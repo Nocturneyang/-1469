@@ -34,8 +34,8 @@
           </div>
           <div class="label-line">
             <el-icon><Folder /></el-icon>
-            <span v-if="group.labels.length">{{ group.labels.map(labelText).join(' / ') }}</span>
-            <span v-else>未分组</span>
+            <span v-if="group.labels.length">{{ group.labels.map(labelText).filter(Boolean).join(' / ') }}</span>
+            <span v-else>暂无标签/分组</span>
           </div>
           <div class="preview-line">
             <span :title="preview(group)">{{ preview(group) }}</span>

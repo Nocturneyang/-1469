@@ -13,7 +13,7 @@
               {{ canSend(group) ? '可发送' : '只读' }}
             </em>
             <em :class="group.sync_groups_enabled ? 'status-ok' : 'status-neutral'">
-              {{ group.sync_groups_enabled ? '同步分组' : '手动分组' }}
+              {{ group.sync_groups_enabled ? '同步渠道分组' : '工作台标签' }}
             </em>
             <em class="status-neutral">{{ accountRoleText(group.account_role) }}</em>
           </div>
