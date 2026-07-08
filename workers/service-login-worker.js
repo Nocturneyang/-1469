@@ -377,25 +377,54 @@ function buildChromeLaunchConfig() {
     existingPath('/usr/bin/chromium') ||
     existingPath('/usr/bin/google-chrome') ||
     undefined;
+  const chromeStateDir = path.join(WA_AUTH_DATA_PATH, '.chromium');
+  const xdgConfigDir = path.join(chromeStateDir, 'config');
+  const xdgCacheDir = path.join(chromeStateDir, 'cache');
+  const xdgRuntimeDir = path.join(chromeStateDir, 'runtime');
+  fs.mkdirSync(xdgConfigDir, { recursive: true });
+  fs.mkdirSync(xdgCacheDir, { recursive: true });
+  fs.mkdirSync(xdgRuntimeDir, { recursive: true, mode: 0o700 });
+  fs.chmodSync(xdgRuntimeDir, 0o700);
   return {
     headless: true,
     executablePath,
+    pipe: true,
+    timeout: Number(process.env.WORKBENCH_WA_PUPPETEER_TIMEOUT_MS || 120000),
+    protocolTimeout: Number(process.env.WORKBENCH_WA_PUPPETEER_PROTOCOL_TIMEOUT_MS || 120000),
+    env: {
+      ...process.env,
+      XDG_CONFIG_HOME: xdgConfigDir,
+      XDG_CACHE_HOME: xdgCacheDir,
+      XDG_RUNTIME_DIR: xdgRuntimeDir,
+    },
     args: [
       '--no-sandbox',
       '--disable-setuid-sandbox',
       '--disable-dev-shm-usage',
       '--disable-gpu',
+      '--disable-software-rasterizer',
       '--disable-extensions',
       '--disable-sync',
       '--disable-background-networking',
       '--disable-component-update',
       '--disable-default-apps',
-      '--disable-features=Translate,MediaRouter,OptimizationHints',
+      '--disable-crash-reporter',
+      '--disable-breakpad',
+      '--disable-features=Translate,MediaRouter,OptimizationHints,AudioServiceOutOfProcess',
+      '--disable-background-timer-throttling',
+      '--disable-renderer-backgrounding',
+      '--disable-ipc-flooding-protection',
+      '--disable-hang-monitor',
       '--renderer-process-limit=4',
       '--process-per-site',
+      '--no-zygote',
       '--disable-site-isolation-trials',
       '--mute-audio',
       '--no-first-run',
+      '--no-default-browser-check',
+      '--password-store=basic',
+      '--use-mock-keychain',
+      '--window-size=1280,960',
     ],
   };
 }
