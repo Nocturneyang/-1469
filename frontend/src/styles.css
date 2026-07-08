@@ -555,7 +555,8 @@ button {
 }
 
 .service-login-header p,
-.service-login-panel-head span {
+.service-login-panel-head > span,
+.service-login-request-head > div > span {
   margin: 4px 0 0;
   color: var(--muted);
   font-size: 13px;
@@ -571,7 +572,7 @@ button {
 .service-login-layout {
   min-height: 0;
   display: grid;
-  grid-template-columns: minmax(360px, 520px) minmax(0, 1fr);
+  grid-template-columns: minmax(360px, 500px) minmax(0, 1fr);
   gap: 16px;
   padding: 18px;
   overflow: auto;
@@ -586,6 +587,11 @@ button {
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--surface);
+}
+
+.service-login-create-panel {
+  position: sticky;
+  top: 18px;
 }
 
 .service-login-panel-head {
@@ -604,6 +610,40 @@ button {
   gap: 0 12px;
 }
 
+.service-login-flow {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  background: #fbfdfb;
+}
+
+.service-login-flow-step {
+  min-height: 42px;
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.service-login-flow-step strong {
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  color: var(--muted);
+  background: var(--surface-muted);
+}
+
+.service-login-flow-step.active strong {
+  color: #fff;
+  background: var(--accent);
+}
+
 .service-login-submit {
   display: flex;
   align-items: center;
@@ -612,11 +652,51 @@ button {
   padding-top: 4px;
 }
 
-.service-login-submit span,
-.service-login-request span,
-.service-login-request dt {
+.service-login-submit span {
   color: var(--muted);
   font-size: 12px;
+}
+
+.service-login-workspace {
+  min-width: 0;
+  display: grid;
+  align-self: start;
+  gap: 14px;
+}
+
+.service-login-summary {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.service-login-summary > div {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+  padding: 12px 14px;
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.service-login-summary span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.service-login-summary strong {
+  font-size: 20px;
+  line-height: 1.15;
+}
+
+.service-login-task-panel {
+  gap: 14px;
+}
+
+.service-login-task-head {
+  min-width: 0;
 }
 
 .service-login-list {
@@ -625,13 +705,16 @@ button {
 }
 
 .service-login-request {
+  position: relative;
   min-width: 0;
   display: grid;
+  grid-template-columns: 220px minmax(0, 1fr);
   gap: 12px;
   padding: 14px;
   border: 1px solid var(--line-soft);
   border-radius: 8px;
-  background: var(--surface-soft);
+  background: #fff;
+  box-shadow: 0 10px 24px rgba(24, 35, 30, 0.05);
 }
 
 .service-login-request-head {
@@ -648,31 +731,148 @@ button {
   gap: 3px;
 }
 
-.service-login-request strong,
-.service-login-request span,
-.service-login-request dd {
+.service-login-account {
+  position: relative;
+  min-width: 0;
+  display: grid;
+  justify-items: center;
+  align-content: start;
+  gap: 7px;
+  padding: 18px 12px 14px;
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  background: var(--surface-soft);
+  text-align: center;
+}
+
+.service-login-account strong,
+.service-login-account span,
+.service-login-account small,
+.service-login-runtime-grid strong {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.service-login-account strong {
+  font-size: 16px;
+  line-height: 1.25;
+}
+
+.service-login-account span,
+.service-login-account small,
+.service-login-runtime-grid span,
+.service-login-assessment span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.service-login-status {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  max-width: 108px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 750;
+  background: #edf2f0;
+}
+
+.service-login-status.online {
+  color: #047857;
+  background: #dcfce7;
+}
+
+.service-login-status.warning {
+  color: #92400e;
+  background: #fef3c7;
+}
+
+.service-login-status.danger {
+  color: #b42318;
+  background: #fee2e2;
+}
+
+.service-login-avatar {
+  width: 48px;
+  height: 48px;
+  display: grid;
+  place-items: center;
+  margin-top: 14px;
+  border-radius: 999px;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 850;
+  background: linear-gradient(180deg, #22c55e, #128c7e);
+  box-shadow: inset 0 -2px 0 rgba(0, 0, 0, 0.12);
+}
+
+.service-login-avatar.tg {
+  background: linear-gradient(180deg, #38bdf8, #7c3aed);
+}
+
+.service-login-request-main {
+  min-width: 0;
+  display: grid;
+  gap: 12px;
+}
+
+.service-login-assessment {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  background: var(--surface-muted);
+}
+
+.service-login-assessment > div {
+  display: grid;
+  gap: 4px;
+}
+
+.service-login-assessment strong {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.service-login-request dl {
-  margin: 0;
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
+.service-login-assessment strong.ok {
+  color: #047857;
 }
 
-.service-login-request dl > div {
+.service-login-assessment strong.pending {
+  color: #b45309;
+}
+
+.service-login-assessment strong.bad {
+  color: #b42318;
+}
+
+.service-login-runtime-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.service-login-runtime-grid > div {
   min-width: 0;
   display: grid;
-  gap: 3px;
+  gap: 5px;
+  padding: 10px;
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  background: #f2f5f3;
 }
 
-.service-login-request dd {
-  margin: 0;
-  font-weight: 700;
+.service-login-runtime-grid strong {
+  font-size: 13px;
 }
 
 .service-login-request p {
@@ -684,17 +884,17 @@ button {
 
 .service-login-qr {
   display: grid;
-  justify-items: start;
+  justify-items: center;
   gap: 8px;
-  padding: 12px;
+  padding: 14px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: #fff;
 }
 
 .service-login-qr-grid {
-  width: 220px;
-  height: 220px;
+  width: min(240px, 100%);
+  aspect-ratio: 1;
   display: grid;
   grid-template-columns: repeat(var(--qr-size), 1fr);
   grid-template-rows: repeat(var(--qr-size), 1fr);
@@ -714,14 +914,19 @@ button {
 }
 
 .service-login-qr span {
+  color: var(--muted);
+  font-size: 13px;
+  text-align: center;
   white-space: normal;
 }
 
 .service-login-qr-pending {
-  width: 220px;
-  height: 220px;
+  width: min(240px, 100%);
+  aspect-ratio: 1;
   display: grid;
+  align-content: center;
   place-items: center;
+  gap: 8px;
   padding: 18px;
   color: var(--muted);
   font-size: 13px;
@@ -729,6 +934,32 @@ button {
   border: 1px dashed var(--line);
   border-radius: 6px;
   background: var(--surface-muted);
+}
+
+.service-login-qr-pending strong {
+  color: var(--text);
+}
+
+.service-login-qr-pending.expired {
+  color: #b42318;
+  border-color: #fecaca;
+  background: #fff7f7;
+}
+
+.service-login-credential-card {
+  display: grid;
+  gap: 6px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfdfb;
+}
+
+.service-login-credential-card span,
+.service-login-worker-message {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
 }
 
 .service-login-error {
@@ -2225,6 +2456,10 @@ button {
   .workbench-grid {
     grid-template-columns: minmax(300px, 338px) minmax(0, 1fr) 286px;
   }
+
+  .service-login-runtime-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 @media (max-width: 1160px) {
@@ -2339,8 +2574,18 @@ button {
     overflow: visible;
   }
 
+  .service-login-create-panel {
+    position: static;
+  }
+
+  .service-login-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .service-login-form-grid,
-  .service-login-request dl {
+  .service-login-request,
+  .service-login-assessment,
+  .service-login-runtime-grid {
     grid-template-columns: 1fr;
   }
 

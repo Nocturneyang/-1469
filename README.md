@@ -12,6 +12,9 @@
 
 工作台和监控系统必须彻底拆分：
 
+- 本地唯一工作台项目目录：`/Users/a2026/Desktop/工作台/`。
+- 后续所有工作台相关代码、配置、文档、测试、脚本、SQLite、session、outbox、运行缓存和部署材料，都只保存在 `/Users/a2026/Desktop/工作台/` 内。
+- `/Users/a2026/Desktop/社媒监控/` 不再保存工作台项目文件，不得在其中重新创建 `workbench/` 目录或工作台数据文件。
 - 工作台负责：工作台登录身份、权限、WA/TG 服务账号登录入口、会话列表、消息线程、回复框、已读、认领、分配、外发账本、人工分组。
 - 监控系统负责：它自己的采集、分析、告警、日报、知识资产、供应商画像、运营情报。
 - 工作台不得读取监控分析库 `analytics.sqlite`。
@@ -83,7 +86,7 @@ runtime.sqlite    # 工作台运行态、服务账号登录任务和 worker 状�
 进入工作台目录：
 
 ```bash
-cd /Users/a2026/Desktop/社媒监控/workbench
+cd /Users/a2026/Desktop/工作台
 ```
 
 安装依赖后启动：
@@ -101,7 +104,7 @@ http://localhost:3310
 本地默认数据库目录：
 
 ```text
-workbench/.local-data/db/
+/Users/a2026/Desktop/工作台/.local-data/db/
 ```
 
 常用命令：
@@ -125,9 +128,9 @@ npm run login-worker
 登录 worker 使用工作台自己的目录：
 
 ```text
-WORKBENCH_WA_AUTH_DATA_PATH=.local-data/sessions/wa
-WORKBENCH_TG_SESSION_DIR=.local-data/sessions/tg
-WORKBENCH_OUTBOX_DIR=.local-data/outbox
+WORKBENCH_WA_AUTH_DATA_PATH=/Users/a2026/Desktop/工作台/.local-data/sessions/wa
+WORKBENCH_TG_SESSION_DIR=/Users/a2026/Desktop/工作台/.local-data/sessions/tg
+WORKBENCH_OUTBOX_DIR=/Users/a2026/Desktop/工作台/outbox
 ```
 
 ## 部署
@@ -135,8 +138,8 @@ WORKBENCH_OUTBOX_DIR=.local-data/outbox
 Deploy Hub 配置位于：
 
 ```text
-workbench/.deployhub/deploy.yaml
-workbench/.deployhub/k8s/app.yaml
+/Users/a2026/Desktop/工作台/.deployhub/deploy.yaml
+/Users/a2026/Desktop/工作台/.deployhub/k8s/app.yaml
 ```
 
 当前部署配置：

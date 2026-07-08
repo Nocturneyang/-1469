@@ -1,10 +1,19 @@
 # AGENTS.md
 
-本文件用于指导 Codex 或其他代码协作 Agent 在 `workbench/` 项目中工作。工作台是独立登录、独立存储、独立权限配置、独立前端和独立部署的项目，不与现有 `social-monitor` 共享登录、权限、SQLite、前端路由或 worker 进程。
+本文件用于指导 Codex 或其他代码协作 Agent 在独立工作台项目中工作。工作台是独立登录、独立存储、独立权限配置、独立前端和独立部署的项目，不与现有 `social-monitor` 共享登录、权限、SQLite、前端路由或 worker 进程。
+
+## 协作硬边界
+
+- 唯一本地项目根目录：`/Users/a2026/Desktop/工作台/`
+- 后续所有工作台相关代码、配置、文档、测试、脚本、运行数据、SQLite、session、outbox、临时报告和部署材料，都必须保存在 `/Users/a2026/Desktop/工作台/` 内。
+- `/Users/a2026/Desktop/社媒监控/` 是监控项目目录，不再保存工作台项目文件。
+- 不得在 `/Users/a2026/Desktop/社媒监控/` 下重新创建 `workbench/`、工作台 SQLite、工作台 session、工作台 outbox、工作台构建产物或工作台测试输出。
+- 不得为了方便调试把工作台数据写入监控项目目录；如需临时实验，放在 `/Users/a2026/Desktop/工作台/tools/`、`/Users/a2026/Desktop/工作台/docs/` 或工作台 `.local-data/` 下。
+- 如果用户提出工作台需求，默认只在 `/Users/a2026/Desktop/工作台/` 内处理；只有用户明确要求修改监控项目时，才可以触碰 `/Users/a2026/Desktop/社媒监控/`。
 
 ## 项目边界
 
-- 工作台目录：`/Users/a2026/Desktop/社媒监控/workbench/`
+- 工作台目录：`/Users/a2026/Desktop/工作台/`
 - 工作台是客服/业务坐席使用的日常 IM 作业系统。
 - 工作台必须使用自己的用户登录、服务账号登录、权限配置、数据库和运行态 worker。
 - 监控系统是另一个独立项目；除非用户明确要求，不要修改或依赖监控项目。
@@ -29,14 +38,16 @@ Workbench must not share monitor SQLite files, monitor auth, monitor frontend ro
 
 - `DEVELOPMENT_GUIDE.md`
 
-如果用户明确要求修改监控项目，必须先重新确认范围；默认工作台需求只在 `workbench/` 内实现。
+如果用户明确要求修改监控项目，必须先重新确认范围；默认工作台需求只在 `/Users/a2026/Desktop/工作台/` 内实现。
+
+从 2026-07-08 起，`workbench/` 指 `/Users/a2026/Desktop/工作台/`，不是 `/Users/a2026/Desktop/社媒监控/workbench/`。
 
 ## 推荐目录
 
 后续实现时，优先采用以下结构：
 
 ```text
-workbench/
+/Users/a2026/Desktop/工作台/
 ├── AGENTS.md
 ├── DEVELOPMENT_GUIDE.md
 ├── frontend/                 # Vue 3 + Vite + Element Plus UI
@@ -112,9 +123,28 @@ raw.sqlite
 runtime.sqlite
 ```
 
+本地默认落盘位置：
+
+```text
+/Users/a2026/Desktop/工作台/.local-data/db/auth.sqlite
+/Users/a2026/Desktop/工作台/.local-data/db/workbench.sqlite
+/Users/a2026/Desktop/工作台/.local-data/db/raw.sqlite
+/Users/a2026/Desktop/工作台/.local-data/db/runtime.sqlite
+```
+
+生产默认落盘位置：
+
+```text
+/data/db/auth.sqlite
+/data/db/workbench.sqlite
+/data/db/raw.sqlite
+/data/db/runtime.sqlite
+```
+
 规则：
 
 - 工作台不得读取或写入监控项目的 `database.sqlite`、`analytics.sqlite` 或其他 SQLite 文件。
+- 工作台不得读取或写入 `/Users/a2026/Desktop/社媒监控/` 下任何 SQLite、session、outbox 或缓存文件。
 - 工作台原始消息、服务账号档案和渠道同步数据写入自己的 `raw.sqlite`。
 - 工作台运行态、服务账号登录任务和 worker 状态写入自己的 `runtime.sqlite`。
 - 工作台用户登录和兼容审计写入自己的 `auth.sqlite`。
