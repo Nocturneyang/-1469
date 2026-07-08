@@ -36,7 +36,7 @@ module.exports = {
         PUPPETEER_EXECUTABLE_PATH: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium',
         PUPPETEER_SKIP_DOWNLOAD: 'true',
       },
-      max_memory_restart: '1024M',
+      max_memory_restart: '1536M',
       kill_timeout: 15000,
     },
   ],
