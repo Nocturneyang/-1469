@@ -6,17 +6,43 @@ const path = require('path');
 const { DEFAULT_RAW_DB_PATH, upsertServiceAccountProfile } = require('../db/raw-db');
 const { DEFAULT_RUNTIME_DB_PATH, openRuntimeDb } = require('../db/runtime-db');
 const { resolveDataDir } = require('../db/paths');
+const {
+  ensureAccountDatabases,
+  normalizeAccountPlatform,
+  sanitizeAccountSegment,
+} = require('../db/account-db');
 const { updateServiceAccountLoginRequest } = require('../lib/service-account-login-store');
 
 const DATA_DIR = resolveDataDir();
+const WORKER_PLATFORM = normalizeAccountPlatform(process.env.WORKBENCH_WORKER_PLATFORM);
+const WORKER_ACCOUNT = String(process.env.WORKBENCH_WORKER_ACCOUNT || '').trim();
+const WORKER_ROLE = String(process.env.WORKBENCH_WORKER_ROLE || 'login-worker').trim();
+const ACCOUNT_SCOPED = WORKER_ROLE === 'account-runtime' || Boolean(WORKER_PLATFORM || WORKER_ACCOUNT);
+if (ACCOUNT_SCOPED && (!['wa', 'tg'].includes(WORKER_PLATFORM) || !WORKER_ACCOUNT)) {
+  throw new Error('WORKBENCH_WORKER_PLATFORM and WORKBENCH_WORKER_ACCOUNT are required for account-runtime worker');
+}
+const ACCOUNT_PATHS = ACCOUNT_SCOPED
+  ? ensureAccountDatabases(WORKER_PLATFORM, WORKER_ACCOUNT)
+  : null;
 const OUTBOX_DIR = path.resolve(process.env.WORKBENCH_OUTBOX_DIR || path.join(DATA_DIR, 'outbox'));
-const RAW_DB_PATH = process.env.WORKBENCH_RAW_DB_PATH || DEFAULT_RAW_DB_PATH;
+const RAW_DB_PATH = ACCOUNT_SCOPED
+  ? path.resolve(process.env.WORKBENCH_ACCOUNT_RAW_DB_PATH || ACCOUNT_PATHS.rawDbPath)
+  : path.resolve(process.env.WORKBENCH_RAW_DB_PATH || DEFAULT_RAW_DB_PATH);
 const POLL_INTERVAL_MS = Number(process.env.WORKBENCH_LOGIN_WORKER_POLL_MS || 3000);
-const WA_AUTH_DATA_PATH = path.resolve(process.env.WORKBENCH_WA_AUTH_DATA_PATH || path.join(DATA_DIR, 'sessions', 'wa'));
-const TG_SESSION_DIR = path.resolve(process.env.WORKBENCH_TG_SESSION_DIR || path.join(DATA_DIR, 'sessions', 'tg'));
+const WA_AUTH_DATA_PATH = ACCOUNT_SCOPED && WORKER_PLATFORM === 'wa'
+  ? path.resolve(process.env.WORKBENCH_ACCOUNT_SESSION_DIR || ACCOUNT_PATHS.sessionDir)
+  : path.resolve(process.env.WORKBENCH_WA_AUTH_DATA_PATH || path.join(DATA_DIR, 'sessions', 'wa'));
+const TG_SESSION_DIR = ACCOUNT_SCOPED && WORKER_PLATFORM === 'tg'
+  ? path.resolve(process.env.WORKBENCH_ACCOUNT_SESSION_DIR || ACCOUNT_PATHS.sessionDir)
+  : path.resolve(process.env.WORKBENCH_TG_SESSION_DIR || path.join(DATA_DIR, 'sessions', 'tg'));
 const TERMINAL_STATUSES = new Set(['authenticated', 'failed', 'expired', 'canceled']);
+const LEASE_TTL_MS = Number(process.env.WORKBENCH_WORKER_LEASE_TTL_MS || 45000);
+const WORKER_HOLDER_ID = process.env.HOSTNAME || `${process.pid}`;
+const WORKER_RUN_ID = `${Date.now()}-${process.pid}`;
 
-const runtimeDb = openRuntimeDb(process.env.WORKBENCH_RUNTIME_DB_PATH || DEFAULT_RUNTIME_DB_PATH);
+const runtimeDb = openRuntimeDb(ACCOUNT_SCOPED
+  ? path.resolve(process.env.WORKBENCH_ACCOUNT_RUNTIME_DB_PATH || ACCOUNT_PATHS.runtimeDbPath)
+  : path.resolve(process.env.WORKBENCH_RUNTIME_DB_PATH || DEFAULT_RUNTIME_DB_PATH));
 const activeWaByRequest = new Map();
 const activeWaByAccount = new Map();
 
@@ -24,7 +50,7 @@ fs.mkdirSync(OUTBOX_DIR, { recursive: true });
 fs.mkdirSync(WA_AUTH_DATA_PATH, { recursive: true });
 fs.mkdirSync(TG_SESSION_DIR, { recursive: true });
 
-log(`started, outbox=${OUTBOX_DIR}`);
+log(`started, outbox=${OUTBOX_DIR}${ACCOUNT_SCOPED ? `, account=${WORKER_PLATFORM}:${WORKER_ACCOUNT}` : ''}`);
 tick().catch((err) => log(`initial tick failed: ${err.stack || err.message}`));
 const pollTimer = setInterval(() => {
   tick().catch((err) => log(`tick failed: ${err.stack || err.message}`));
@@ -34,6 +60,7 @@ process.on('SIGTERM', shutdown);
 process.on('SIGINT', shutdown);
 
 async function tick() {
+  if (ACCOUNT_SCOPED && !renewAccountLease()) return;
   expireRequests();
   await processDoorbells();
   resumeWaitingWaRequests();
@@ -67,6 +94,14 @@ async function processDoorbells() {
 function listDoorbellFiles() {
   if (!fs.existsSync(OUTBOX_DIR)) return [];
   const result = [];
+  if (ACCOUNT_SCOPED) {
+    const dir = path.join(OUTBOX_DIR, `login-worker-${WORKER_PLATFORM}-${sanitizeAccountSegment(WORKER_ACCOUNT)}`);
+    if (!fs.existsSync(dir)) return [];
+    for (const file of fs.readdirSync(dir, { withFileTypes: true })) {
+      if (file.isFile() && file.name.endsWith('.json')) result.push(path.join(dir, file.name));
+    }
+    return result.sort();
+  }
   for (const entry of fs.readdirSync(OUTBOX_DIR, { withFileTypes: true })) {
     if (!entry.isDirectory() || !entry.name.startsWith('login-worker-')) continue;
     const dir = path.join(OUTBOX_DIR, entry.name);
@@ -78,6 +113,9 @@ function listDoorbellFiles() {
 }
 
 async function handleLoginPayload(payload) {
+  if (ACCOUNT_SCOPED && (payload.platform !== WORKER_PLATFORM || payload.account !== WORKER_ACCOUNT)) {
+    return;
+  }
   const request = getRequest(payload.request_id);
   if (!request) {
     throw new Error(`login request not found: ${payload.request_id}`);
@@ -100,16 +138,18 @@ async function handleLoginPayload(payload) {
 }
 
 function resumeWaitingWaRequests() {
+  if (ACCOUNT_SCOPED && WORKER_PLATFORM !== 'wa') return;
   const rows = runtimeDb.prepare(`
     SELECT *
     FROM service_account_login_requests
     WHERE platform = 'wa'
       AND login_mode = 'wa_qr'
+      ${ACCOUNT_SCOPED ? 'AND account = @account' : ''}
       AND status IN ('waiting_qr', 'waiting_verification', 'requested')
       AND (expires_at IS NULL OR expires_at > datetime('now'))
     ORDER BY created_at ASC
     LIMIT 10
-  `).all();
+  `).all(ACCOUNT_SCOPED ? { account: WORKER_ACCOUNT } : {});
   for (const row of rows) {
     startWaLogin(mapRequestRow(row));
   }
@@ -120,9 +160,10 @@ function expireRequests() {
     SELECT request_id, platform, account, display_name, login_mode
     FROM service_account_login_requests
     WHERE status IN ('requested', 'waiting_qr', 'waiting_verification')
+      ${ACCOUNT_SCOPED ? 'AND platform = @platform AND account = @account' : ''}
       AND expires_at IS NOT NULL
       AND julianday(expires_at) <= julianday('now')
-  `).all();
+  `).all(ACCOUNT_SCOPED ? { platform: WORKER_PLATFORM, account: WORKER_ACCOUNT } : {});
   for (const row of rows) {
     patchRequest(row.request_id, {
       status: 'expired',
@@ -433,6 +474,84 @@ function existingPath(filePath) {
   return filePath && fs.existsSync(filePath) ? filePath : '';
 }
 
+function renewAccountLease() {
+  const now = new Date();
+  const nowIso = now.toISOString();
+  const expiresAt = new Date(now.getTime() + Math.max(15000, LEASE_TTL_MS)).toISOString();
+  const current = runtimeDb.prepare(`
+    SELECT *
+    FROM account_worker_leases
+    WHERE platform = @platform
+      AND account = @account
+      AND lease_name = 'account-runtime'
+  `).get({
+    platform: WORKER_PLATFORM,
+    account: WORKER_ACCOUNT,
+  });
+  const heldByMe = current && current.holder_id === WORKER_HOLDER_ID && current.run_id === WORKER_RUN_ID;
+  const expired = !current || Date.parse(current.expires_at) <= Date.now();
+  if (!heldByMe && !expired) {
+    log(`account lease held by ${current.holder_id}, waiting until ${current.expires_at}`);
+    return false;
+  }
+  runtimeDb.prepare(`
+    INSERT INTO account_worker_leases (
+      platform, account, lease_name, holder_id, worker_role, run_id, pid,
+      acquired_at, renewed_at, expires_at, metadata_json
+    )
+    VALUES (
+      @platform, @account, 'account-runtime', @holderId, @workerRole, @runId, @pid,
+      @now, @now, @expiresAt, @metadataJson
+    )
+    ON CONFLICT(platform, account, lease_name) DO UPDATE SET
+      holder_id = excluded.holder_id,
+      worker_role = excluded.worker_role,
+      run_id = excluded.run_id,
+      pid = excluded.pid,
+      renewed_at = excluded.renewed_at,
+      expires_at = excluded.expires_at,
+      metadata_json = excluded.metadata_json
+  `).run({
+    platform: WORKER_PLATFORM,
+    account: WORKER_ACCOUNT,
+    holderId: WORKER_HOLDER_ID,
+    workerRole: WORKER_ROLE,
+    runId: WORKER_RUN_ID,
+    pid: process.pid,
+    now: nowIso,
+    expiresAt,
+    metadataJson: JSON.stringify({
+      raw_db_path: RAW_DB_PATH,
+      runtime_db_path: ACCOUNT_SCOPED
+        ? (process.env.WORKBENCH_ACCOUNT_RUNTIME_DB_PATH || ACCOUNT_PATHS.runtimeDbPath)
+        : (process.env.WORKBENCH_RUNTIME_DB_PATH || DEFAULT_RUNTIME_DB_PATH),
+      session_dir: WORKER_PLATFORM === 'wa' ? WA_AUTH_DATA_PATH : TG_SESSION_DIR,
+    }),
+  });
+  return true;
+}
+
+function releaseAccountLease() {
+  if (!ACCOUNT_SCOPED) return;
+  try {
+    runtimeDb.prepare(`
+      DELETE FROM account_worker_leases
+      WHERE platform = @platform
+        AND account = @account
+        AND lease_name = 'account-runtime'
+        AND holder_id = @holderId
+        AND run_id = @runId
+    `).run({
+      platform: WORKER_PLATFORM,
+      account: WORKER_ACCOUNT,
+      holderId: WORKER_HOLDER_ID,
+      runId: WORKER_RUN_ID,
+    });
+  } catch (err) {
+    log(`failed to release account lease: ${err.message}`);
+  }
+}
+
 function saveTgCredential(request, data) {
   fs.mkdirSync(TG_SESSION_DIR, { recursive: true });
   const filePath = path.join(TG_SESSION_DIR, `${sanitizeSegment(request.account)}.json`);
@@ -556,6 +675,7 @@ function shutdown() {
   log('stopping');
   clearInterval(pollTimer);
   for (const requestId of [...activeWaByRequest.keys()]) stopWaRequest(requestId);
+  releaseAccountLease();
   runtimeDb.close();
   process.exit(0);
 }

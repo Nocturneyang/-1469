@@ -57,7 +57,15 @@ function createApp(options = {}) {
     res.json({ success: true, code: 0, data: result.user, user: result.user, source: result.source });
   });
   app.use('/api/auth', createAuthRouter({ authDb, authenticateToken }));
-  app.use('/api/workbench', authenticateToken, createWorkbenchRouter({ authDb, workbenchDb, runtimeDb, rawDbPath, outboxDir }));
+  app.use('/api/workbench', authenticateToken, createWorkbenchRouter({
+    authDb,
+    workbenchDb,
+    runtimeDb,
+    rawDbPath,
+    outboxDir,
+    accountDataDir: options.accountDataDir,
+    accountDbMode: options.accountDbMode,
+  }));
 
   const distDir = path.join(__dirname, '..', 'frontend', 'dist');
   app.use(express.static(distDir));

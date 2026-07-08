@@ -82,12 +82,29 @@ function openRuntimeDb(dbPath = DEFAULT_RUNTIME_DB_PATH) {
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
 
+    CREATE TABLE IF NOT EXISTS account_worker_leases (
+      platform TEXT NOT NULL,
+      account TEXT NOT NULL,
+      lease_name TEXT NOT NULL DEFAULT 'account-runtime',
+      holder_id TEXT NOT NULL,
+      worker_role TEXT NOT NULL,
+      run_id TEXT,
+      pid INTEGER,
+      acquired_at TEXT NOT NULL,
+      renewed_at TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      metadata_json TEXT,
+      PRIMARY KEY (platform, account, lease_name)
+    );
+
     CREATE INDEX IF NOT EXISTS idx_runtime_events_account_time
       ON runtime_events(account_id, created_at);
     CREATE INDEX IF NOT EXISTS idx_channel_sync_tasks_status
       ON channel_sync_tasks(platform, account, status, created_at);
     CREATE INDEX IF NOT EXISTS idx_service_account_login_requests_account_time
       ON service_account_login_requests(platform, account, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_account_worker_leases_expiry
+      ON account_worker_leases(expires_at);
   `);
   return db;
 }

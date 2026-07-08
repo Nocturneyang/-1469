@@ -40,6 +40,15 @@ runtime.sqlite    # 工作台运行态、服务账号登录任务和 worker 状�
 - 生产公网仍通过 Deploy Hub 的 skyline-ark-sso 网关认证，但工作台应用内的用户、角色、入口权限和服务账号/分组范围使用工作台自己的 `auth.sqlite` / `workbench.sqlite`。
 - 服务账号登录任务使用 `runtime.sqlite` 记录状态，WA/TG session/token 不写入监控项目。
 
+多账号长期运行时开启账号隔离模式：
+
+```text
+WORKBENCH_ACCOUNT_DB_MODE=isolated
+WORKBENCH_ACCOUNT_DATA_DIR=/data/accounts
+```
+
+隔离模式下，总控 `workbench.sqlite` 只保留工作台用户、角色、入口权限和服务账号/分组授权范围；每个 WA/TG 服务账号自己的 raw 消息、登录任务、已读、认领/释放、人工分组、渠道分组映射、外发账本和发送熔断写入 `/data/accounts/{wa|tg}/{account}/` 下的账号库。
+
 ## 主要入口
 
 前端页面：
@@ -115,6 +124,7 @@ npm run build
 npm test
 npm run init-db
 npm run login-worker
+npm run account-worker
 npm run seed:demo
 npm run seed:demo-workbench
 ```
@@ -133,6 +143,28 @@ WORKBENCH_WA_AUTH_DATA_PATH=/Users/a2026/Desktop/工作台/.local-data/sessions/
 WORKBENCH_TG_SESSION_DIR=/Users/a2026/Desktop/工作台/.local-data/sessions/tg
 WORKBENCH_OUTBOX_DIR=/Users/a2026/Desktop/工作台/outbox
 ```
+
+账号隔离 worker 使用独立账号库和 session 目录：
+
+```bash
+WORKBENCH_ACCOUNT_DB_MODE=isolated \
+WORKBENCH_ACCOUNT_DATA_DIR=/Users/a2026/Desktop/工作台/.local-data/accounts \
+WORKBENCH_WORKER_PLATFORM=wa \
+WORKBENCH_WORKER_ACCOUNT=nanya_wa \
+npm run account-worker
+```
+
+账号隔离目录结构：
+
+```text
+.local-data/accounts/{wa|tg}/{account}/raw.sqlite
+.local-data/accounts/{wa|tg}/{account}/runtime.sqlite
+.local-data/accounts/{wa|tg}/{account}/workbench.sqlite
+.local-data/accounts/{wa|tg}/{account}/session/
+.local-data/accounts/{wa|tg}/{account}/outbox/
+```
+
+账号 worker 会优先使用账号目录内的 `raw.sqlite` / `runtime.sqlite` / `workbench.sqlite` / `session/`，不会因为容器里存在全局 `WORKBENCH_RAW_DB_PATH`、`WORKBENCH_RUNTIME_DB_PATH` 或 `WORKBENCH_DB_PATH` 而回写全局库。API/UI 在隔离模式下会聚合各账号库展示会话列表，但写入类业务数据只落到对应账号库。
 
 ## 部署
 

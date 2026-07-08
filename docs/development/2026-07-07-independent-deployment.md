@@ -37,6 +37,21 @@
 - Session 路径独立：WA 使用 `/data/sessions/wa`，TG 使用 `/data/sessions/tg`。
 - 状态独立：登录任务写 `runtime.sqlite`，账号档案写 `raw.sqlite`，不写监控项目数据库。
 
+2026-07-08 追加：多账号长期运行应使用账号隔离模式。API/UI 继续作为控制面运行；每个 WA/TG 服务账号启动一个 `account-runtime-worker`，并设置：
+
+```text
+WORKBENCH_ACCOUNT_DB_MODE=isolated
+WORKBENCH_ACCOUNT_DATA_DIR=/data/accounts
+WORKBENCH_WORKER_PLATFORM=wa|tg
+WORKBENCH_WORKER_ACCOUNT=<account>
+```
+
+账号隔离模式下，登录任务写入 `/data/accounts/{platform}/{account}/runtime.sqlite`，账号档案和 raw 消息写入 `/data/accounts/{platform}/{account}/raw.sqlite`，已读、认领/释放、人工分组、渠道分组映射、外发账本和发送熔断写入 `/data/accounts/{platform}/{account}/workbench.sqlite`，session 写入 `/data/accounts/{platform}/{account}/session/`。总控 `workbench.sqlite` 保留工作台用户、角色、入口权限和服务账号/分组授权范围。
+
+API/UI 在隔离模式下负责跨账号聚合读取：账号列表、会话列表、消息线程、渠道分组和人工分组从各账号库聚合；写入类业务动作只写对应账号库。隔离模式下外发 API 对前端返回 `platform:account:id` 形式的作用域外发 ID，避免多个账号本地自增 ID 冲突。
+
+账号 worker 优先使用账号目录内的 raw/runtime/workbench/session 路径，不因容器全局 `WORKBENCH_RAW_DB_PATH`、`WORKBENCH_RUNTIME_DB_PATH` 或 `WORKBENCH_DB_PATH` 回写全局库。同账号 worker 通过 `account_worker_leases` 续租，防止两个进程同时持有同一渠道 session。
+
 ## 部署
 
 新增独立部署材料：

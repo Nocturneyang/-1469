@@ -3,24 +3,18 @@ const path = require('path');
 const crypto = require('crypto');
 const express = require('express');
 const { writeChannelSyncRequest } = require('../../lib/channel-sync-store');
-const { upsertServiceAccountProfile } = require('../../db/raw-db');
 const {
   DEFAULT_RAW_DB_PATH,
   WORKBENCH_PLATFORMS,
   accountScopeContains,
-  countUnread,
   countUnreadForGroups,
   isWorkbenchPlatform,
   listAccountProfiles,
   listAccounts,
-  listGroups,
-  listMessages,
-  listMessagesPage,
   normalizePlatform,
   normalizePlatformList,
   openRawDb,
   parseAccountScopeList,
-  resolveAccountScope,
 } = require('../../db/raw-messages');
 const { ensureOperator, parseJson, safeJson } = require('../../db/workbench-db');
 const {
@@ -42,13 +36,7 @@ const {
   setOperatorRoles,
   setRolePermissions,
 } = require('../../lib/access-control');
-const {
-  createServiceAccountLoginRequest,
-  deleteServiceAccountLoginRequest,
-  getServiceAccountLoginRequest,
-  listServiceAccountLoginRequests,
-  updateServiceAccountLoginRequest,
-} = require('../../lib/service-account-login-store');
+const { createAccountDataAccess } = require('../../lib/account-data-access');
 
 const ALLOWED_PLATFORMS = new Set(WORKBENCH_PLATFORMS);
 const OUTBOUND_STATUSES = new Set(['pending', 'sending', 'sent', 'delivered', 'failed', 'dead', 'paused', 'canceled']);
@@ -57,12 +45,19 @@ const MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024;
 const MAX_TOTAL_ATTACHMENT_BYTES = 12 * 1024 * 1024;
 const ALLOWED_ATTACHMENT_KINDS = new Set(['file', 'image', 'sticker']);
 
-function createWorkbenchRouter({ workbenchDb, runtimeDb, rawDbPath = DEFAULT_RAW_DB_PATH, outboxDir } = {}) {
+function createWorkbenchRouter({ workbenchDb, runtimeDb, rawDbPath = DEFAULT_RAW_DB_PATH, outboxDir, accountDataDir, accountDbMode } = {}) {
   if (!workbenchDb) throw new Error('workbenchDb is required');
   if (!runtimeDb) throw new Error('runtimeDb is required');
   const router = express.Router();
   const doorbellRoot = outboxDir || process.env.WORKBENCH_OUTBOX_DIR || path.resolve(__dirname, '..', '..', 'outbox');
-  const getAccountScope = () => resolveAccountScope({ rawDbPath });
+  const accountData = createAccountDataAccess({
+    legacyRawDbPath: rawDbPath,
+    legacyRuntimeDb: runtimeDb,
+    legacyWorkbenchDb: workbenchDb,
+    accountDataDir,
+    accountDbMode,
+  });
+  const getAccountScope = () => accountData.resolveAccountScope();
   const requireAdmin = requireAdminPortalAccess(workbenchDb);
 
   router.get('/health', (req, res) => {
@@ -71,9 +66,10 @@ function createWorkbenchRouter({ workbenchDb, runtimeDb, rawDbPath = DEFAULT_RAW
     const accountScope = getAccountScope();
     res.json({
       ok: true,
-      raw_messages_db: rawDb ? 'available' : 'missing',
+      raw_messages_db: accountData.isolated ? 'account-isolated' : (rawDb ? 'available' : 'missing'),
       raw_messages_db_path: rawDbPath,
       workbench_db: 'available',
+      account_db_mode: accountData.isolated ? 'isolated' : 'legacy',
       account_scope: mapAccountScope(accountScope),
     });
   });
@@ -94,7 +90,7 @@ function createWorkbenchRouter({ workbenchDb, runtimeDb, rawDbPath = DEFAULT_RAW
   });
 
   router.get('/admin/access', requireAdmin, (req, res) => {
-    res.json(buildAdminAccessPayload({ workbenchDb, rawDbPath, accountScope: getAccountScope() }));
+    res.json(buildAdminAccessPayload({ workbenchDb, rawDbPath, accountScope: getAccountScope(), accountData }));
   });
 
   router.post('/admin/users', requireAdmin, (req, res) => {
@@ -116,7 +112,7 @@ function createWorkbenchRouter({ workbenchDb, runtimeDb, rawDbPath = DEFAULT_RAW
     res.status(201).json({
       ok: true,
       user: enrichOperatorAccess(workbenchDb, operator),
-      access: buildAdminAccessPayload({ workbenchDb, rawDbPath, accountScope: getAccountScope() }),
+      access: buildAdminAccessPayload({ workbenchDb, rawDbPath, accountScope: getAccountScope(), accountData }),
     });
   });
 
@@ -125,7 +121,7 @@ function createWorkbenchRouter({ workbenchDb, runtimeDb, rawDbPath = DEFAULT_RAW
     res.json({
       ok: true,
       user: enrichOperatorAccess(workbenchDb, operator),
-      access: buildAdminAccessPayload({ workbenchDb, rawDbPath, accountScope: getAccountScope() }),
+      access: buildAdminAccessPayload({ workbenchDb, rawDbPath, accountScope: getAccountScope(), accountData }),
     });
   });
 
@@ -156,11 +152,9 @@ function createWorkbenchRouter({ workbenchDb, runtimeDb, rawDbPath = DEFAULT_RAW
     const accountScope = getAccountScope();
     const operator = currentOperatorContext(workbenchDb, req);
     const visibleAccountScope = allowedAccountScope(workbenchDb, operator, accountScope, 'can_view');
-    const accounts = listAccounts({ rawDbPath, accountScope: visibleAccountScope }).map((account) => ({
+    const accounts = accountData.listAccounts({ accountScope: visibleAccountScope }).map((account) => ({
       ...account,
-      label_count: countLabels(workbenchDb, account.platform, account.account),
-      synced_group_count: countSyncedGroups(workbenchDb, account.platform, account.account),
-      last_channel_sync_at: lastChannelSyncAt(workbenchDb, account.platform, account.account),
+      ...accountChannelStats(accountData, workbenchDb, account.platform, account.account),
     }));
     res.json({ ok: true, accounts, account_scope: mapAccountScope(visibleAccountScope) });
   });
@@ -168,7 +162,8 @@ function createWorkbenchRouter({ workbenchDb, runtimeDb, rawDbPath = DEFAULT_RAW
   router.get('/service-account-logins', requireAdmin, (req, res) => {
     res.json({
       ok: true,
-      requests: listServiceAccountLoginRequests(runtimeDb, { limit: req.query.limit }),
+      isolated: accountData.isolated,
+      requests: accountData.listLoginRequests({ limit: req.query.limit }),
     });
   });
 
@@ -181,8 +176,7 @@ function createWorkbenchRouter({ workbenchDb, runtimeDb, rawDbPath = DEFAULT_RAW
     const displayName = String(body.display_name || body.displayName || account).trim();
     let request;
     try {
-      request = createServiceAccountLoginRequest({
-        runtimeDb,
+      request = accountData.createLoginRequest({
         outboxDir: doorbellRoot,
         platform,
         account,
@@ -191,8 +185,7 @@ function createWorkbenchRouter({ workbenchDb, runtimeDb, rawDbPath = DEFAULT_RAW
         credential: body.credential,
         requestedBy: operator.id,
       });
-      upsertServiceAccountProfile({
-        dbPath: rawDbPath,
+      accountData.upsertProfile({
         platform,
         account,
         displayName,
@@ -202,25 +195,24 @@ function createWorkbenchRouter({ workbenchDb, runtimeDb, rawDbPath = DEFAULT_RAW
     } catch (err) {
       throw createHttpError(400, err.message);
     }
-    writeAction(workbenchDb, operator.id, 'service_account.login.request', platform, account, null, request.request_id, {
+    accountData.withWorkbenchDb(platform, account, { create: true }, (accountDb) => writeAction(accountDb, operator.id, 'service_account.login.request', platform, account, null, request.request_id, {
       login_mode: request.login_mode,
       credential_hint: request.credential_hint,
-    });
+    }));
     res.status(202).json({ ok: true, request });
   });
 
   router.get('/service-account-logins/:id', requireAdmin, (req, res) => {
-    const request = getServiceAccountLoginRequest(runtimeDb, req.params.id);
+    const request = accountData.getLoginRequest(req.params.id);
     if (!request) throw createHttpError(404, 'login request not found');
     res.json({ ok: true, request });
   });
 
   router.patch('/service-account-logins/:id', requireAdmin, (req, res) => {
-    const request = updateServiceAccountLoginRequest(runtimeDb, req.params.id, req.body || {});
+    const request = accountData.updateLoginRequest(req.params.id, req.body || {});
     if (!request) throw createHttpError(404, 'login request not found');
     if (request.status) {
-      upsertServiceAccountProfile({
-        dbPath: rawDbPath,
+      accountData.upsertProfile({
         platform: request.platform,
         account: request.account,
         displayName: request.display_name,
@@ -233,10 +225,10 @@ function createWorkbenchRouter({ workbenchDb, runtimeDb, rawDbPath = DEFAULT_RAW
 
   router.delete('/service-account-logins/:id', requireAdmin, (req, res) => {
     const operator = currentOperatorContext(workbenchDb, req);
-    const request = deleteServiceAccountLoginRequest(runtimeDb, req.params.id, { outboxDir: doorbellRoot });
+    const request = accountData.deleteLoginRequest(req.params.id, { outboxDir: doorbellRoot });
     if (!request) throw createHttpError(404, 'login request not found');
-    writeAction(
-      workbenchDb,
+    accountData.withWorkbenchDb(request.platform, request.account, { create: true }, (accountDb) => writeAction(
+      accountDb,
       operator.id,
       'service_account.login.delete',
       request.platform,
@@ -248,7 +240,7 @@ function createWorkbenchRouter({ workbenchDb, runtimeDb, rawDbPath = DEFAULT_RAW
         status: request.status,
         deleted_doorbells: request.deleted_doorbells,
       },
-    );
+    ));
     res.json({ ok: true, request });
   });
 
@@ -265,7 +257,10 @@ function createWorkbenchRouter({ workbenchDb, runtimeDb, rawDbPath = DEFAULT_RAW
     const selectedAccountScope = resolveSelectedAccountScope(visibleAccountScope, accountFilterValue);
     applyServiceAccountScopeSql(filters, params, selectedAccountScope);
     const where = filters.length ? `WHERE ${filters.join(' AND ')}` : '';
-    const labels = workbenchDb.prepare(`
+    const labels = queryWorkbenchDbs(accountData, {
+      platforms: platform ? [platform] : undefined,
+      accountScope: selectedAccountScope,
+      sql: `
       SELECT
         id,
         platform,
@@ -283,7 +278,9 @@ function createWorkbenchRouter({ workbenchDb, runtimeDb, rawDbPath = DEFAULT_RAW
       FROM service_groups
       ${where}
       ORDER BY platform ASC, account ASC, kind ASC, name ASC
-    `).all(params).filter((label) => serviceGroupVisible(workbenchDb, operator, {
+    `,
+      params,
+    }).filter((label) => serviceGroupVisible(workbenchDb, operator, {
       platform: label.platform,
       service_account: label.account,
       native_group_id: label.native_group_id,
@@ -304,7 +301,10 @@ function createWorkbenchRouter({ workbenchDb, runtimeDb, rawDbPath = DEFAULT_RAW
     const selectedAccountScope = resolveSelectedAccountScope(visibleAccountScope, accountFilterValue);
     applyServiceAccountScopeSql(filters, params, selectedAccountScope);
     const where = filters.length ? `WHERE ${filters.join(' AND ')}` : '';
-    const groups = workbenchDb.prepare(`
+    const groups = queryWorkbenchDbs(accountData, {
+      platforms: platform ? [platform] : undefined,
+      accountScope: selectedAccountScope,
+      sql: `
       SELECT
         id,
         platform,
@@ -320,7 +320,9 @@ function createWorkbenchRouter({ workbenchDb, runtimeDb, rawDbPath = DEFAULT_RAW
       FROM service_groups
       ${where}
       ORDER BY platform ASC, service_account ASC, source ASC, name ASC
-    `).all(params).filter((group) => serviceGroupVisible(workbenchDb, operator, group, 'can_view'));
+    `,
+      params,
+    }).filter((group) => serviceGroupVisible(workbenchDb, operator, group, 'can_view'));
     res.json({ ok: true, groups });
   });
 
@@ -339,7 +341,10 @@ function createWorkbenchRouter({ workbenchDb, runtimeDb, rawDbPath = DEFAULT_RAW
     const selectedAccountScope = resolveSelectedAccountScope(visibleAccountScope, accountFilterValue);
     applyServiceAccountScopeSql(filters, params, selectedAccountScope);
     const where = filters.length ? `WHERE ${filters.join(' AND ')}` : '';
-    const groups = workbenchDb.prepare(`
+    const groups = queryWorkbenchDbs(accountData, {
+      platforms: platform ? [platform] : undefined,
+      accountScope: selectedAccountScope,
+      sql: `
       SELECT
         id,
         platform,
@@ -359,7 +364,9 @@ function createWorkbenchRouter({ workbenchDb, runtimeDb, rawDbPath = DEFAULT_RAW
       FROM service_groups
       ${where}
       ORDER BY platform ASC, service_account ASC, group_level ASC, name ASC
-    `).all(params).filter((group) => serviceGroupVisible(workbenchDb, operator, group, 'can_view'));
+    `,
+      params,
+    }).filter((group) => serviceGroupVisible(workbenchDb, operator, group, 'can_view'));
     res.json({ ok: true, groups: orderServiceGroups(groups) });
   });
 
@@ -377,46 +384,49 @@ function createWorkbenchRouter({ workbenchDb, runtimeDb, rawDbPath = DEFAULT_RAW
     const parentNativeGroupId = groupLevel === 2
       ? requireText(body.parent_native_group_id || body.parent_id, 'parent_native_group_id')
       : null;
-    if (parentNativeGroupId) {
-      const parent = getServiceGroup(workbenchDb, platform, account, parentNativeGroupId);
-      if (!parent || Number(parent.group_level || 1) !== 1 || !isManualServiceGroup(parent)) {
-        throw createHttpError(400, 'parent group must be an existing manual level-1 group');
-      }
-    }
     const nativeGroupId = createManualGroupId();
     const source = groupLevel === 2 ? 'manual_l2' : 'manual_l1';
     const color = normalizeColor(body.color) || defaultManualGroupColor(groupLevel);
     const now = new Date().toISOString();
-    workbenchDb.prepare(`
-      INSERT INTO service_groups (
-        platform, service_account, native_group_id, name, source,
-        parent_native_group_id, group_level, is_manual,
-        color, raw_json, synced_at, created_by, updated_by
-      )
-      VALUES (
-        @platform, @account, @nativeGroupId, @name, @source,
-        @parentNativeGroupId, @groupLevel, 1,
-        @color, @rawJson, @syncedAt, @operatorId, @operatorId
-      )
-    `).run({
-      platform,
-      account,
-      nativeGroupId,
-      name,
-      source,
-      parentNativeGroupId,
-      groupLevel,
-      color,
-      rawJson: safeJson({ manual: true, group_level: groupLevel, parent_native_group_id: parentNativeGroupId }),
-      syncedAt: now,
-      operatorId,
+    const group = accountData.withWorkbenchDb(platform, account, { create: true }, (accountDb) => {
+      if (parentNativeGroupId) {
+        const parent = getServiceGroup(accountDb, platform, account, parentNativeGroupId);
+        if (!parent || Number(parent.group_level || 1) !== 1 || !isManualServiceGroup(parent)) {
+          throw createHttpError(400, 'parent group must be an existing manual level-1 group');
+        }
+      }
+      accountDb.prepare(`
+        INSERT INTO service_groups (
+          platform, service_account, native_group_id, name, source,
+          parent_native_group_id, group_level, is_manual,
+          color, raw_json, synced_at, created_by, updated_by
+        )
+        VALUES (
+          @platform, @account, @nativeGroupId, @name, @source,
+          @parentNativeGroupId, @groupLevel, 1,
+          @color, @rawJson, @syncedAt, @operatorId, @operatorId
+        )
+      `).run({
+        platform,
+        account,
+        nativeGroupId,
+        name,
+        source,
+        parentNativeGroupId,
+        groupLevel,
+        color,
+        rawJson: safeJson({ manual: true, group_level: groupLevel, parent_native_group_id: parentNativeGroupId }),
+        syncedAt: now,
+        operatorId,
+      });
+      writeAction(accountDb, operatorId, 'manual_group.create', platform, account, null, nativeGroupId, {
+        name,
+        group_level: groupLevel,
+        parent_native_group_id: parentNativeGroupId,
+      });
+      return getServiceGroup(accountDb, platform, account, nativeGroupId);
     });
-    writeAction(workbenchDb, operatorId, 'manual_group.create', platform, account, null, nativeGroupId, {
-      name,
-      group_level: groupLevel,
-      parent_native_group_id: parentNativeGroupId,
-    });
-    res.status(201).json({ ok: true, group: getServiceGroup(workbenchDb, platform, account, nativeGroupId) });
+    res.status(201).json({ ok: true, group });
   });
 
   router.get('/groups', (req, res) => {
@@ -433,16 +443,15 @@ function createWorkbenchRouter({ workbenchDb, runtimeDb, rawDbPath = DEFAULT_RAW
     }
     const scope = String(req.query.scope || 'all');
     const labelId = req.query.label_id ? String(req.query.label_id) : '';
-    const labelIds = labelId ? new Set(expandServiceGroupFilterIds(workbenchDb, labelId)) : new Set();
-    const rawGroups = listGroups({
-      rawDbPath,
+    const labelIds = labelId ? new Set(expandServiceGroupFilterIdsAcross(accountData, labelId, selectedAccountScope)) : new Set();
+    const rawGroups = accountData.listGroups({
       platforms,
       accountScope: selectedAccountScope,
       search: req.query.search,
       limit: req.query.limit,
       offset: req.query.offset,
     });
-    const syncedGroups = listSyncedGroups(workbenchDb, {
+    const syncedGroups = listSyncedGroupsAcross(accountData, {
       platforms,
       accountScope: selectedAccountScope,
       search: req.query.search,
@@ -452,7 +461,7 @@ function createWorkbenchRouter({ workbenchDb, runtimeDb, rawDbPath = DEFAULT_RAW
     const enriched = filterGroupsByCapability(
       workbenchDb,
       operator,
-      enrichGroups(workbenchDb, rawDbPath, mergeGroupSources(rawGroups, syncedGroups), operatorId, selectedAccountScope),
+      enrichGroupsWithAccountData(accountData, workbenchDb, rawDbPath, mergeGroupSources(rawGroups, syncedGroups), operatorId, selectedAccountScope),
       'can_view',
     )
       .filter((group) => {
@@ -486,7 +495,7 @@ function createWorkbenchRouter({ workbenchDb, runtimeDb, rawDbPath = DEFAULT_RAW
       ? body.accounts
       : String(body.accounts || '').split(',');
     const requestedAccountSet = new Set(parseAccountScopeList(requestedAccounts.join(',')).accounts.map((entry) => accountKey(entry.platform, entry.account)));
-    const visibleAccounts = (manageAccountScope.active ? manageAccountScope.accounts : listAccounts({ rawDbPath, accountScope: manageAccountScope }))
+    const visibleAccounts = (manageAccountScope.active ? manageAccountScope.accounts : accountData.listAccounts({ accountScope: manageAccountScope }))
       .filter((account) => (!requestedPlatform || account.platform === requestedPlatform))
       .filter((account) => (!requestedAccount || account.account === requestedAccount))
       .filter((account) => (!requestedAccountSet.size || requestedAccountSet.has(accountKey(account.platform, account.account))));
@@ -501,9 +510,9 @@ function createWorkbenchRouter({ workbenchDb, runtimeDb, rawDbPath = DEFAULT_RAW
         requestedBy: operatorId,
         reason: body.reason || 'manual',
       });
-      writeAction(workbenchDb, operatorId, 'channel.sync.request', account.platform, account.account, null, request.requested_at, {
+      accountData.withWorkbenchDb(account.platform, account.account, { create: true }, (accountDb) => writeAction(accountDb, operatorId, 'channel.sync.request', account.platform, account.account, null, request.requested_at, {
         reason: request.reason,
-      });
+      }));
       return {
         platform: account.platform,
         account: account.account,
@@ -522,8 +531,7 @@ function createWorkbenchRouter({ workbenchDb, runtimeDb, rawDbPath = DEFAULT_RAW
     requireVisibleAccount(visibleAccountScope, platform, account);
     const groupId = req.params.groupId;
     requireConversationCapability(workbenchDb, operator, platform, account, groupId, 'can_view');
-    const page = listMessagesPage({
-      rawDbPath,
+    const page = accountData.listMessagesPage({
       platform,
       account,
       accountScope: visibleAccountScope,
@@ -532,7 +540,12 @@ function createWorkbenchRouter({ workbenchDb, runtimeDb, rawDbPath = DEFAULT_RAW
       limit: req.query.limit,
     });
     const inbound = page.messages.map(mapRawMessage);
-    const outbound = listOutboundMessages(workbenchDb, { platform, account, groupId });
+    const outbound = accountData.withWorkbenchDb(platform, account, {}, (accountDb) => listOutboundMessages(accountDb, {
+      platform,
+      account,
+      groupId,
+      scopedIds: accountData.isolated,
+    }));
     const messages = applyMentionDisplayNames(mergeConversationMessages(inbound, outbound));
     res.json({ ok: true, messages, paging: page.paging });
   });
@@ -551,43 +564,46 @@ function createWorkbenchRouter({ workbenchDb, runtimeDb, rawDbPath = DEFAULT_RAW
     const manualGroupIds = normalizeManualGroupIds(
       body.manual_group_ids ?? body.native_group_ids ?? body.group_ids ?? [],
     );
-    const manualGroups = loadManualServiceGroupsByIds(workbenchDb, platform, account, manualGroupIds);
-    if (manualGroups.length !== manualGroupIds.length) {
-      throw createHttpError(400, 'manual_group_ids contains unknown or non-manual groups');
-    }
-    const save = workbenchDb.transaction(() => {
-      workbenchDb.prepare(`
-        DELETE FROM conversation_service_group_map
-        WHERE platform = @platform
-          AND service_account = @account
-          AND chat_id = @groupId
-          AND native_group_id IN (
-            SELECT native_group_id
-            FROM service_groups
-            WHERE platform = @platform
-              AND service_account = @account
-              AND (source IN ('manual', 'manual_l1', 'manual_l2') OR is_manual = 1)
+    const labels = accountData.withWorkbenchDb(platform, account, { create: true }, (accountDb) => {
+      const manualGroups = loadManualServiceGroupsByIds(accountDb, platform, account, manualGroupIds);
+      if (manualGroups.length !== manualGroupIds.length) {
+        throw createHttpError(400, 'manual_group_ids contains unknown or non-manual groups');
+      }
+      const save = accountDb.transaction(() => {
+        accountDb.prepare(`
+          DELETE FROM conversation_service_group_map
+          WHERE platform = @platform
+            AND service_account = @account
+            AND chat_id = @groupId
+            AND native_group_id IN (
+              SELECT native_group_id
+              FROM service_groups
+              WHERE platform = @platform
+                AND service_account = @account
+                AND (source IN ('manual', 'manual_l1', 'manual_l2') OR is_manual = 1)
+            )
+        `).run({ platform, account, groupId });
+        const insert = accountDb.prepare(`
+          INSERT INTO conversation_service_group_map (
+            platform, service_account, chat_id, native_group_id, synced_at
           )
-      `).run({ platform, account, groupId });
-      const insert = workbenchDb.prepare(`
-        INSERT INTO conversation_service_group_map (
-          platform, service_account, chat_id, native_group_id, synced_at
-        )
-        VALUES (@platform, @account, @groupId, @nativeGroupId, @syncedAt)
-        ON CONFLICT(platform, service_account, chat_id, native_group_id) DO UPDATE SET
-          synced_at = excluded.synced_at,
-          updated_at = CURRENT_TIMESTAMP
-      `);
-      const syncedAt = new Date().toISOString();
-      manualGroupIds.forEach((nativeGroupId) => {
-        insert.run({ platform, account, groupId, nativeGroupId, syncedAt });
+          VALUES (@platform, @account, @groupId, @nativeGroupId, @syncedAt)
+          ON CONFLICT(platform, service_account, chat_id, native_group_id) DO UPDATE SET
+            synced_at = excluded.synced_at,
+            updated_at = CURRENT_TIMESTAMP
+        `);
+        const syncedAt = new Date().toISOString();
+        manualGroupIds.forEach((nativeGroupId) => {
+          insert.run({ platform, account, groupId, nativeGroupId, syncedAt });
+        });
+        writeAction(accountDb, operatorId, 'conversation.manual_groups.update', platform, account, groupId, groupId, {
+          manual_group_ids: manualGroupIds,
+        });
+        return loadConversationLabels(accountDb, platform, account, groupId);
       });
-      writeAction(workbenchDb, operatorId, 'conversation.manual_groups.update', platform, account, groupId, groupId, {
-        manual_group_ids: manualGroupIds,
-      });
-      return loadConversationLabels(workbenchDb, platform, account, groupId);
+      return save();
     });
-    res.json({ ok: true, labels: save() });
+    res.json({ ok: true, labels });
   });
 
   router.post('/reply', (req, res) => {
@@ -601,7 +617,7 @@ function createWorkbenchRouter({ workbenchDb, runtimeDb, rawDbPath = DEFAULT_RAW
     requireVisibleAccount(replyAccountScope, platform, account);
     const groupId = requireText(body.group_id, 'group_id');
     requireConversationCapability(workbenchDb, operator, platform, account, groupId, 'can_reply');
-    const accountProfile = findAccountProfile(rawDbPath, accountScope, platform, account);
+    const accountProfile = accountData.findAccountProfile(platform, account, accountScope);
     if (accountProfile && accountProfile.send_enabled === 0) {
       throw createHttpError(403, 'service account is not enabled for sending');
     }
@@ -612,48 +628,51 @@ function createWorkbenchRouter({ workbenchDb, runtimeDb, rawDbPath = DEFAULT_RAW
     if (!text && !attachmentJson) {
       throw createHttpError(400, 'text or attachment is required');
     }
-    const breaker = activeBreaker(workbenchDb, platform, account);
-    const desiredStatus = breaker ? 'paused' : 'pending';
-    const insert = workbenchDb.prepare(`
-      INSERT INTO outbound_messages (
-        client_msg_id, platform, account, group_id, chat_id, text, quote_msg_id,
-        attachment_json, status, created_by
-      )
-      VALUES (
-        @clientMsgId, @platform, @account, @groupId, @chatId, @text, @quoteMsgId,
-        @attachmentJson, @status, @createdBy
-      )
-      ON CONFLICT(created_by, client_msg_id) DO NOTHING
-    `).run({
-      clientMsgId,
-      platform,
-      account,
-      groupId,
-      chatId: body.chat_id || groupId,
-      text,
-      quoteMsgId: body.quote_msg_id || null,
-      attachmentJson,
-      status: desiredStatus,
-      createdBy: operatorId,
-    });
-    const outbound = workbenchDb.prepare(`
-      SELECT *
-      FROM outbound_messages
-      WHERE created_by = @operatorId AND client_msg_id = @clientMsgId
-    `).get({ operatorId, clientMsgId });
-    if (insert.changes > 0) {
-      writeAction(workbenchDb, operatorId, 'reply.create', platform, account, groupId, outbound.id, {
-        status: outbound.status,
-        has_attachment: Boolean(attachmentJson),
+    const result = accountData.withWorkbenchDb(platform, account, { create: true }, (accountDb) => {
+      const breaker = activeBreaker(accountDb, platform, account);
+      const desiredStatus = breaker ? 'paused' : 'pending';
+      const insert = accountDb.prepare(`
+        INSERT INTO outbound_messages (
+          client_msg_id, platform, account, group_id, chat_id, text, quote_msg_id,
+          attachment_json, status, created_by
+        )
+        VALUES (
+          @clientMsgId, @platform, @account, @groupId, @chatId, @text, @quoteMsgId,
+          @attachmentJson, @status, @createdBy
+        )
+        ON CONFLICT(created_by, client_msg_id) DO NOTHING
+      `).run({
+        clientMsgId,
+        platform,
+        account,
+        groupId,
+        chatId: body.chat_id || groupId,
+        text,
+        quoteMsgId: body.quote_msg_id || null,
+        attachmentJson,
+        status: desiredStatus,
+        createdBy: operatorId,
       });
-      if (outbound.status === 'pending') writeDoorbell(doorbellRoot, outbound);
-    }
-    res.status(insert.changes > 0 ? 201 : 200).json({
+      const outbound = accountDb.prepare(`
+        SELECT *
+        FROM outbound_messages
+        WHERE created_by = @operatorId AND client_msg_id = @clientMsgId
+      `).get({ operatorId, clientMsgId });
+      if (insert.changes > 0) {
+        writeAction(accountDb, operatorId, 'reply.create', platform, account, groupId, outbound.id, {
+          status: outbound.status,
+          has_attachment: Boolean(attachmentJson),
+        });
+        if (outbound.status === 'pending') writeDoorbell(doorbellRoot, outbound);
+      }
+      return { insert, outbound, breaker };
+    });
+    res.status(result.insert.changes > 0 ? 201 : 200).json({
       ok: true,
-      outbound_id: outbound.id,
-      status: outbound.status,
-      idempotent: insert.changes === 0,
-      paused_reason: breaker ? breaker.reason || 'account cooldown' : undefined,
+      outbound_id: publicOutboundId(result.outbound, accountData),
+      status: result.outbound.status,
+      idempotent: result.insert.changes === 0,
+      paused_reason: result.breaker ? result.breaker.reason || 'account cooldown' : undefined,
     });
   });
 
@@ -669,21 +688,22 @@ function createWorkbenchRouter({ workbenchDb, runtimeDb, rawDbPath = DEFAULT_RAW
     const groupId = requireText(body.group_id, 'group_id');
     requireConversationCapability(workbenchDb, operator, platform, account, groupId, 'can_view');
     const lastReadMessageId = Number(body.last_read_message_id || 0);
-    workbenchDb.prepare(`
-      INSERT INTO conversation_reads (
-        operator_id, platform, account, group_id, last_read_message_id, last_read_at, updated_at
-      )
-      VALUES (@operatorId, @platform, @account, @groupId, @lastReadMessageId, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-      ON CONFLICT(operator_id, platform, account, group_id) DO UPDATE SET
-        last_read_message_id = MAX(COALESCE(conversation_reads.last_read_message_id, 0), excluded.last_read_message_id),
-        last_read_at = CURRENT_TIMESTAMP,
-        updated_at = CURRENT_TIMESTAMP
-    `).run({ operatorId, platform, account, groupId, lastReadMessageId });
-    writeAction(workbenchDb, operatorId, 'conversation.read', platform, account, groupId, groupId, {
-      last_read_message_id: lastReadMessageId,
+    accountData.withWorkbenchDb(platform, account, { create: true }, (accountDb) => {
+      accountDb.prepare(`
+        INSERT INTO conversation_reads (
+          operator_id, platform, account, group_id, last_read_message_id, last_read_at, updated_at
+        )
+        VALUES (@operatorId, @platform, @account, @groupId, @lastReadMessageId, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        ON CONFLICT(operator_id, platform, account, group_id) DO UPDATE SET
+          last_read_message_id = MAX(COALESCE(conversation_reads.last_read_message_id, 0), excluded.last_read_message_id),
+          last_read_at = CURRENT_TIMESTAMP,
+          updated_at = CURRENT_TIMESTAMP
+      `).run({ operatorId, platform, account, groupId, lastReadMessageId });
+      writeAction(accountDb, operatorId, 'conversation.read', platform, account, groupId, groupId, {
+        last_read_message_id: lastReadMessageId,
+      });
     });
-    const unreadCount = Math.min(countUnread({
-      rawDbPath,
+    const unreadCount = Math.min(accountData.countUnread({
       platform,
       account,
       accountScope: visibleAccountScope,
@@ -706,23 +726,25 @@ function createWorkbenchRouter({ workbenchDb, runtimeDb, rawDbPath = DEFAULT_RAW
     requireConversationCapability(workbenchDb, operator, platform, account, groupId, 'can_assign');
     const assignedTo = String(body.assigned_to || operatorId).trim();
     ensureOperator(workbenchDb, assignedTo, body.assigned_to_name || assignedTo);
-    const tx = workbenchDb.transaction(() => {
-      workbenchDb.prepare(`
-        UPDATE group_assignments
-        SET status = 'released', released_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
-        WHERE platform = @platform AND account = @account AND group_id = @groupId AND status = 'active'
-      `).run({ platform, account, groupId });
-      const result = workbenchDb.prepare(`
-        INSERT INTO group_assignments (platform, account, group_id, assigned_to, assigned_by)
-        VALUES (@platform, @account, @groupId, @assignedTo, @assignedBy)
-      `).run({ platform, account, groupId, assignedTo, assignedBy: operatorId });
-      writeAction(workbenchDb, operatorId, 'conversation.assign', platform, account, groupId, result.lastInsertRowid, {
-        assigned_to: assignedTo,
+    const assignment = accountData.withWorkbenchDb(platform, account, { create: true }, (accountDb) => {
+      const tx = accountDb.transaction(() => {
+        accountDb.prepare(`
+          UPDATE group_assignments
+          SET status = 'released', released_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+          WHERE platform = @platform AND account = @account AND group_id = @groupId AND status = 'active'
+        `).run({ platform, account, groupId });
+        const result = accountDb.prepare(`
+          INSERT INTO group_assignments (platform, account, group_id, assigned_to, assigned_by)
+          VALUES (@platform, @account, @groupId, @assignedTo, @assignedBy)
+        `).run({ platform, account, groupId, assignedTo, assignedBy: operatorId });
+        writeAction(accountDb, operatorId, 'conversation.assign', platform, account, groupId, result.lastInsertRowid, {
+          assigned_to: assignedTo,
+        });
+        return result.lastInsertRowid;
       });
-      return result.lastInsertRowid;
+      const id = tx();
+      return accountDb.prepare('SELECT * FROM group_assignments WHERE id = ?').get(id);
     });
-    const id = tx();
-    const assignment = workbenchDb.prepare('SELECT * FROM group_assignments WHERE id = ?').get(id);
     res.status(201).json({ ok: true, assignment });
   });
 
@@ -737,25 +759,30 @@ function createWorkbenchRouter({ workbenchDb, runtimeDb, rawDbPath = DEFAULT_RAW
     requireVisibleAccount(assignAccountScope, platform, account);
     const groupId = req.params.groupId;
     requireConversationCapability(workbenchDb, operator, platform, account, groupId, 'can_assign');
-    const result = workbenchDb.prepare(`
-      UPDATE group_assignments
-      SET status = 'released', released_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
-      WHERE platform = @platform AND account = @account AND group_id = @groupId AND status = 'active'
-    `).run({ platform, account, groupId });
-    writeAction(workbenchDb, operatorId, 'conversation.release', platform, account, groupId, groupId, {
-      released: result.changes,
+    const released = accountData.withWorkbenchDb(platform, account, { create: true }, (accountDb) => {
+      const result = accountDb.prepare(`
+        UPDATE group_assignments
+        SET status = 'released', released_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+        WHERE platform = @platform AND account = @account AND group_id = @groupId AND status = 'active'
+      `).run({ platform, account, groupId });
+      writeAction(accountDb, operatorId, 'conversation.release', platform, account, groupId, groupId, {
+        released: result.changes,
+      });
+      return result.changes;
     });
-    res.json({ ok: true, released: result.changes });
+    res.json({ ok: true, released });
   });
 
   router.get('/outbound/:id', (req, res) => {
     const accountScope = getAccountScope();
     const operator = currentOperatorContext(workbenchDb, req);
     const visibleAccountScope = allowedAccountScope(workbenchDb, operator, accountScope, 'can_view');
-    const outbound = getOutbound(workbenchDb, req.params.id);
-    requireVisibleAccount(visibleAccountScope, outbound.platform, outbound.account);
-    requireConversationCapability(workbenchDb, operator, outbound.platform, outbound.account, outbound.group_id, 'can_view');
-    res.json({ ok: true, outbound: mapOutboundRow(outbound) });
+    const outbound = withOutboundForRequest(accountData, req, (accountDb, row) => {
+      requireVisibleAccount(visibleAccountScope, row.platform, row.account);
+      requireConversationCapability(workbenchDb, operator, row.platform, row.account, row.group_id, 'can_view');
+      return row;
+    });
+    res.json({ ok: true, outbound: mapOutboundRow(outbound, { scopedIds: accountData.isolated }) });
   });
 
   router.post('/outbound/:id/cancel', (req, res) => {
@@ -763,19 +790,21 @@ function createWorkbenchRouter({ workbenchDb, runtimeDb, rawDbPath = DEFAULT_RAW
     const operator = currentOperatorContext(workbenchDb, req);
     const replyAccountScope = allowedAccountScope(workbenchDb, operator, accountScope, 'can_reply');
     const operatorId = operator.id;
-    const outbound = getOutbound(workbenchDb, req.params.id);
-    requireVisibleAccount(replyAccountScope, outbound.platform, outbound.account);
-    requireConversationCapability(workbenchDb, operator, outbound.platform, outbound.account, outbound.group_id, 'can_reply');
-    if (!['pending', 'paused'].includes(outbound.status)) {
-      throw createHttpError(409, `cannot cancel outbound in ${outbound.status} status`);
-    }
-    workbenchDb.prepare(`
-      UPDATE outbound_messages
-      SET status = 'canceled', updated_at = CURRENT_TIMESTAMP
-      WHERE id = @id
-    `).run({ id: outbound.id });
-    writeAction(workbenchDb, operatorId, 'outbound.cancel', outbound.platform, outbound.account, outbound.group_id, outbound.id, {});
-    res.json({ ok: true, outbound: mapOutboundRow(getOutbound(workbenchDb, outbound.id)) });
+    const outbound = withOutboundForRequest(accountData, req, (accountDb, row) => {
+      requireVisibleAccount(replyAccountScope, row.platform, row.account);
+      requireConversationCapability(workbenchDb, operator, row.platform, row.account, row.group_id, 'can_reply');
+      if (!['pending', 'paused'].includes(row.status)) {
+        throw createHttpError(409, `cannot cancel outbound in ${row.status} status`);
+      }
+      accountDb.prepare(`
+        UPDATE outbound_messages
+        SET status = 'canceled', updated_at = CURRENT_TIMESTAMP
+        WHERE id = @id
+      `).run({ id: row.id });
+      writeAction(accountDb, operatorId, 'outbound.cancel', row.platform, row.account, row.group_id, row.id, {});
+      return getOutbound(accountDb, row.id);
+    });
+    res.json({ ok: true, outbound: mapOutboundRow(outbound, { scopedIds: accountData.isolated }) });
   });
 
   router.post('/outbound/:id/retry', (req, res) => {
@@ -783,46 +812,48 @@ function createWorkbenchRouter({ workbenchDb, runtimeDb, rawDbPath = DEFAULT_RAW
     const operator = currentOperatorContext(workbenchDb, req);
     const replyAccountScope = allowedAccountScope(workbenchDb, operator, accountScope, 'can_reply');
     const operatorId = operator.id;
-    const previous = getOutbound(workbenchDb, req.params.id);
-    requireVisibleAccount(replyAccountScope, previous.platform, previous.account);
-    requireConversationCapability(workbenchDb, operator, previous.platform, previous.account, previous.group_id, 'can_reply');
-    if (!['failed', 'dead', 'paused', 'canceled'].includes(previous.status)) {
-      throw createHttpError(409, `cannot retry outbound in ${previous.status} status`);
-    }
-    const breaker = activeBreaker(workbenchDb, previous.platform, previous.account);
-    const clientMsgId = req.body && req.body.client_msg_id
-      ? String(req.body.client_msg_id)
-      : `retry-${previous.id}-${Date.now()}`;
-    const status = breaker ? 'paused' : 'pending';
-    const result = workbenchDb.prepare(`
-      INSERT INTO outbound_messages (
-        client_msg_id, platform, account, group_id, chat_id, text, quote_msg_id,
-        attachment_json, status, created_by, retry_of, retry_count
-      )
-      VALUES (
-        @clientMsgId, @platform, @account, @groupId, @chatId, @text, @quoteMsgId,
-        @attachmentJson, @status, @createdBy, @retryOf, @retryCount
-      )
-    `).run({
-      clientMsgId,
-      platform: previous.platform,
-      account: previous.account,
-      groupId: previous.group_id,
-      chatId: previous.chat_id || previous.group_id,
-      text: previous.text,
-      quoteMsgId: previous.quote_msg_id,
-      attachmentJson: previous.attachment_json,
-      status,
-      createdBy: operatorId,
-      retryOf: previous.id,
-      retryCount: Number(previous.retry_count || 0) + 1,
+    const outbound = withOutboundForRequest(accountData, req, (accountDb, previous) => {
+      requireVisibleAccount(replyAccountScope, previous.platform, previous.account);
+      requireConversationCapability(workbenchDb, operator, previous.platform, previous.account, previous.group_id, 'can_reply');
+      if (!['failed', 'dead', 'paused', 'canceled'].includes(previous.status)) {
+        throw createHttpError(409, `cannot retry outbound in ${previous.status} status`);
+      }
+      const breaker = activeBreaker(accountDb, previous.platform, previous.account);
+      const clientMsgId = req.body && req.body.client_msg_id
+        ? String(req.body.client_msg_id)
+        : `retry-${previous.id}-${Date.now()}`;
+      const status = breaker ? 'paused' : 'pending';
+      const result = accountDb.prepare(`
+        INSERT INTO outbound_messages (
+          client_msg_id, platform, account, group_id, chat_id, text, quote_msg_id,
+          attachment_json, status, created_by, retry_of, retry_count
+        )
+        VALUES (
+          @clientMsgId, @platform, @account, @groupId, @chatId, @text, @quoteMsgId,
+          @attachmentJson, @status, @createdBy, @retryOf, @retryCount
+        )
+      `).run({
+        clientMsgId,
+        platform: previous.platform,
+        account: previous.account,
+        groupId: previous.group_id,
+        chatId: previous.chat_id || previous.group_id,
+        text: previous.text,
+        quoteMsgId: previous.quote_msg_id,
+        attachmentJson: previous.attachment_json,
+        status,
+        createdBy: operatorId,
+        retryOf: previous.id,
+        retryCount: Number(previous.retry_count || 0) + 1,
+      });
+      const next = getOutbound(accountDb, result.lastInsertRowid);
+      writeAction(accountDb, operatorId, 'outbound.retry', next.platform, next.account, next.group_id, next.id, {
+        retry_of: previous.id,
+      });
+      if (next.status === 'pending') writeDoorbell(doorbellRoot, next);
+      return next;
     });
-    const outbound = getOutbound(workbenchDb, result.lastInsertRowid);
-    writeAction(workbenchDb, operatorId, 'outbound.retry', outbound.platform, outbound.account, outbound.group_id, outbound.id, {
-      retry_of: previous.id,
-    });
-    if (outbound.status === 'pending') writeDoorbell(doorbellRoot, outbound);
-    res.status(201).json({ ok: true, outbound: mapOutboundRow(outbound) });
+    res.status(201).json({ ok: true, outbound: mapOutboundRow(outbound, { scopedIds: accountData.isolated }) });
   });
 
   router.use((err, req, res, next) => {
@@ -835,6 +866,31 @@ function createWorkbenchRouter({ workbenchDb, runtimeDb, rawDbPath = DEFAULT_RAW
   });
 
   return router;
+}
+
+function enrichGroupsWithAccountData(accountData, workbenchDb, rawDbPath, groups, operatorId, accountScope) {
+  if (!accountData.isolated) return enrichGroups(workbenchDb, rawDbPath, groups, operatorId, accountScope);
+  const assignments = mergeMaps(accountData.mapWorkbenchDbs({ accountScope }, loadActiveAssignments));
+  const reads = mergeMaps(accountData.mapWorkbenchDbs({ accountScope }, (db) => loadReads(db, operatorId)));
+  const labels = mergeLabelMaps(accountData.mapWorkbenchDbs({ accountScope }, loadLabelMap));
+  const unreadCounts = accountData.countUnreadForGroups({
+    accountScope,
+    groups: groups.map((group) => {
+      const key = groupKey(group.platform, group.account, group.group_id);
+      const read = reads.get(key);
+      return {
+        platform: group.platform,
+        account: group.account,
+        group_id: group.group_id,
+        last_read_message_id: read ? read.last_read_message_id : 0,
+      };
+    }),
+  });
+  const accountProfiles = new Map(accountData.listAccountProfiles({ accountScope }).map((profile) => [
+    accountKey(profile.platform, profile.account),
+    profile,
+  ]));
+  return mapEnrichedGroups(groups, accountProfiles, assignments, labels, unreadCounts);
 }
 
 function enrichGroups(workbenchDb, rawDbPath, groups, operatorId, accountScope) {
@@ -859,6 +915,10 @@ function enrichGroups(workbenchDb, rawDbPath, groups, operatorId, accountScope) 
     accountKey(profile.platform, profile.account),
     profile,
   ]));
+  return mapEnrichedGroups(groups, accountProfiles, assignments, labels, unreadCounts);
+}
+
+function mapEnrichedGroups(groups, accountProfiles, assignments, labels, unreadCounts) {
   return groups.map((group) => {
     const key = groupKey(group.platform, group.account, group.group_id);
     const profile = accountProfiles.get(accountKey(group.platform, group.account));
@@ -886,6 +946,27 @@ function enrichGroups(workbenchDb, rawDbPath, groups, operatorId, accountScope) 
       labels: labels.get(key) || [],
     };
   });
+}
+
+function mergeMaps(maps) {
+  const merged = new Map();
+  maps.forEach((map) => {
+    if (!map) return;
+    map.forEach((value, key) => merged.set(key, value));
+  });
+  return merged;
+}
+
+function mergeLabelMaps(maps) {
+  const merged = new Map();
+  maps.forEach((map) => {
+    if (!map) return;
+    map.forEach((labels, key) => {
+      if (!merged.has(key)) merged.set(key, []);
+      merged.get(key).push(...labels);
+    });
+  });
+  return merged;
 }
 
 function mergeGroupSources(rawGroups, syncedGroups) {
@@ -946,6 +1027,36 @@ function listSyncedGroups(db, {
     ORDER BY lower(group_name) ASC, group_id ASC
     LIMIT @limit OFFSET @offset
   `).all(params);
+}
+
+function listSyncedGroupsAcross(accountData, {
+  platforms,
+  accountScope,
+  search,
+  limit = 200,
+  offset = 0,
+} = {}) {
+  if (!accountData.isolated) {
+    return listSyncedGroups(accountData.mapWorkbenchDbs({}, (db) => db)[0], {
+      platforms,
+      accountScope,
+      search,
+      limit,
+      offset,
+    });
+  }
+  const normalizedLimit = Math.max(1, Math.min(Number(limit) || 200, 500));
+  const normalizedOffset = Math.max(0, Number(offset) || 0);
+  const rows = accountData.mapWorkbenchDbs({ platforms, accountScope }, (db) => listSyncedGroups(db, {
+    platforms,
+    accountScope,
+    search,
+    limit: Math.min(normalizedLimit + normalizedOffset, 500),
+    offset: 0,
+  })).flat();
+  return rows
+    .sort((a, b) => String(a.group_name || '').localeCompare(String(b.group_name || ''), 'zh-Hans-CN') || String(a.group_id).localeCompare(String(b.group_id)))
+    .slice(normalizedOffset, normalizedOffset + normalizedLimit);
 }
 
 function loadActiveAssignments(db) {
@@ -1043,14 +1154,14 @@ function loadConversationLabels(db, platform, account, groupId) {
   });
 }
 
-function listOutboundMessages(db, { platform, account, groupId }) {
+function listOutboundMessages(db, { platform, account, groupId, scopedIds = false }) {
   return db.prepare(`
     SELECT *
     FROM outbound_messages
     WHERE platform = @platform AND account = @account AND group_id = @groupId
     ORDER BY created_at ASC, id ASC
     LIMIT 200
-  `).all({ platform, account, groupId }).map(mapOutboundRow);
+  `).all({ platform, account, groupId }).map((row) => mapOutboundRow(row, { scopedIds }));
 }
 
 function mergeConversationMessages(rawMessages, outboundMessages) {
@@ -1115,12 +1226,14 @@ function mapRawMessage(row) {
   };
 }
 
-function mapOutboundRow(row) {
+function mapOutboundRow(row, { scopedIds = false } = {}) {
   const timestamp = normalizeTimestamp(null, row.sent_at || row.created_at);
   const text = row.text;
+  const outboundId = scopedIds ? publicOutboundId(row, { isolated: true }) : row.id;
   return {
-    id: `outbound-${row.id}`,
-    outbound_id: row.id,
+    id: `outbound-${outboundId}`,
+    outbound_id: outboundId,
+    local_outbound_id: row.id,
     client_msg_id: row.client_msg_id,
     platform: row.platform,
     account: row.account,
@@ -1350,16 +1463,16 @@ function sanitizeUser(user) {
   };
 }
 
-function buildAdminAccessPayload({ workbenchDb, rawDbPath, accountScope }) {
+function buildAdminAccessPayload({ workbenchDb, rawDbPath, accountScope, accountData }) {
   const users = listAdminOperators(workbenchDb).map((operator) => enrichOperatorAccess(workbenchDb, operator));
-  const accounts = listAccounts({ rawDbPath, accountScope }).map((account) => ({
+  const accounts = (accountData ? accountData.listAccounts({ accountScope }) : listAccounts({ rawDbPath, accountScope })).map((account) => ({
     platform: account.platform,
     account: account.account,
     account_display_name: account.account_display_name || account.account,
     message_count: Number(account.message_count || 0),
     last_message_at: account.last_message_at || null,
   }));
-  const serviceGroups = listAdminServiceGroups(workbenchDb);
+  const serviceGroups = accountData ? listAdminServiceGroupsAcross(accountData, accountScope) : listAdminServiceGroups(workbenchDb);
   return {
     ok: true,
     users,
@@ -1372,6 +1485,18 @@ function buildAdminAccessPayload({ workbenchDb, rawDbPath, accountScope }) {
       { native_group_id: UNGROUPED_GROUP, name: '未分组会话', source: 'system' },
     ],
   };
+}
+
+function queryWorkbenchDbs(accountData, { platforms, accountScope, sql, params = {} } = {}) {
+  return accountData.mapWorkbenchDbs({ platforms, accountScope }, (db) => db.prepare(sql).all(params)).flat();
+}
+
+function accountChannelStats(accountData, workbenchDb, platform, account) {
+  return accountData.withWorkbenchDb(platform, account, {}, (accountDb) => ({
+    label_count: countLabels(accountDb, platform, account),
+    synced_group_count: countSyncedGroups(accountDb, platform, account),
+    last_channel_sync_at: lastChannelSyncAt(accountDb, platform, account),
+  }));
 }
 
 function listAdminOperators(db) {
@@ -1561,6 +1686,20 @@ function listAdminServiceGroups(db) {
   }));
 }
 
+function listAdminServiceGroupsAcross(accountData, accountScope) {
+  if (!accountData.isolated) {
+    return listAdminServiceGroups(accountData.mapWorkbenchDbs({}, (db) => db)[0]);
+  }
+  return accountData.mapWorkbenchDbs({ accountScope }, listAdminServiceGroups)
+    .flat()
+    .sort((a, b) => (
+      a.platform.localeCompare(b.platform) ||
+      a.service_account.localeCompare(b.service_account) ||
+      Number(a.group_level || 1) - Number(b.group_level || 1) ||
+      String(a.name || '').localeCompare(String(b.name || ''), 'zh-Hans-CN')
+    ));
+}
+
 function currentAdminId(req) {
   const operator = req.workbenchOperator || {};
   const user = req.user || {};
@@ -1713,6 +1852,17 @@ function expandServiceGroupFilterIds(db, nativeGroupId) {
   return [...ids];
 }
 
+function expandServiceGroupFilterIdsAcross(accountData, nativeGroupId, accountScope) {
+  if (!accountData.isolated) {
+    return expandServiceGroupFilterIds(accountData.mapWorkbenchDbs({}, (db) => db)[0], nativeGroupId);
+  }
+  const ids = new Set([String(nativeGroupId || '').trim()].filter(Boolean));
+  accountData.mapWorkbenchDbs({ accountScope }, (db) => expandServiceGroupFilterIds(db, nativeGroupId))
+    .flat()
+    .forEach((id) => ids.add(String(id)));
+  return [...ids];
+}
+
 function orderServiceGroups(groups) {
   const byId = new Map(groups.map((group) => [String(group.native_group_id), group]));
   return [...groups].sort((a, b) => {
@@ -1802,11 +1952,6 @@ function requireVisibleAccount(accountScope, platform, account) {
   }
 }
 
-function findAccountProfile(rawDbPath, accountScope, platform, account) {
-  return listAccountProfiles({ rawDbPath, accountScope })
-    .find((profile) => profile.platform === platform && profile.account === account) || null;
-}
-
 function mapAccountScope(accountScope) {
   return {
     mode: accountScope && accountScope.mode || 'all',
@@ -1856,6 +2001,47 @@ function writeDoorbell(outboxDir, outbound) {
     created_at: new Date().toISOString(),
   }, null, 2));
   fs.renameSync(tempPath, finalPath);
+}
+
+function publicOutboundId(row, accountData) {
+  if (!accountData || !accountData.isolated) return row.id;
+  return `${row.platform}:${row.account}:${row.id}`;
+}
+
+function parseOutboundRequestRef(req) {
+  const raw = String(req.params.id || '').trim();
+  const body = req.body || {};
+  const query = req.query || {};
+  if (raw.includes(':')) {
+    const parts = raw.split(':');
+    if (parts.length >= 3) {
+      return {
+        platform: normalizePlatform(parts.shift()),
+        account: parts.shift(),
+        id: parts.join(':'),
+      };
+    }
+  }
+  return {
+    platform: body.platform ? normalizePlatform(body.platform) : (query.platform ? normalizePlatform(query.platform) : ''),
+    account: String(body.account || query.account || '').trim(),
+    id: raw,
+  };
+}
+
+function withOutboundForRequest(accountData, req, fn) {
+  const ref = parseOutboundRequestRef(req);
+  return accountData.withOutboundDb(ref.id, {
+    platform: ref.platform,
+    account: ref.account,
+  }, (db, outbound, context) => {
+    if (context.ambiguous) {
+      throw createHttpError(409, 'outbound id is ambiguous, include platform and account');
+    }
+    if (!outbound) throw createHttpError(404, 'outbound not found');
+    if (!OUTBOUND_STATUSES.has(outbound.status)) throw createHttpError(500, 'invalid outbound status');
+    return fn(db, outbound, context);
+  });
 }
 
 function sanitizeSegment(value) {
