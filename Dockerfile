@@ -22,8 +22,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 \
     && rm -rf /var/lib/apt/lists/*
 
-RUN /usr/bin/chromium --version && \
-    /usr/bin/chromium --headless --no-sandbox --disable-dev-shm-usage --disable-gpu --dump-dom about:blank >/dev/null
+RUN /usr/bin/chromium --version
 
 COPY package*.json ./
 RUN npm ci --omit=dev --registry=https://registry.npmmirror.com
