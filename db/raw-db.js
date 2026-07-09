@@ -170,6 +170,58 @@ function upsertServiceAccountProfile({
   }
 }
 
+function deleteServiceAccountProfile({
+  dbPath = DEFAULT_RAW_DB_PATH,
+  platform,
+  account,
+} = {}) {
+  const normalizedPlatform = normalizePlatform(platform);
+  const normalizedAccount = String(account || '').trim();
+  if (!['wa', 'tg'].includes(normalizedPlatform)) throw new Error('platform must be one of wa, tg');
+  if (!normalizedAccount) throw new Error('account is required');
+
+  const db = ensureRawDb(dbPath);
+  const aliases = platformAliases(normalizedPlatform);
+  const placeholders = aliases.map((_, index) => `@platform${index}`).join(', ');
+  const params = aliases.reduce((memo, value, index) => {
+    memo[`platform${index}`] = value;
+    return memo;
+  }, { account: normalizedAccount });
+
+  try {
+    return db.transaction(() => {
+      const deletedObservations = db.prepare(`
+        DELETE FROM message_observations
+        WHERE observer_account = @account
+          AND platform IN (${placeholders})
+      `).run(params).changes;
+      const deletedMessages = db.prepare(`
+        DELETE FROM messages
+        WHERE receiver_account = @account
+          AND platform IN (${placeholders})
+      `).run(params).changes;
+      const deletedRegistry = db.prepare(`
+        DELETE FROM channel_account_registry
+        WHERE account = @account
+          AND platform IN (${placeholders})
+      `).run(params).changes;
+      const deletedAccounts = db.prepare(`
+        DELETE FROM accounts
+        WHERE id = @account
+          AND platform IN (${placeholders})
+      `).run(params).changes;
+      return {
+        deleted_observations: deletedObservations,
+        deleted_messages: deletedMessages,
+        deleted_registry_rows: deletedRegistry,
+        deleted_profile_rows: deletedAccounts,
+      };
+    })();
+  } finally {
+    db.close();
+  }
+}
+
 function upsertRawMessage({
   db,
   dbPath = DEFAULT_RAW_DB_PATH,
@@ -275,6 +327,13 @@ function normalizePlatform(platform) {
   return value;
 }
 
+function platformAliases(platform) {
+  const normalized = normalizePlatform(platform);
+  if (normalized === 'wa') return ['wa', 'whatsapp'];
+  if (normalized === 'tg') return ['tg', 'telegram', 'telegram-user', 'tg-user'];
+  return [normalized];
+}
+
 function normalizeMessageTimestamp(value) {
   const numeric = Number(value);
   if (!Number.isFinite(numeric) || numeric <= 0) return Math.floor(Date.now() / 1000);
@@ -293,6 +352,7 @@ function safeJson(value) {
 
 module.exports = {
   DEFAULT_RAW_DB_PATH,
+  deleteServiceAccountProfile,
   ensureRawDb,
   upsertRawMessage,
   upsertServiceAccountProfile,

@@ -11,6 +11,7 @@ const {
   isAccountDbModeEnabled,
   listAccountRefs,
   normalizeAccountPlatform,
+  resolveAccountPaths,
   sanitizeAccountSegment,
 } = require('../db/account-db');
 const {
@@ -976,7 +977,8 @@ function forEachRuntimeDb(fn) {
 
 function withRuntimeDbFor(requestLike = {}, fn) {
   if (ACCOUNT_DB_MODE && !ACCOUNT_SCOPED && requestLike.platform && requestLike.account) {
-    const paths = ensureAccountDatabases(requestLike.platform, requestLike.account);
+    const paths = resolveAccountPaths(requestLike.platform, requestLike.account);
+    if (!fs.existsSync(paths.runtimeDbPath)) return null;
     const db = openRuntimeDb(paths.runtimeDbPath);
     try {
       return fn(db, { platform: paths.platform, account: paths.account, paths });
@@ -991,9 +993,12 @@ function withRuntimeDbFor(requestLike = {}, fn) {
   });
 }
 
-function pathsFor(requestLike = {}) {
-  if ((ACCOUNT_DB_MODE || ACCOUNT_SCOPED) && requestLike.platform && requestLike.account) {
-    return ensureAccountDatabases(requestLike.platform, requestLike.account);
+function pathsFor(requestLike = {}, options = {}) {
+  if (ACCOUNT_SCOPED) return ACCOUNT_PATHS;
+  if (ACCOUNT_DB_MODE && requestLike.platform && requestLike.account) {
+    if (options.create) return ensureAccountDatabases(requestLike.platform, requestLike.account);
+    const paths = resolveAccountPaths(requestLike.platform, requestLike.account);
+    return fs.existsSync(paths.accountDir) ? paths : null;
   }
   return ACCOUNT_PATHS;
 }
@@ -1005,6 +1010,9 @@ function rawDbPathFor(requestLike = {}) {
 
 function waSessionDirFor(requestLike = {}) {
   const paths = pathsFor(requestLike);
+  if (ACCOUNT_DB_MODE && !ACCOUNT_SCOPED && requestLike.platform && requestLike.account && !paths) {
+    throw new Error(`account data has been deleted for ${requestLike.platform}:${requestLike.account}`);
+  }
   const sessionDir = paths && normalizeAccountPlatform(requestLike.platform) === 'wa'
     ? paths.sessionDir
     : WA_AUTH_DATA_PATH;
@@ -1014,6 +1022,9 @@ function waSessionDirFor(requestLike = {}) {
 
 function tgSessionDirFor(requestLike = {}) {
   const paths = pathsFor(requestLike);
+  if (ACCOUNT_DB_MODE && !ACCOUNT_SCOPED && requestLike.platform && requestLike.account && !paths) {
+    throw new Error(`account data has been deleted for ${requestLike.platform}:${requestLike.account}`);
+  }
   const sessionDir = paths && normalizeAccountPlatform(requestLike.platform) === 'tg'
     ? paths.sessionDir
     : TG_SESSION_DIR;

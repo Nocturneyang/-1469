@@ -278,10 +278,13 @@ function createWorkbenchRouter({ workbenchDb, runtimeDb, rawDbPath = DEFAULT_RAW
 
   router.delete('/service-account-logins/:id', requireAdmin, (req, res) => {
     const operator = currentOperatorContext(workbenchDb, req);
-    const request = accountData.deleteLoginRequest(req.params.id, { outboxDir: doorbellRoot });
+    const request = accountData.deleteLoginRequest(req.params.id, {
+      outboxDir: doorbellRoot,
+      permanent: true,
+    });
     if (!request) throw createHttpError(404, 'login request not found');
-    accountData.withWorkbenchDb(request.platform, request.account, { create: true }, (accountDb) => writeAction(
-      accountDb,
+    writeAction(
+      workbenchDb,
       operator.id,
       'service_account.login.delete',
       request.platform,
@@ -292,8 +295,10 @@ function createWorkbenchRouter({ workbenchDb, runtimeDb, rawDbPath = DEFAULT_RAW
         login_mode: request.login_mode,
         status: request.status,
         deleted_doorbells: request.deleted_doorbells,
+        permanent_deleted: true,
+        deleted_account_data: request.deleted_account_data,
       },
-    ));
+    );
     res.json({ ok: true, request });
   });
 

@@ -842,11 +842,11 @@ async function confirmDelete(request) {
   if (!request || isDeleting(request)) return;
   try {
     await ElMessageBox.confirm(
-      `删除后仅移除这条登录任务记录，不会删除 ${request.account} 的账号档案或已存在 session。`,
-      '删除登录任务',
+      `将永久删除 ${request.account} 的登录任务、账号档案、session 和该账号工作台运行数据。删除后需要重新扫码或重新提交凭据才能接入。`,
+      '永久删除服务账号',
       {
         type: 'warning',
-        confirmButtonText: '删除',
+        confirmButtonText: '永久删除',
         cancelButtonText: '取消',
       },
     );
@@ -860,9 +860,9 @@ async function confirmDelete(request) {
     requests.value = requests.value.filter((item) => item.request_id !== request.request_id);
     delete qrMatrices[request.request_id];
     syncAutoRefresh();
-    ElMessage.success('登录任务已删除');
+    ElMessage.success('服务账号已永久删除');
   } catch (err) {
-    ElMessage.error(err.response?.data?.error || '删除登录任务失败');
+    ElMessage.error(err.response?.data?.error || '永久删除服务账号失败');
   } finally {
     setDeleting(request.request_id, false);
   }

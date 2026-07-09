@@ -84,7 +84,9 @@ async function main() {
       method: 'DELETE',
     });
     assert.strictEqual(deleted.request.request_id, tgLogin.request.request_id);
-    assert.strictEqual(readLogin(accountDataDir, 'tg', 'tg-isolated', tgLogin.request.request_id), null);
+    assert.strictEqual(deleted.request.permanent_deleted, true);
+    assert.strictEqual(fs.existsSync(path.join(accountDataDir, 'tg', 'tg-isolated')), false);
+    assert.strictEqual(fs.existsSync(path.join(outboxDir, 'login-worker-tg-tg-isolated')), false);
 
     const rawMessageId = insertAccountRawMessage(accountDataDir, 'wa', 'wa-isolated', {
       messageId: 'wa-isolated-message-1',

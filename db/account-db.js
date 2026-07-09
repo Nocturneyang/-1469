@@ -76,6 +76,17 @@ function ensureAccountDatabases(platform, account, options = {}) {
   return paths;
 }
 
+function deleteAccountData(platform, account, options = {}) {
+  const paths = resolveAccountPaths(platform, account, options);
+  assertSafeAccountDelete(paths);
+  const existed = fs.existsSync(paths.accountDir);
+  fs.rmSync(paths.accountDir, { recursive: true, force: true });
+  return {
+    account_dir: paths.accountDir,
+    deleted_account_dir: existed ? 1 : 0,
+  };
+}
+
 function listAccountRefs(options = {}) {
   const rootDir = path.resolve(options.accountDataDir || resolveAccountDataDir());
   const refs = [];
@@ -127,9 +138,22 @@ function accountDbExists(platform, account, kind, options = {}) {
   return Boolean(paths[key] && fs.existsSync(paths[key]));
 }
 
+function assertSafeAccountDelete(paths) {
+  const rootDir = path.resolve(path.dirname(path.dirname(paths.accountDir)));
+  const targetDir = path.resolve(paths.accountDir);
+  const relative = path.relative(rootDir, targetDir);
+  if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) {
+    throw new Error(`refusing to delete account data outside account root: ${targetDir}`);
+  }
+  if (!['wa', 'tg'].includes(path.basename(path.dirname(targetDir)))) {
+    throw new Error(`refusing to delete non-workbench account directory: ${targetDir}`);
+  }
+}
+
 module.exports = {
   accountDbExists,
   assertAccountRef,
+  deleteAccountData,
   ensureAccountDatabases,
   ensureAccountDirs,
   isAccountDbModeEnabled,

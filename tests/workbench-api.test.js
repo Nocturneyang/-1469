@@ -190,6 +190,18 @@ async function main() {
     const tgDoorbell = JSON.parse(fs.readFileSync(path.join(outboxDir, 'login-worker-tg-tg-login-bot', tgLoginFiles[0]), 'utf8'));
     assert.strictEqual(tgDoorbell.credential.value, '123456:super-secret-token');
 
+    const tgLoginReplacement = await requestJson(`${baseUrl}/service-account-logins`, {
+      method: 'POST',
+      body: {
+        platform: 'tg',
+        account: 'tg-login-bot',
+        display_name: '登录测试 TG 新任务',
+        login_mode: 'tg_bot_token',
+        credential: '123456:replacement-token',
+      },
+    });
+    assert.strictEqual(tgLoginReplacement.request.account, 'tg-login-bot');
+
     const tgUserMissingApi = await requestRaw(`${baseUrl}/service-account-logins`, {
       method: 'POST',
       body: {
@@ -296,11 +308,13 @@ async function main() {
     });
     assert.strictEqual(deletedTgLogin.ok, true);
     assert.strictEqual(deletedTgLogin.request.request_id, tgLogin.request.request_id);
+    assert.strictEqual(deletedTgLogin.request.permanent_deleted, true);
     const loginRequestsAfterDelete = await requestJson(`${baseUrl}/service-account-logins`);
     assert.strictEqual(loginRequestsAfterDelete.requests.some((request) => request.request_id === tgLogin.request.request_id), false);
-    const tgLoginFilesAfterDelete = fs.readdirSync(path.join(outboxDir, 'login-worker-tg-tg-login-bot'))
-      .filter((file) => file.endsWith('.json'));
-    assert.strictEqual(tgLoginFilesAfterDelete.some((file) => file.includes(tgLogin.request.request_id)), false);
+    assert.strictEqual(loginRequestsAfterDelete.requests.some((request) => request.account === 'tg-login-bot'), false);
+    assert.strictEqual(fs.existsSync(path.join(outboxDir, 'login-worker-tg-tg-login-bot')), false);
+    assert.strictEqual(countRowsInDbPath(rawDbPath, 'accounts', 'id', 'tg-login-bot'), 0);
+    assert.strictEqual(countRowsInDbPath(rawDbPath, 'channel_account_registry', 'account', 'tg-login-bot'), 0);
 
     insertRawAccount(rawDbPath, {
       id: 'wa-no-messages',
@@ -1033,6 +1047,15 @@ function insertRawAccount(rawDbPath, row) {
 function countRows(db, tableName, columnName, value) {
   const row = db.prepare(`SELECT COUNT(*) AS count FROM ${tableName} WHERE ${columnName} = ?`).get(value);
   return row ? Number(row.count || 0) : 0;
+}
+
+function countRowsInDbPath(dbPath, tableName, columnName, value) {
+  const db = new Database(dbPath, { readonly: true });
+  try {
+    return countRows(db, tableName, columnName, value);
+  } finally {
+    db.close();
+  }
 }
 
 function listen(app) {

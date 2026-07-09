@@ -72,7 +72,7 @@ WORKBENCH_ACCOUNT_DATA_DIR=/data/accounts
 - `PUT /api/workbench/admin/users/:id/scopes`：配置服务账号/分组范围。
 - `GET /api/workbench/service-account-logins`：服务账号登录任务列表。
 - `POST /api/workbench/service-account-logins`：发起 WA/TG 服务账号登录任务。
-- `DELETE /api/workbench/service-account-logins/:id`：删除登录任务记录和对应待处理门铃，不删除服务账号档案或 session。
+- `DELETE /api/workbench/service-account-logins/:id`：永久删除该服务账号的登录任务、账号档案、session、账号隔离运行数据和对应门铃。
 
 ## 登录与权限
 
