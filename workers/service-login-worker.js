@@ -135,7 +135,7 @@ async function handleLoginPayload(payload) {
     return;
   }
   if (request.platform === 'tg' && request.login_mode === 'tg_user_session') {
-    await authenticateTgUserSession(request, payload.credential?.value);
+    await authenticateTgUserSession(request, payload.credential);
     return;
   }
   throw new Error(`unsupported login mode: ${request.platform}/${request.login_mode}`);
@@ -353,17 +353,35 @@ async function authenticateTgBot(request, token) {
   }
 }
 
-async function authenticateTgUserSession(request, sessionString) {
-  const secret = String(sessionString || '').trim();
+async function authenticateTgUserSession(request, credentialPayload) {
+  const secret = String(
+    credentialPayload && typeof credentialPayload === 'object'
+      ? credentialPayload.value
+      : credentialPayload || ''
+  ).trim();
   if (!secret) throw new Error('TG user session is missing from worker handoff file');
   const accountKey = request.account.toUpperCase().replace(/[^A-Z0-9]+/g, '_');
+  const submittedApiId = Number(
+    credentialPayload?.api_id ||
+    credentialPayload?.apiId ||
+    credentialPayload?.tg_api_id ||
+    0
+  );
+  const submittedApiHash = String(
+    credentialPayload?.api_hash ||
+    credentialPayload?.apiHash ||
+    credentialPayload?.tg_api_hash ||
+    ''
+  ).trim();
   const apiId = Number(
+    submittedApiId ||
     process.env[`WORKBENCH_TG_API_ID_${accountKey}`] ||
     process.env.WORKBENCH_TG_API_ID ||
     process.env.TG_API_ID ||
     0
   );
   const apiHash =
+    submittedApiHash ||
     process.env[`WORKBENCH_TG_API_HASH_${accountKey}`] ||
     process.env.WORKBENCH_TG_API_HASH ||
     process.env.TG_API_HASH ||
@@ -371,8 +389,8 @@ async function authenticateTgUserSession(request, sessionString) {
   if (!apiId || !apiHash) {
     patchRequest(request.request_id, {
       status: 'failed',
-      error_message: 'WORKBENCH_TG_API_ID / WORKBENCH_TG_API_HASH 未配置',
-      worker_message: 'TG 用户 Session 登录需要 API ID 和 API Hash',
+      error_message: 'TG 用户 Session 登录需要 API ID 和 App api_hash',
+      worker_message: 'TG 用户 Session 登录需要 API ID 和 App api_hash',
     }, request);
     return;
   }
@@ -402,6 +420,8 @@ async function authenticateTgUserSession(request, sessionString) {
     saveTgCredential(request, {
       login_mode: 'tg_user_session',
       session: client.session.save(),
+      api_id: apiId,
+      api_hash: apiHash,
       user: {
         id: me.id?.toString?.() || String(me.id || ''),
         username: me.username || '',

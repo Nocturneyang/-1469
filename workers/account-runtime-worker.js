@@ -237,18 +237,22 @@ async function startTelegramBotRuntime(credential) {
 async function startTelegramUserRuntime(credential) {
   const accountKey = ACCOUNT.toUpperCase().replace(/[^A-Z0-9]+/g, '_');
   const apiId = Number(
+    credential.api_id ||
+    credential.apiId ||
+    credential.tg_api_id ||
     process.env[`WORKBENCH_TG_API_ID_${accountKey}`] ||
     process.env.WORKBENCH_TG_API_ID ||
     process.env.TG_API_ID ||
     0
   );
   const apiHash =
+    String(credential.api_hash || credential.apiHash || credential.tg_api_hash || '').trim() ||
     process.env[`WORKBENCH_TG_API_HASH_${accountKey}`] ||
     process.env.WORKBENCH_TG_API_HASH ||
     process.env.TG_API_HASH ||
     '';
   if (!apiId || !apiHash) {
-    reportError('tg_user_api_missing', new Error('WORKBENCH_TG_API_ID / WORKBENCH_TG_API_HASH 未配置'));
+    reportError('tg_user_api_missing', new Error('TG 用户 Session 缺少 API ID / App api_hash'));
     return;
   }
 

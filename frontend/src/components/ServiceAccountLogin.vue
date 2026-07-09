@@ -24,7 +24,7 @@
               <el-segmented v-model="form.platform" :options="platformOptions" @change="handlePlatformChange" />
             </el-form-item>
             <el-form-item label="登录方式">
-              <el-select v-model="form.login_mode">
+              <el-select v-model="form.login_mode" @change="handleLoginModeChange">
                 <el-option
                   v-for="mode in modeOptions"
                   :key="mode.value"
@@ -41,7 +41,35 @@
             </el-form-item>
           </div>
 
-          <el-form-item v-if="needsCredential" :label="credentialLabel">
+          <template v-if="form.login_mode === 'tg_user_session'">
+            <div class="service-login-form-grid service-login-tg-api-grid">
+              <el-form-item label="TG API ID">
+                <el-input
+                  v-model.trim="form.tg_api_id"
+                  inputmode="numeric"
+                  placeholder="例如 123456"
+                />
+              </el-form-item>
+              <el-form-item label="App api_hash">
+                <el-input
+                  v-model.trim="form.tg_api_hash"
+                  type="password"
+                  placeholder="从 my.telegram.org 获取的 api_hash"
+                  show-password
+                />
+              </el-form-item>
+            </div>
+            <el-form-item :label="credentialLabel">
+              <el-input
+                v-model.trim="form.credential"
+                :type="showCredential ? 'text' : 'password'"
+                :placeholder="credentialPlaceholder"
+                show-password
+              />
+            </el-form-item>
+          </template>
+
+          <el-form-item v-else-if="needsCredential" :label="credentialLabel">
             <el-input
               v-model.trim="form.credential"
               :type="showCredential ? 'text' : 'password'"
@@ -233,6 +261,8 @@ const form = reactive({
   account: '',
   display_name: '',
   credential: '',
+  tg_api_id: '',
+  tg_api_hash: '',
 });
 const requests = ref([]);
 const loading = ref(false);
@@ -265,10 +295,11 @@ const credentialPlaceholder = computed(() => (
 const createPanelHint = computed(() => (
   form.platform === 'wa'
     ? 'WA 任务提交后等待工作台 worker 生成二维码'
-    : 'TG 登录由工作台 worker 校验，不在前端保存 token/session'
+    : 'TG 登录由工作台 worker 校验，不在前端保存明文 token/session'
 ));
 const submitHint = computed(() => {
   if (form.login_mode === 'wa_qr') return '提交后等待 WA worker 回写二维码，页面会自动刷新。';
+  if (form.login_mode === 'tg_user_session') return '提交后由 TG worker 用 API ID/Hash 校验 Session 并接管账号。';
   return '提交后由 TG worker 校验并接管登录，页面只显示脱敏提示。';
 });
 const flowSteps = computed(() => {
@@ -281,7 +312,7 @@ const flowSteps = computed(() => {
   }
   if (form.login_mode === 'tg_user_session') {
     return [
-      { label: '1', text: '提交 TG 用户 Session', active: true },
+      { label: '1', text: '提交 API ID/Hash 和 Session', active: true },
       { label: '2', text: 'worker 校验账号', active: false },
       { label: '3', text: '写入工作台运行态', active: false },
     ];
@@ -319,6 +350,16 @@ onUnmounted(() => {
 function handlePlatformChange() {
   form.login_mode = form.platform === 'wa' ? 'wa_qr' : 'tg_bot_token';
   form.credential = '';
+  form.tg_api_id = '';
+  form.tg_api_hash = '';
+}
+
+function handleLoginModeChange() {
+  form.credential = '';
+  if (form.login_mode !== 'tg_user_session') {
+    form.tg_api_id = '';
+    form.tg_api_hash = '';
+  }
 }
 
 async function loadRequests() {
@@ -343,6 +384,17 @@ async function submit() {
     ElMessage.warning(`请输入${credentialLabel.value}`);
     return;
   }
+  if (form.login_mode === 'tg_user_session') {
+    const apiId = Number(form.tg_api_id);
+    if (!Number.isInteger(apiId) || apiId <= 0) {
+      ElMessage.warning('请输入有效的 TG API ID');
+      return;
+    }
+    if (!form.tg_api_hash) {
+      ElMessage.warning('请输入 App api_hash');
+      return;
+    }
+  }
   submitting.value = true;
   try {
     await createServiceAccountLoginRequest({
@@ -351,8 +403,11 @@ async function submit() {
       display_name: form.display_name || form.account,
       login_mode: form.login_mode,
       credential: needsCredential.value ? form.credential : undefined,
+      tg_api_id: form.login_mode === 'tg_user_session' ? Number(form.tg_api_id) : undefined,
+      tg_api_hash: form.login_mode === 'tg_user_session' ? form.tg_api_hash : undefined,
     });
     form.credential = '';
+    form.tg_api_hash = '';
     await loadRequests();
     ElMessage.success('登录任务已创建');
   } catch (err) {
@@ -524,6 +579,7 @@ function tgCredentialHint(request) {
   if (request.status === 'failed') return request.error_message || '校验失败，请检查凭据后重新发起。';
   if (request.status === 'expired') return '任务已过期，请重新提交凭据。';
   if (request.status === 'waiting_verification') return '正在等待 Telegram 返回验证结果。';
+  if (request.login_mode === 'tg_user_session') return 'API ID、api_hash 和 Session 已提交给工作台 worker，前端只保留脱敏提示。';
   return '凭据已提交给工作台 worker，前端只保留脱敏提示。';
 }
 

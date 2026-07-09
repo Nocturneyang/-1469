@@ -175,6 +175,43 @@ async function main() {
     assert.ok(tgLoginFiles.length >= 1);
     const tgDoorbell = JSON.parse(fs.readFileSync(path.join(outboxDir, 'login-worker-tg-tg-login-bot', tgLoginFiles[0]), 'utf8'));
     assert.strictEqual(tgDoorbell.credential.value, '123456:super-secret-token');
+
+    const tgUserMissingApi = await requestRaw(`${baseUrl}/service-account-logins`, {
+      method: 'POST',
+      body: {
+        platform: 'tg',
+        account: 'tg-user-missing-api',
+        display_name: '缺少 API 的 TG 用户号',
+        login_mode: 'tg_user_session',
+        credential: 'string-session-only',
+      },
+    });
+    assert.strictEqual(tgUserMissingApi.status, 400);
+    assert.match(tgUserMissingApi.payload.error, /api_id/);
+
+    const tgUserLogin = await requestJson(`${baseUrl}/service-account-logins`, {
+      method: 'POST',
+      body: {
+        platform: 'tg',
+        account: 'tg-user-login',
+        display_name: '登录测试 TG 用户号',
+        login_mode: 'tg_user_session',
+        credential: '1A2B3C4D5E6F-session',
+        tg_api_id: 7654321,
+        tg_api_hash: 'abcdef0123456789abcdef0123456789',
+      },
+    });
+    assert.strictEqual(tgUserLogin.request.credential_hint, 'api_id 7654321 · session 1A2B***sion');
+    assert.strictEqual(JSON.stringify(tgUserLogin).includes('abcdef0123456789abcdef0123456789'), false);
+    assert.strictEqual(JSON.stringify(tgUserLogin).includes('1A2B3C4D5E6F-session'), false);
+    const tgUserFiles = fs.readdirSync(path.join(outboxDir, 'login-worker-tg-tg-user-login'))
+      .filter((file) => file.endsWith('.json'));
+    assert.ok(tgUserFiles.length >= 1);
+    const tgUserDoorbell = JSON.parse(fs.readFileSync(path.join(outboxDir, 'login-worker-tg-tg-user-login', tgUserFiles[0]), 'utf8'));
+    assert.strictEqual(tgUserDoorbell.credential.value, '1A2B3C4D5E6F-session');
+    assert.strictEqual(tgUserDoorbell.credential.api_id, 7654321);
+    assert.strictEqual(tgUserDoorbell.credential.api_hash, 'abcdef0123456789abcdef0123456789');
+
     const deletedTgLogin = await requestJson(`${baseUrl}/service-account-logins/${tgLogin.request.request_id}`, {
       method: 'DELETE',
     });

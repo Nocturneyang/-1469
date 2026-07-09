@@ -195,6 +195,8 @@ function createWorkbenchRouter({ workbenchDb, runtimeDb, rawDbPath = DEFAULT_RAW
         displayName,
         loginMode,
         credential: body.credential,
+        tgApiId: body.tg_api_id ?? body.tgApiId ?? body.api_id ?? body.apiId,
+        tgApiHash: body.tg_api_hash ?? body.tgApiHash ?? body.api_hash ?? body.apiHash,
         requestedBy: operator.id,
       });
       accountData.upsertProfile({
