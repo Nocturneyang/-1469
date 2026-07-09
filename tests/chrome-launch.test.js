@@ -14,9 +14,10 @@ function main() {
   try {
     const env = {
       PUPPETEER_EXECUTABLE_PATH: process.execPath,
-      WORKBENCH_WA_PUPPETEER_PIPE: '1',
       WORKBENCH_WA_PUPPETEER_DUMPIO: '1',
       WORKBENCH_WA_PUPPETEER_EXTRA_ARGS: '--one --two=2',
+      DBUS_SESSION_BUS_ADDRESS: 'disabled:',
+      DBUS_SYSTEM_BUS_ADDRESS: 'disabled:',
     };
     const logs = [];
     const config = buildChromeLaunchConfig(tmpDir, {
@@ -28,11 +29,16 @@ function main() {
     assert.strictEqual(config.pipe, true);
     assert.strictEqual(config.dumpio, true);
     assert.ok(config.args.includes('--no-sandbox'));
+    assert.ok(config.args.includes('--disable-dbus'));
+    assert.ok(config.args.includes('--ozone-platform=headless'));
     assert.ok(config.args.includes('--one'));
     assert.ok(config.args.includes('--two=2'));
     assert.ok(config.env.XDG_CONFIG_HOME.startsWith(path.join(tmpDir, '.chromium')));
     assert.ok(config.env.XDG_CACHE_HOME.startsWith(path.join(tmpDir, '.chromium')));
     assert.ok(config.env.XDG_RUNTIME_DIR.startsWith(path.join(tmpDir, '.chromium')));
+    assert.strictEqual(config.env.NO_AT_BRIDGE, '1');
+    assert.strictEqual(config.env.DBUS_SESSION_BUS_ADDRESS, undefined);
+    assert.strictEqual(config.env.DBUS_SYSTEM_BUS_ADDRESS, undefined);
     assert.ok(logs.some((message) => message.includes('chromium ready:')));
 
     const original = new Error('Protocol error (Target.setDiscoverTargets): Target closed');
