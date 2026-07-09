@@ -17,8 +17,8 @@ const {
 const {
   buildChromeLaunchConfig,
   buildWaWebVersionOptions,
-  cleanupStaleChromeProfiles,
   enrichChromeLaunchError,
+  prepareWaChromeProfile,
 } = require('../lib/chrome-launch');
 const {
   ACTIVE_LOGIN_STATUSES,
@@ -240,11 +240,11 @@ function startWaLogin(request) {
   }
   const waSessionDir = waSessionDirFor(request);
   const clientId = sanitizeSegment(request.account);
-  cleanupStaleChromeProfiles(waSessionDir, clientId, { log });
 
   let puppeteerConfig;
   let waWebVersionOptions;
   try {
+    prepareWaChromeProfile(waSessionDir, clientId, { log });
     puppeteerConfig = buildChromeLaunchConfig(waSessionDir, {
       log,
       puppeteer: require('puppeteer'),

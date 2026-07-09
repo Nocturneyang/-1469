@@ -4,12 +4,13 @@ const os = require('os');
 const path = require('path');
 
 const {
+  assertChromeMemoryAvailable,
   buildUserAgent,
   buildChromeLaunchConfig,
   buildWaWebVersionOptions,
-  cleanupStaleChromeProfiles,
   enrichChromeLaunchError,
   getChromeProfileDirs,
+  prepareWaChromeProfile,
   resolveChromeExecutablePath,
 } = require('../lib/chrome-launch');
 
@@ -20,6 +21,8 @@ function main() {
       PUPPETEER_EXECUTABLE_PATH: process.execPath,
       WORKBENCH_WA_PUPPETEER_DUMPIO: '1',
       WORKBENCH_WA_PUPPETEER_EXTRA_ARGS: '--one --two=2',
+      WORKBENCH_WA_CHROME_PREFLIGHT: '0',
+      WORKBENCH_WA_CHROME_MIN_AVAILABLE_MB: '0',
       DBUS_SESSION_BUS_ADDRESS: 'disabled:',
       DBUS_SYSTEM_BUS_ADDRESS: 'disabled:',
     };
@@ -51,6 +54,8 @@ function main() {
       env: {
         PUPPETEER_EXECUTABLE_PATH: process.execPath,
         DATA_DIR: '/data',
+        WORKBENCH_WA_CHROME_PREFLIGHT: '0',
+        WORKBENCH_WA_CHROME_MIN_AVAILABLE_MB: '0',
       },
     });
     assert.ok(prodConfig.env.XDG_CONFIG_HOME.startsWith('/tmp/workbench-chrome/'));
@@ -61,6 +66,8 @@ function main() {
       env: {
         PUPPETEER_EXECUTABLE_PATH: process.execPath,
         WORKBENCH_WA_PUPPETEER_PIPE: '1',
+        WORKBENCH_WA_CHROME_PREFLIGHT: '0',
+        WORKBENCH_WA_CHROME_MIN_AVAILABLE_MB: '0',
       },
     });
     assert.strictEqual(pipeConfig.pipe, true);
@@ -82,9 +89,35 @@ function main() {
     fs.mkdirSync(profileDirs[0], { recursive: true });
     fs.writeFileSync(path.join(profileDirs[0], 'SingletonLock'), 'stale');
     fs.writeFileSync(path.join(profileDirs[0], 'SingletonCookie'), 'stale');
-    cleanupStaleChromeProfiles(tmpDir, 'wa_test');
+    prepareWaChromeProfile(tmpDir, 'wa_test');
     assert.strictEqual(fs.existsSync(path.join(profileDirs[0], 'SingletonLock')), false);
     assert.strictEqual(fs.existsSync(path.join(profileDirs[0], 'SingletonCookie')), false);
+    assert.ok(fs.existsSync(profileDirs[0]));
+    assert.ok(fs.existsSync(profileDirs[1]));
+
+    assert.throws(() => assertChromeMemoryAvailable({
+      env: { WORKBENCH_WA_CHROME_MIN_AVAILABLE_MB: '512' },
+      snapshot: {
+        availableBytes: 128 * 1024 * 1024,
+        source: 'test',
+      },
+    }), /Chromium 可用内存不足/);
+
+    const fakeChrome = path.join(tmpDir, 'fake-chromium');
+    fs.writeFileSync(fakeChrome, [
+      '#!/bin/sh',
+      'if [ "$1" = "--version" ]; then echo "Chromium 146.0.0.0"; exit 0; fi',
+      'echo "headless boom" >&2',
+      'exit 42',
+      '',
+    ].join('\n'));
+    fs.chmodSync(fakeChrome, 0o755);
+    assert.throws(() => buildChromeLaunchConfig(tmpDir, {
+      env: {
+        PUPPETEER_EXECUTABLE_PATH: fakeChrome,
+        WORKBENCH_WA_CHROME_MIN_AVAILABLE_MB: '0',
+      },
+    }), /Chromium headless 预检失败/);
 
     const original = new Error('Protocol error (Target.setDiscoverTargets): Target closed');
     const enriched = enrichChromeLaunchError(original, config);

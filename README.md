@@ -162,7 +162,7 @@ npm run account-worker
 ```bash
 WORKBENCH_ACCOUNT_DB_MODE=isolated \
 WORKBENCH_ACCOUNT_DATA_DIR=/Users/a2026/Desktop/工作台/.local-data/accounts \
-WORKBENCH_ACCOUNT_WORKER_MAX_WORKERS=4 \
+WORKBENCH_ACCOUNT_WORKER_MAX_WORKERS=1 \
 npm run account-supervisor
 ```
 
@@ -173,6 +173,17 @@ WORKBENCH_SEND_ENABLED=1
 ```
 
 新登录的服务账号默认 `send_enabled=1`，可以直接发送。后续如果需要把某个账号改成只收不发，可单独关闭该账号的 `send_enabled`；如果需要全局紧急切到只收不发，可以把 `WORKBENCH_SEND_ENABLED` 改为 `0` 后重新部署。账号自身的 `send_enabled` 和发送熔断仍会继续生效。
+
+生产 WA Chromium 启动保护：
+
+```text
+WORKBENCH_CHROME_STATE_DIR=/tmp/workbench-chrome
+WORKBENCH_WA_CHROME_MIN_AVAILABLE_MB=384
+WORKBENCH_WA_CHROME_PREFLIGHT=1
+WORKBENCH_ACCOUNT_WORKER_MAX_WORKERS=1
+```
+
+WA 登录 worker 和账号 runtime worker 在启动 `whatsapp-web.js` 前会先清理本账号 profile 的残留 `Singleton*` 锁、确认 session/profile 目录可写、读取 cgroup/proc 内存余量，并真实运行一次 Chromium headless `about:blank` 预检。预检失败时会直接标记登录失败或延迟拉起账号 worker，避免 Chromium 被 OOM/锁文件反复杀死后留下更坏的 profile 状态。`Code=null` 通常代表 Chromium 被外部信号终止；stderr 中 D-Bus 连接失败多数不是根因，优先看内存、profile 锁和 headless 预检结果。
 
 账号隔离目录结构：
 

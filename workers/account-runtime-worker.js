@@ -20,8 +20,8 @@ const {
 const {
   buildChromeLaunchConfig,
   buildWaWebVersionOptions,
-  cleanupStaleChromeProfiles,
   enrichChromeLaunchError,
+  prepareWaChromeProfile,
 } = require('../lib/chrome-launch');
 
 process.env.WORKBENCH_ACCOUNT_DB_MODE = process.env.WORKBENCH_ACCOUNT_DB_MODE || 'isolated';
@@ -130,11 +130,11 @@ async function startWhatsAppRuntime() {
     return;
   }
   const clientId = sanitizeAccountSegment(ACCOUNT);
-  cleanupStaleChromeProfiles(SESSION_DIR, clientId, { log });
 
   let puppeteerConfig;
   let waWebVersionOptions;
   try {
+    prepareWaChromeProfile(SESSION_DIR, clientId, { log });
     puppeteerConfig = buildChromeLaunchConfig(SESSION_DIR, {
       log,
       puppeteer: require('puppeteer'),

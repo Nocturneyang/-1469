@@ -12,12 +12,13 @@ const {
   sanitizeAccountSegment,
 } = require('../db/account-db');
 const { resolveDataDir } = require('../db/paths');
+const { assertChromeMemoryAvailable } = require('../lib/chrome-launch');
 
 const DATA_DIR = resolveDataDir();
 const OUTBOX_DIR = path.resolve(process.env.WORKBENCH_OUTBOX_DIR || path.join(DATA_DIR, 'outbox'));
 const DISCOVERY_MS = boundedNumber(process.env.WORKBENCH_ACCOUNT_SUPERVISOR_DISCOVERY_MS, 10000, 2000, 300000);
 const RESTART_DELAY_MS = boundedNumber(process.env.WORKBENCH_ACCOUNT_WORKER_RESTART_DELAY_MS, 10000, 1000, 300000);
-const MAX_WORKERS = boundedNumber(process.env.WORKBENCH_ACCOUNT_WORKER_MAX_WORKERS, 4, 1, 100);
+const MAX_WORKERS = boundedNumber(process.env.WORKBENCH_ACCOUNT_WORKER_MAX_WORKERS, 1, 1, 100);
 const START_ALL = process.env.WORKBENCH_ACCOUNT_WORKER_START_ALL === '1';
 const EXPLICIT_WORKERS = parseExplicitWorkers(process.env.WORKBENCH_ACCOUNT_WORKERS || '');
 const RUNNABLE_STATUSES = new Set(['authenticated', 'ready', 'monitoring', 'warmup', 'connected']);
@@ -84,6 +85,19 @@ function desiredAccountWorkers({
 function startWorker(ref) {
   const paths = ensureAccountDatabases(ref.platform, ref.account);
   const key = accountKey(ref.platform, ref.account);
+  if (ref.platform === 'wa') {
+    try {
+      assertChromeMemoryAvailable({ env: process.env, log: (message) => log(`${key} ${message}`) });
+    } catch (err) {
+      workers.set(key, {
+        child: null,
+        startedAt: 0,
+        nextStartAt: Date.now() + RESTART_DELAY_MS,
+      });
+      log(`delaying worker ${key}: ${err.message}`);
+      return;
+    }
+  }
   const env = {
     ...process.env,
     WORKBENCH_ACCOUNT_DB_MODE: 'isolated',

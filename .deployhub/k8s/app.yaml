@@ -87,7 +87,13 @@ spec:
             - name: WORKBENCH_ACCOUNT_DATA_DIR
               value: /data/accounts
             - name: WORKBENCH_ACCOUNT_WORKER_MAX_WORKERS
-              value: "4"
+              value: "1"
+            - name: WORKBENCH_CHROME_STATE_DIR
+              value: /tmp/workbench-chrome
+            - name: WORKBENCH_WA_CHROME_MIN_AVAILABLE_MB
+              value: "384"
+            - name: WORKBENCH_WA_CHROME_PREFLIGHT
+              value: "1"
             - name: WORKBENCH_CHAT_SYNC_ENABLED
               value: "1"
             - name: WORKBENCH_LABEL_SYNC_ENABLED
