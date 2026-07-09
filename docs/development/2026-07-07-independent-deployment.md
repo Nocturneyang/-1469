@@ -32,6 +32,7 @@
 2026-07-07 追加：生产环境必须启动 `social-workbench-login-worker`，否则 WA 登录任务只会停留在 `waiting_qr`，不会生成二维码。
 
 - WA：参考监控项目 WA 登录方式，使用 `whatsapp-web.js`、`LocalAuth`、Chromium 和 `qr/authenticated/ready` 事件；二维码写回工作台 `runtime.sqlite` 的 `qr_payload`。
+- WA 浏览器运行参数与监控项目保持同源思路：使用 `puppeteer-extra` stealth、Mac Chrome User-Agent、本地 `webVersionCache` 兜底，并在初始化前清理该账号 LocalAuth profile 的 `Singleton*` 锁和残留 Chrome 进程。
 - TG Bot：参考监控项目 TG Bot 登录方式，使用 `node-telegram-bot-api` 调用 `getMe()` 校验 token；token 只通过一次性 outbox 文件交给 worker，处理后删除 outbox 文件。
 - TG 用户 Session：参考监控项目 TG 用户号方式，使用 GramJS `TelegramClient + StringSession` 校验 session；需要配置 `WORKBENCH_TG_API_ID` / `WORKBENCH_TG_API_HASH` 或账号专属变量。
 - Session 路径独立：WA 使用 `/data/sessions/wa`，TG 使用 `/data/sessions/tg`。
@@ -41,9 +42,9 @@ WA 二维码生成失败排查：
 
 - 页面显示 `Protocol error (Target.setDiscoverTargets): Target closed` 时，优先查看 `social-workbench-login-worker` 日志里的 `chromium ready:` 自检输出。
 - 如果自检失败，检查生产镜像是否安装 `chromium`，以及 `PUPPETEER_EXECUTABLE_PATH` 是否指向可执行文件。
-- 如果自检成功但客户端仍启动失败，检查 `/data/accounts` 或 `/data/sessions` 是否可写、容器是否因内存被重启。
+- 如果自检成功但客户端仍启动失败，检查 `/data/accounts` 或 `/data/sessions` 是否可写、账号 profile 目录是否残留 `SingletonLock` / `SingletonCookie` / `SingletonSocket`、容器是否因内存被重启。
 - 需要 Chrome 进程 stderr 时，可临时设置 `WORKBENCH_WA_PUPPETEER_DUMPIO=1`；默认关闭，避免生产日志过噪。
-- 默认使用 Puppeteer pipe 连接，避免容器里 DBus stderr 干扰 DevTools endpoint 解析；如需临时切换 websocket，可设置 `WORKBENCH_WA_PUPPETEER_PIPE=0`。
+- 默认沿用 Puppeteer websocket 连接方式，与监控项目 WA worker 保持一致；如生产环境需要切换 pipe，可临时设置 `WORKBENCH_WA_PUPPETEER_PIPE=1`。
 
 2026-07-08 追加：多账号长期运行应使用账号隔离模式。API/UI 继续作为控制面运行；每个 WA/TG 服务账号启动一个 `account-runtime-worker`，并设置：
 

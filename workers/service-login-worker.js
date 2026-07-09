@@ -15,6 +15,8 @@ const {
 } = require('../db/account-db');
 const {
   buildChromeLaunchConfig,
+  buildWaWebVersionOptions,
+  cleanupStaleChromeProfiles,
   enrichChromeLaunchError,
 } = require('../lib/chrome-launch');
 const { updateServiceAccountLoginRequest } = require('../lib/service-account-login-store');
@@ -218,9 +220,17 @@ function startWaLogin(request) {
     return;
   }
   const waSessionDir = waSessionDirFor(request);
+  const clientId = sanitizeSegment(request.account);
+  cleanupStaleChromeProfiles(waSessionDir, clientId, { log });
+
   let puppeteerConfig;
+  let waWebVersionOptions;
   try {
-    puppeteerConfig = buildChromeLaunchConfig(waSessionDir, { log });
+    puppeteerConfig = buildChromeLaunchConfig(waSessionDir, {
+      log,
+      puppeteer: require('puppeteer'),
+    });
+    waWebVersionOptions = buildWaWebVersionOptions(waSessionDir, { log });
   } catch (err) {
     patchRequest(request.request_id, {
       status: 'failed',
@@ -233,12 +243,13 @@ function startWaLogin(request) {
 
   const client = new wa.Client({
     authStrategy: new wa.LocalAuth({
-      clientId: sanitizeSegment(request.account),
+      clientId,
       dataPath: waSessionDir,
       rmMaxRetries: 10,
     }),
     authTimeoutMs: Number(process.env.WORKBENCH_WA_AUTH_TIMEOUT_MS || 300000),
     qrMaxRetries: Number(process.env.WORKBENCH_WA_QR_MAX_RETRIES || 0),
+    ...waWebVersionOptions,
     puppeteer: puppeteerConfig,
   });
 

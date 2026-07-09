@@ -19,6 +19,8 @@ const {
 } = require('../lib/channel-sync-store');
 const {
   buildChromeLaunchConfig,
+  buildWaWebVersionOptions,
+  cleanupStaleChromeProfiles,
   enrichChromeLaunchError,
 } = require('../lib/chrome-launch');
 
@@ -127,9 +129,17 @@ async function startWhatsAppRuntime() {
     reportError('wa_dependency_missing', err);
     return;
   }
+  const clientId = sanitizeAccountSegment(ACCOUNT);
+  cleanupStaleChromeProfiles(SESSION_DIR, clientId, { log });
+
   let puppeteerConfig;
+  let waWebVersionOptions;
   try {
-    puppeteerConfig = buildChromeLaunchConfig(SESSION_DIR, { log });
+    puppeteerConfig = buildChromeLaunchConfig(SESSION_DIR, {
+      log,
+      puppeteer: require('puppeteer'),
+    });
+    waWebVersionOptions = buildWaWebVersionOptions(SESSION_DIR, { log });
   } catch (err) {
     reportError('wa_browser_unavailable', err);
     return;
@@ -137,12 +147,13 @@ async function startWhatsAppRuntime() {
 
   const client = new wa.Client({
     authStrategy: new wa.LocalAuth({
-      clientId: sanitizeAccountSegment(ACCOUNT),
+      clientId,
       dataPath: SESSION_DIR,
       rmMaxRetries: 10,
     }),
     authTimeoutMs: boundedNumber(process.env.WORKBENCH_WA_AUTH_TIMEOUT_MS, 300000, 30000, 900000),
     qrMaxRetries: Number(process.env.WORKBENCH_WA_RUNTIME_QR_MAX_RETRIES || 0),
+    ...waWebVersionOptions,
     puppeteer: puppeteerConfig,
   });
   channelKind = 'wa';
