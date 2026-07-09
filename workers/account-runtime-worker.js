@@ -17,6 +17,10 @@ const {
   readAndClearChannelSyncRequests,
   replaceChannelSnapshot,
 } = require('../lib/channel-sync-store');
+const {
+  buildChromeLaunchConfig,
+  enrichChromeLaunchError,
+} = require('../lib/chrome-launch');
 
 process.env.WORKBENCH_ACCOUNT_DB_MODE = process.env.WORKBENCH_ACCOUNT_DB_MODE || 'isolated';
 process.env.WORKBENCH_WORKER_ROLE = process.env.WORKBENCH_WORKER_ROLE || 'account-runtime';
@@ -123,6 +127,13 @@ async function startWhatsAppRuntime() {
     reportError('wa_dependency_missing', err);
     return;
   }
+  let puppeteerConfig;
+  try {
+    puppeteerConfig = buildChromeLaunchConfig(SESSION_DIR, { log });
+  } catch (err) {
+    reportError('wa_browser_unavailable', err);
+    return;
+  }
 
   const client = new wa.Client({
     authStrategy: new wa.LocalAuth({
@@ -132,7 +143,7 @@ async function startWhatsAppRuntime() {
     }),
     authTimeoutMs: boundedNumber(process.env.WORKBENCH_WA_AUTH_TIMEOUT_MS, 300000, 30000, 900000),
     qrMaxRetries: Number(process.env.WORKBENCH_WA_RUNTIME_QR_MAX_RETRIES || 0),
-    puppeteer: buildChromeLaunchConfig(SESSION_DIR),
+    puppeteer: puppeteerConfig,
   });
   channelKind = 'wa';
   channelClient = client;
@@ -178,7 +189,11 @@ async function startWhatsAppRuntime() {
     recordRuntimeEvent('wa_disconnected', 'warning', `WA 已断开：${reason || 'unknown'}`);
   });
 
-  await client.initialize();
+  try {
+    await client.initialize();
+  } catch (err) {
+    reportError('wa_client_start_failed', enrichChromeLaunchError(err, puppeteerConfig));
+  }
 }
 
 async function startTelegramRuntime() {
@@ -607,63 +622,6 @@ function loadWhatsAppRuntime() {
   return require('whatsapp-web.js');
 }
 
-function buildChromeLaunchConfig(sessionDir) {
-  const executablePath = existingPath(process.env.PUPPETEER_EXECUTABLE_PATH) ||
-    existingPath('/usr/bin/chromium') ||
-    existingPath('/usr/bin/google-chrome') ||
-    undefined;
-  const chromeStateDir = path.join(sessionDir, '.chromium');
-  const xdgConfigDir = path.join(chromeStateDir, 'config');
-  const xdgCacheDir = path.join(chromeStateDir, 'cache');
-  const xdgRuntimeDir = path.join(chromeStateDir, 'runtime');
-  fs.mkdirSync(xdgConfigDir, { recursive: true });
-  fs.mkdirSync(xdgCacheDir, { recursive: true });
-  fs.mkdirSync(xdgRuntimeDir, { recursive: true, mode: 0o700 });
-  fs.chmodSync(xdgRuntimeDir, 0o700);
-  return {
-    headless: true,
-    executablePath,
-    pipe: true,
-    timeout: boundedNumber(process.env.WORKBENCH_WA_PUPPETEER_TIMEOUT_MS, 120000, 30000, 900000),
-    protocolTimeout: boundedNumber(process.env.WORKBENCH_WA_PUPPETEER_PROTOCOL_TIMEOUT_MS, 120000, 30000, 900000),
-    env: {
-      ...process.env,
-      XDG_CONFIG_HOME: xdgConfigDir,
-      XDG_CACHE_HOME: xdgCacheDir,
-      XDG_RUNTIME_DIR: xdgRuntimeDir,
-    },
-    args: [
-      '--no-sandbox',
-      '--disable-setuid-sandbox',
-      '--disable-dev-shm-usage',
-      '--disable-gpu',
-      '--disable-software-rasterizer',
-      '--disable-extensions',
-      '--disable-sync',
-      '--disable-background-networking',
-      '--disable-component-update',
-      '--disable-default-apps',
-      '--disable-crash-reporter',
-      '--disable-breakpad',
-      '--disable-features=Translate,MediaRouter,OptimizationHints,AudioServiceOutOfProcess',
-      '--disable-background-timer-throttling',
-      '--disable-renderer-backgrounding',
-      '--disable-ipc-flooding-protection',
-      '--disable-hang-monitor',
-      '--renderer-process-limit=4',
-      '--process-per-site',
-      '--no-zygote',
-      '--disable-site-isolation-trials',
-      '--mute-audio',
-      '--no-first-run',
-      '--no-default-browser-check',
-      '--password-store=basic',
-      '--use-mock-keychain',
-      '--window-size=1280,960',
-    ],
-  };
-}
-
 function renewLease() {
   const now = new Date();
   const nowIso = now.toISOString();
@@ -848,10 +806,6 @@ function boundedNumber(value, fallback, min, max) {
   const numeric = Number(value);
   if (!Number.isFinite(numeric)) return fallback;
   return Math.max(min, Math.min(max, numeric));
-}
-
-function existingPath(filePath) {
-  return filePath && fs.existsSync(filePath) ? filePath : '';
 }
 
 function log(message) {

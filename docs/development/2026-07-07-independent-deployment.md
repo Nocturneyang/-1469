@@ -37,6 +37,14 @@
 - Session 路径独立：WA 使用 `/data/sessions/wa`，TG 使用 `/data/sessions/tg`。
 - 状态独立：登录任务写 `runtime.sqlite`，账号档案写 `raw.sqlite`，不写监控项目数据库。
 
+WA 二维码生成失败排查：
+
+- 页面显示 `Protocol error (Target.setDiscoverTargets): Target closed` 时，优先查看 `social-workbench-login-worker` 日志里的 `chromium ready:` 自检输出。
+- 如果自检失败，检查生产镜像是否安装 `chromium`，以及 `PUPPETEER_EXECUTABLE_PATH` 是否指向可执行文件。
+- 如果自检成功但客户端仍启动失败，检查 `/data/accounts` 或 `/data/sessions` 是否可写、容器是否因内存被重启。
+- 需要 Chrome 进程 stderr 时，可临时设置 `WORKBENCH_WA_PUPPETEER_DUMPIO=1`；默认关闭，避免生产日志过噪。
+- 默认使用 Puppeteer websocket 连接；如需恢复 pipe 模式，可设置 `WORKBENCH_WA_PUPPETEER_PIPE=1`。
+
 2026-07-08 追加：多账号长期运行应使用账号隔离模式。API/UI 继续作为控制面运行；每个 WA/TG 服务账号启动一个 `account-runtime-worker`，并设置：
 
 ```text

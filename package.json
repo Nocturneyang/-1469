@@ -18,7 +18,7 @@
     "seed:demo": "node scripts/seed-demo-raw-db.js",
     "seed:demo-workbench": "node scripts/seed-demo-workbench-db.js",
     "outbound:demo": "node scripts/demo-outbound-consumer.js",
-    "test": "node tests/workbench-api.test.js && node tests/outbound-consumer.test.js && node tests/account-isolation.test.js && node tests/account-runtime-worker.test.js"
+    "test": "node tests/workbench-api.test.js && node tests/outbound-consumer.test.js && node tests/account-isolation.test.js && node tests/account-runtime-worker.test.js && node tests/chrome-launch.test.js"
   },
   "dependencies": {
     "@element-plus/icons-vue": "^2.3.2",

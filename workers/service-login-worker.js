@@ -13,6 +13,10 @@ const {
   normalizeAccountPlatform,
   sanitizeAccountSegment,
 } = require('../db/account-db');
+const {
+  buildChromeLaunchConfig,
+  enrichChromeLaunchError,
+} = require('../lib/chrome-launch');
 const { updateServiceAccountLoginRequest } = require('../lib/service-account-login-store');
 
 const DATA_DIR = resolveDataDir();
@@ -214,6 +218,18 @@ function startWaLogin(request) {
     return;
   }
   const waSessionDir = waSessionDirFor(request);
+  let puppeteerConfig;
+  try {
+    puppeteerConfig = buildChromeLaunchConfig(waSessionDir, { log });
+  } catch (err) {
+    patchRequest(request.request_id, {
+      status: 'failed',
+      qr_payload: '',
+      error_message: err.message,
+      worker_message: 'WA 浏览器启动环境不可用',
+    }, request);
+    return;
+  }
 
   const client = new wa.Client({
     authStrategy: new wa.LocalAuth({
@@ -223,7 +239,7 @@ function startWaLogin(request) {
     }),
     authTimeoutMs: Number(process.env.WORKBENCH_WA_AUTH_TIMEOUT_MS || 300000),
     qrMaxRetries: Number(process.env.WORKBENCH_WA_QR_MAX_RETRIES || 0),
-    puppeteer: buildChromeLaunchConfig(waSessionDir),
+    puppeteer: puppeteerConfig,
   });
 
   const state = {
@@ -312,12 +328,14 @@ function startWaLogin(request) {
   });
 
   client.initialize().catch((err) => {
+    const launchErr = enrichChromeLaunchError(err, puppeteerConfig);
     patchRequest(request.request_id, {
       status: 'failed',
       qr_payload: '',
-      error_message: err.message,
+      error_message: launchErr.message,
       worker_message: 'WA 客户端启动失败',
     }, request);
+    log(`WA client start failed for ${request.account}: ${launchErr.stack || launchErr.message}`);
     stopWaRequest(request.request_id);
   });
 }
@@ -755,67 +773,6 @@ function loadWhatsAppRuntime() {
     log(`puppeteer stealth plugin unavailable, continuing with vanilla puppeteer: ${err.message}`);
   }
   return require('whatsapp-web.js');
-}
-
-function buildChromeLaunchConfig(sessionDir = WA_AUTH_DATA_PATH) {
-  const executablePath = existingPath(process.env.PUPPETEER_EXECUTABLE_PATH) ||
-    existingPath('/usr/bin/chromium') ||
-    existingPath('/usr/bin/google-chrome') ||
-    undefined;
-  const chromeStateDir = path.join(sessionDir, '.chromium');
-  const xdgConfigDir = path.join(chromeStateDir, 'config');
-  const xdgCacheDir = path.join(chromeStateDir, 'cache');
-  const xdgRuntimeDir = path.join(chromeStateDir, 'runtime');
-  fs.mkdirSync(xdgConfigDir, { recursive: true });
-  fs.mkdirSync(xdgCacheDir, { recursive: true });
-  fs.mkdirSync(xdgRuntimeDir, { recursive: true, mode: 0o700 });
-  fs.chmodSync(xdgRuntimeDir, 0o700);
-  return {
-    headless: true,
-    executablePath,
-    pipe: true,
-    timeout: Number(process.env.WORKBENCH_WA_PUPPETEER_TIMEOUT_MS || 120000),
-    protocolTimeout: Number(process.env.WORKBENCH_WA_PUPPETEER_PROTOCOL_TIMEOUT_MS || 120000),
-    env: {
-      ...process.env,
-      XDG_CONFIG_HOME: xdgConfigDir,
-      XDG_CACHE_HOME: xdgCacheDir,
-      XDG_RUNTIME_DIR: xdgRuntimeDir,
-    },
-    args: [
-      '--no-sandbox',
-      '--disable-setuid-sandbox',
-      '--disable-dev-shm-usage',
-      '--disable-gpu',
-      '--disable-software-rasterizer',
-      '--disable-extensions',
-      '--disable-sync',
-      '--disable-background-networking',
-      '--disable-component-update',
-      '--disable-default-apps',
-      '--disable-crash-reporter',
-      '--disable-breakpad',
-      '--disable-features=Translate,MediaRouter,OptimizationHints,AudioServiceOutOfProcess',
-      '--disable-background-timer-throttling',
-      '--disable-renderer-backgrounding',
-      '--disable-ipc-flooding-protection',
-      '--disable-hang-monitor',
-      '--renderer-process-limit=4',
-      '--process-per-site',
-      '--no-zygote',
-      '--disable-site-isolation-trials',
-      '--mute-audio',
-      '--no-first-run',
-      '--no-default-browser-check',
-      '--password-store=basic',
-      '--use-mock-keychain',
-      '--window-size=1280,960',
-    ],
-  };
-}
-
-function existingPath(filePath) {
-  return filePath && fs.existsSync(filePath) ? filePath : '';
 }
 
 function renewAccountLease() {
