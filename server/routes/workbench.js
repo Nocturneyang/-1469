@@ -37,6 +37,7 @@ const {
   setRolePermissions,
 } = require('../../lib/access-control');
 const { createAccountDataAccess } = require('../../lib/account-data-access');
+const { writeLoginVerificationDoorbell } = require('../../lib/service-account-login-store');
 
 const ALLOWED_PLATFORMS = new Set(WORKBENCH_PLATFORMS);
 const OUTBOUND_STATUSES = new Set(['pending', 'sending', 'sent', 'delivered', 'failed', 'dead', 'paused', 'canceled']);
@@ -197,6 +198,7 @@ function createWorkbenchRouter({ workbenchDb, runtimeDb, rawDbPath = DEFAULT_RAW
         credential: body.credential,
         tgApiId: body.tg_api_id ?? body.tgApiId ?? body.api_id ?? body.apiId,
         tgApiHash: body.tg_api_hash ?? body.tgApiHash ?? body.api_hash ?? body.apiHash,
+        tgPhoneNumber: body.tg_phone_number ?? body.tgPhoneNumber ?? body.phone_number ?? body.phoneNumber,
         requestedBy: operator.id,
       });
       accountData.upsertProfile({
@@ -214,6 +216,43 @@ function createWorkbenchRouter({ workbenchDb, runtimeDb, rawDbPath = DEFAULT_RAW
       credential_hint: request.credential_hint,
     }));
     res.status(202).json({ ok: true, request });
+  });
+
+  router.post('/service-account-logins/:id/verify', requireAdmin, (req, res) => {
+    const operator = currentOperatorContext(workbenchDb, req);
+    const request = accountData.getLoginRequest(req.params.id);
+    if (!request) throw createHttpError(404, 'login request not found');
+    if (request.login_mode !== 'tg_user_phone') {
+      throw createHttpError(400, 'verification is only supported for TG user phone login');
+    }
+    if (!['waiting_code', 'waiting_password', 'waiting_verification'].includes(request.status)) {
+      throw createHttpError(400, 'login request is not waiting for Telegram verification');
+    }
+
+    const body = req.body || {};
+    const code = String(body.code || body.phone_code || body.phoneCode || '').trim();
+    const password = String(body.password || body.two_factor_password || body.twoFactorPassword || '');
+    if (request.status === 'waiting_code' && !code) throw createHttpError(400, 'Telegram verification code is required');
+    if (request.status === 'waiting_password' && !password) throw createHttpError(400, 'Telegram two-step password is required');
+
+    writeLoginVerificationDoorbell(doorbellRoot, request, {
+      code,
+      password,
+      requestedBy: operator.id,
+    });
+    const next = accountData.updateLoginRequest(request.request_id, {
+      status: 'waiting_verification',
+      worker_message: request.status === 'waiting_password'
+        ? '二步密码已提交，等待 TG worker 验证'
+        : '验证码已提交，等待 TG worker 验证',
+      error_message: '',
+    });
+    accountData.withWorkbenchDb(request.platform, request.account, { create: true }, (accountDb) => writeAction(accountDb, operator.id, 'service_account.login.verify', request.platform, request.account, null, request.request_id, {
+      login_mode: request.login_mode,
+      submitted_code: Boolean(code),
+      submitted_password: Boolean(password),
+    }));
+    res.status(202).json({ ok: true, request: next || request });
   });
 
   router.get('/service-account-logins/:id', requireAdmin, (req, res) => {

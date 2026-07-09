@@ -1130,6 +1130,13 @@ button {
   line-height: 1.5;
 }
 
+.service-login-verify-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+
 .service-login-error {
   color: #b42318 !important;
 }
@@ -3165,8 +3172,13 @@ button {
   .service-login-runtime-grid,
   .service-login-qr,
   .service-login-credential-card,
+  .service-login-verify-form,
   .service-login-request p {
     grid-column: 1;
+  }
+
+  .service-login-verify-form {
+    grid-template-columns: 1fr;
   }
 
   .service-login-submit {

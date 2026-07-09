@@ -41,7 +41,33 @@
             </el-form-item>
           </div>
 
-          <template v-if="form.login_mode === 'tg_user_session'">
+          <template v-if="form.login_mode === 'tg_user_phone'">
+            <div class="service-login-form-grid service-login-tg-api-grid">
+              <el-form-item label="TG API ID">
+                <el-input
+                  v-model.trim="form.tg_api_id"
+                  inputmode="numeric"
+                  placeholder="例如 123456"
+                />
+              </el-form-item>
+              <el-form-item label="App api_hash">
+                <el-input
+                  v-model.trim="form.tg_api_hash"
+                  type="password"
+                  placeholder="从 my.telegram.org 获取的 api_hash"
+                  show-password
+                />
+              </el-form-item>
+            </div>
+            <el-form-item label="手机号">
+              <el-input
+                v-model.trim="form.tg_phone_number"
+                placeholder="例如 +8613800000000"
+              />
+            </el-form-item>
+          </template>
+
+          <template v-else-if="form.login_mode === 'tg_user_session'">
             <div class="service-login-form-grid service-login-tg-api-grid">
               <el-form-item label="TG API ID">
                 <el-input
@@ -215,8 +241,35 @@
                 </div>
 
                 <div v-else class="service-login-credential-card">
-                  <strong>{{ request.login_mode === 'tg_bot_token' ? 'TG Bot 校验任务' : 'TG 用户 Session 校验任务' }}</strong>
+                  <strong>{{ tgCredentialTitle(request) }}</strong>
                   <span>{{ tgCredentialHint(request) }}</span>
+                  <div
+                    v-if="shouldShowTgVerification(request) && verificationDrafts[request.request_id]"
+                    class="service-login-verify-form"
+                  >
+                    <el-input
+                      v-if="request.status === 'waiting_code'"
+                      v-model.trim="verificationDrafts[request.request_id].code"
+                      placeholder="Telegram 验证码"
+                      size="small"
+                    />
+                    <el-input
+                      v-if="request.status === 'waiting_password'"
+                      v-model="verificationDrafts[request.request_id].password"
+                      type="password"
+                      placeholder="Telegram 二步验证密码"
+                      show-password
+                      size="small"
+                    />
+                    <el-button
+                      type="primary"
+                      size="small"
+                      :loading="isVerifying(request)"
+                      @click="submitVerification(request)"
+                    >
+                      提交验证
+                    </el-button>
+                  </div>
                 </div>
 
                 <p v-if="request.worker_message" class="service-login-worker-message">
@@ -242,6 +295,7 @@ import {
   createServiceAccountLoginRequest,
   deleteServiceAccountLoginRequest,
   fetchServiceAccountLoginRequests,
+  verifyServiceAccountLoginRequest,
 } from '../api';
 
 defineEmits(['back']);
@@ -253,7 +307,8 @@ const platformOptions = [
 const modeLabels = {
   wa_qr: 'WA 扫码登录',
   tg_bot_token: 'TG Bot Token',
-  tg_user_session: 'TG 用户 Session',
+  tg_user_phone: 'TG 用户号登录',
+  tg_user_session: '导入 StringSession',
 };
 const form = reactive({
   platform: 'wa',
@@ -263,33 +318,37 @@ const form = reactive({
   credential: '',
   tg_api_id: '',
   tg_api_hash: '',
+  tg_phone_number: '',
 });
 const requests = ref([]);
 const loading = ref(false);
 const submitting = ref(false);
 const deletingIds = ref(new Set());
+const verifyingIds = ref(new Set());
+const verificationDrafts = reactive({});
 const showCredential = ref(false);
 const qrMatrices = reactive({});
 let refreshTimer = null;
 
-const activeStatuses = new Set(['requested', 'waiting_qr', 'waiting_verification']);
+const activeStatuses = new Set(['requested', 'waiting_qr', 'waiting_verification', 'waiting_code', 'waiting_password']);
 
 const modeOptions = computed(() => (
   form.platform === 'wa'
     ? [{ label: modeLabels.wa_qr, value: 'wa_qr' }]
     : [
+      { label: modeLabels.tg_user_phone, value: 'tg_user_phone' },
       { label: modeLabels.tg_bot_token, value: 'tg_bot_token' },
       { label: modeLabels.tg_user_session, value: 'tg_user_session' },
     ]
 ));
 
-const needsCredential = computed(() => form.login_mode !== 'wa_qr');
+const needsCredential = computed(() => ['tg_bot_token', 'tg_user_session'].includes(form.login_mode));
 const credentialLabel = computed(() => (
-  form.login_mode === 'tg_user_session' ? 'TG 用户 Session' : 'TG Bot Token'
+  form.login_mode === 'tg_user_session' ? 'StringSession' : 'TG Bot Token'
 ));
 const credentialPlaceholder = computed(() => (
   form.login_mode === 'tg_user_session'
-    ? '粘贴由工作台 TG worker 生成或导出的 session'
+    ? '粘贴已生成或导出的 StringSession'
     : '粘贴 BotFather 生成的 token'
 ));
 const createPanelHint = computed(() => (
@@ -299,6 +358,7 @@ const createPanelHint = computed(() => (
 ));
 const submitHint = computed(() => {
   if (form.login_mode === 'wa_qr') return '提交后等待 WA worker 回写二维码，页面会自动刷新。';
+  if (form.login_mode === 'tg_user_phone') return '提交后由 TG worker 发送验证码，下一步在任务卡片里输入验证码。';
   if (form.login_mode === 'tg_user_session') return '提交后由 TG worker 用 API ID/Hash 校验 Session 并接管账号。';
   return '提交后由 TG worker 校验并接管登录，页面只显示脱敏提示。';
 });
@@ -308,6 +368,13 @@ const flowSteps = computed(() => {
       { label: '1', text: '创建 WA 扫码任务', active: true },
       { label: '2', text: 'worker 回写二维码', active: false },
       { label: '3', text: '手机扫码后接入工作台', active: false },
+    ];
+  }
+  if (form.login_mode === 'tg_user_phone') {
+    return [
+      { label: '1', text: '提交 API ID/Hash 和手机号', active: true },
+      { label: '2', text: '输入 Telegram 验证码', active: false },
+      { label: '3', text: '自动生成并接管 Session', active: false },
     ];
   }
   if (form.login_mode === 'tg_user_session') {
@@ -348,17 +415,22 @@ onUnmounted(() => {
 });
 
 function handlePlatformChange() {
-  form.login_mode = form.platform === 'wa' ? 'wa_qr' : 'tg_bot_token';
+  form.login_mode = form.platform === 'wa' ? 'wa_qr' : 'tg_user_phone';
   form.credential = '';
   form.tg_api_id = '';
   form.tg_api_hash = '';
+  form.tg_phone_number = '';
 }
 
 function handleLoginModeChange() {
   form.credential = '';
-  if (form.login_mode !== 'tg_user_session') {
+  if (!['tg_user_phone', 'tg_user_session'].includes(form.login_mode)) {
     form.tg_api_id = '';
     form.tg_api_hash = '';
+    form.tg_phone_number = '';
+  }
+  if (form.login_mode !== 'tg_user_phone') {
+    form.tg_phone_number = '';
   }
 }
 
@@ -367,6 +439,7 @@ async function loadRequests() {
   try {
     requests.value = await fetchServiceAccountLoginRequests();
     renderQrMatrices();
+    syncVerificationDrafts();
     syncAutoRefresh();
   } catch (err) {
     ElMessage.error('无法加载登录任务');
@@ -384,7 +457,7 @@ async function submit() {
     ElMessage.warning(`请输入${credentialLabel.value}`);
     return;
   }
-  if (form.login_mode === 'tg_user_session') {
+  if (['tg_user_phone', 'tg_user_session'].includes(form.login_mode)) {
     const apiId = Number(form.tg_api_id);
     if (!Number.isInteger(apiId) || apiId <= 0) {
       ElMessage.warning('请输入有效的 TG API ID');
@@ -395,6 +468,10 @@ async function submit() {
       return;
     }
   }
+  if (form.login_mode === 'tg_user_phone' && !form.tg_phone_number) {
+    ElMessage.warning('请输入 TG 用户号手机号');
+    return;
+  }
   submitting.value = true;
   try {
     await createServiceAccountLoginRequest({
@@ -403,8 +480,9 @@ async function submit() {
       display_name: form.display_name || form.account,
       login_mode: form.login_mode,
       credential: needsCredential.value ? form.credential : undefined,
-      tg_api_id: form.login_mode === 'tg_user_session' ? Number(form.tg_api_id) : undefined,
-      tg_api_hash: form.login_mode === 'tg_user_session' ? form.tg_api_hash : undefined,
+      tg_api_id: ['tg_user_phone', 'tg_user_session'].includes(form.login_mode) ? Number(form.tg_api_id) : undefined,
+      tg_api_hash: ['tg_user_phone', 'tg_user_session'].includes(form.login_mode) ? form.tg_api_hash : undefined,
+      tg_phone_number: form.login_mode === 'tg_user_phone' ? form.tg_phone_number : undefined,
     });
     form.credential = '';
     form.tg_api_hash = '';
@@ -414,6 +492,41 @@ async function submit() {
     ElMessage.error(err.response?.data?.error || '登录任务创建失败');
   } finally {
     submitting.value = false;
+  }
+}
+
+async function submitVerification(request) {
+  if (!request || isVerifying(request)) return;
+  const draft = verificationDrafts[request.request_id] || {};
+  if (request.status === 'waiting_code' && !String(draft.code || '').trim()) {
+    ElMessage.warning('请输入 Telegram 验证码');
+    return;
+  }
+  if (request.status === 'waiting_password' && !String(draft.password || '')) {
+    ElMessage.warning('请输入 Telegram 二步验证密码');
+    return;
+  }
+
+  setVerifying(request.request_id, true);
+  try {
+    const updated = await verifyServiceAccountLoginRequest(request.request_id, {
+      code: draft.code,
+      password: draft.password,
+    });
+    if (updated) {
+      requests.value = requests.value.map((item) => (
+        item.request_id === updated.request_id ? updated : item
+      ));
+    }
+    draft.code = '';
+    draft.password = '';
+    syncVerificationDrafts();
+    syncAutoRefresh();
+    ElMessage.success('验证信息已提交');
+  } catch (err) {
+    ElMessage.error(err.response?.data?.error || '验证信息提交失败');
+  } finally {
+    setVerifying(request.request_id, false);
   }
 }
 
@@ -456,6 +569,30 @@ function setDeleting(requestId, deleting) {
   if (deleting) next.add(requestId);
   else next.delete(requestId);
   deletingIds.value = next;
+}
+
+function isVerifying(request) {
+  return verifyingIds.value.has(request.request_id);
+}
+
+function setVerifying(requestId, verifying) {
+  const next = new Set(verifyingIds.value);
+  if (verifying) next.add(requestId);
+  else next.delete(requestId);
+  verifyingIds.value = next;
+}
+
+function syncVerificationDrafts() {
+  const activeIds = new Set();
+  requests.value.forEach((request) => {
+    activeIds.add(request.request_id);
+    if (!verificationDrafts[request.request_id]) {
+      verificationDrafts[request.request_id] = { code: '', password: '' };
+    }
+  });
+  Object.keys(verificationDrafts).forEach((requestId) => {
+    if (!activeIds.has(requestId)) delete verificationDrafts[requestId];
+  });
 }
 
 function renderQrMatrices() {
@@ -515,7 +652,7 @@ function platformText(platform) {
 
 function platformIcon(request) {
   if (request.platform === 'wa') return 'WA';
-  if (request.login_mode === 'tg_user_session') return 'TG';
+  if (request.login_mode === 'tg_user_session' || request.login_mode === 'tg_user_phone') return 'TG';
   return 'BOT';
 }
 
@@ -525,6 +662,8 @@ function loginModeText(mode) {
 
 function statusText(status) {
   if (status === 'waiting_qr') return '等待二维码';
+  if (status === 'waiting_code') return '等待验证码';
+  if (status === 'waiting_password') return '等待二步密码';
   if (status === 'requested') return '已提交';
   if (status === 'waiting_verification') return '等待验证';
   if (status === 'authenticated') return '已登录';
@@ -536,7 +675,7 @@ function statusText(status) {
 
 function statusClass(status) {
   if (status === 'authenticated') return 'online';
-  if (status === 'waiting_qr' || status === 'waiting_verification') return 'warning';
+  if (['waiting_qr', 'waiting_verification', 'waiting_code', 'waiting_password'].includes(status)) return 'warning';
   if (status === 'failed' || status === 'expired') return 'danger';
   return 'neutral';
 }
@@ -545,6 +684,8 @@ function assessmentText(request) {
   if (request.status === 'authenticated') return '已接入工作台';
   if (request.status === 'waiting_qr' && request.qr_payload) return '二维码已生成';
   if (request.status === 'waiting_qr') return '等待 worker 回写二维码';
+  if (request.status === 'waiting_code') return '等待输入验证码';
+  if (request.status === 'waiting_password') return '等待输入二步密码';
   if (request.status === 'requested') return '等待 worker 领取任务';
   if (request.status === 'waiting_verification') return '等待渠道验证';
   if (request.status === 'expired') return '任务已过期';
@@ -555,7 +696,7 @@ function assessmentText(request) {
 
 function assessmentClass(status) {
   if (status === 'authenticated') return 'ok';
-  if (status === 'waiting_qr' || status === 'waiting_verification' || status === 'requested') return 'pending';
+  if (['waiting_qr', 'waiting_verification', 'waiting_code', 'waiting_password', 'requested'].includes(status)) return 'pending';
   if (status === 'failed' || status === 'expired' || status === 'canceled') return 'bad';
   return '';
 }
@@ -578,9 +719,22 @@ function tgCredentialHint(request) {
   if (request.status === 'authenticated') return '校验完成，服务账号已接入工作台。';
   if (request.status === 'failed') return request.error_message || '校验失败，请检查凭据后重新发起。';
   if (request.status === 'expired') return '任务已过期，请重新提交凭据。';
+  if (request.login_mode === 'tg_user_phone' && request.status === 'waiting_code') return 'Telegram 验证码已发送，请在这里输入验证码。';
+  if (request.login_mode === 'tg_user_phone' && request.status === 'waiting_password') return '该账号启用了二步验证，请输入 Telegram 二步密码。';
   if (request.status === 'waiting_verification') return '正在等待 Telegram 返回验证结果。';
+  if (request.login_mode === 'tg_user_phone') return '手机号和 App 信息已提交给工作台 worker，验证码不会保存在前端。';
   if (request.login_mode === 'tg_user_session') return 'API ID、api_hash 和 Session 已提交给工作台 worker，前端只保留脱敏提示。';
   return '凭据已提交给工作台 worker，前端只保留脱敏提示。';
+}
+
+function tgCredentialTitle(request) {
+  if (request.login_mode === 'tg_bot_token') return 'TG Bot 校验任务';
+  if (request.login_mode === 'tg_user_phone') return 'TG 用户号登录任务';
+  return 'TG StringSession 校验任务';
+}
+
+function shouldShowTgVerification(request) {
+  return request.login_mode === 'tg_user_phone' && ['waiting_code', 'waiting_password'].includes(request.status);
 }
 
 function timeText(value) {

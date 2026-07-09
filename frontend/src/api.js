@@ -232,6 +232,11 @@ export async function createServiceAccountLoginRequest(payload = {}) {
   return data.request;
 }
 
+export async function verifyServiceAccountLoginRequest(requestId, payload = {}) {
+  const { data } = await api.post(`/service-account-logins/${encodeURIComponent(requestId)}/verify`, payload);
+  return data.request;
+}
+
 export async function deleteServiceAccountLoginRequest(requestId) {
   const { data } = await api.delete(`/service-account-logins/${encodeURIComponent(requestId)}`);
   return data.request;

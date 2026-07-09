@@ -212,6 +212,71 @@ async function main() {
     assert.strictEqual(tgUserDoorbell.credential.api_id, 7654321);
     assert.strictEqual(tgUserDoorbell.credential.api_hash, 'abcdef0123456789abcdef0123456789');
 
+    const tgPhoneLogin = await requestJson(`${baseUrl}/service-account-logins`, {
+      method: 'POST',
+      body: {
+        platform: 'tg',
+        account: 'tg-phone-login',
+        display_name: '登录测试 TG 手机号',
+        login_mode: 'tg_user_phone',
+        tg_api_id: 112233,
+        tg_api_hash: 'fedcba9876543210fedcba9876543210',
+        tg_phone_number: '+8613800000000',
+      },
+    });
+    assert.strictEqual(tgPhoneLogin.request.login_mode, 'tg_user_phone');
+    assert.strictEqual(tgPhoneLogin.request.credential_hint, 'api_id 112233 · phone +861***0000');
+    assert.strictEqual(JSON.stringify(tgPhoneLogin).includes('fedcba9876543210fedcba9876543210'), false);
+    assert.strictEqual(JSON.stringify(tgPhoneLogin).includes('+8613800000000'), false);
+    const tgPhoneFiles = fs.readdirSync(path.join(outboxDir, 'login-worker-tg-tg-phone-login'))
+      .filter((file) => file.endsWith('.json'));
+    assert.ok(tgPhoneFiles.length >= 1);
+    const tgPhoneDoorbell = JSON.parse(fs.readFileSync(path.join(outboxDir, 'login-worker-tg-tg-phone-login', tgPhoneFiles[0]), 'utf8'));
+    assert.strictEqual(tgPhoneDoorbell.credential.phase, 'start');
+    assert.strictEqual(tgPhoneDoorbell.credential.api_id, 112233);
+    assert.strictEqual(tgPhoneDoorbell.credential.api_hash, 'fedcba9876543210fedcba9876543210');
+    assert.strictEqual(tgPhoneDoorbell.credential.phone_number, '+8613800000000');
+
+    await requestJson(`${baseUrl}/service-account-logins/${tgPhoneLogin.request.request_id}`, {
+      method: 'PATCH',
+      body: {
+        status: 'waiting_code',
+        worker_message: '验证码已发送',
+      },
+    });
+    const tgPhoneVerify = await requestJson(`${baseUrl}/service-account-logins/${tgPhoneLogin.request.request_id}/verify`, {
+      method: 'POST',
+      body: {
+        code: '12345',
+      },
+    });
+    assert.strictEqual(tgPhoneVerify.request.status, 'waiting_verification');
+    assert.strictEqual(JSON.stringify(tgPhoneVerify).includes('12345'), false);
+    const tgPhoneFilesAfterVerify = fs.readdirSync(path.join(outboxDir, 'login-worker-tg-tg-phone-login'))
+      .filter((file) => file.endsWith('.json'));
+    const tgPhoneVerifyDoorbell = tgPhoneFilesAfterVerify
+      .map((file) => JSON.parse(fs.readFileSync(path.join(outboxDir, 'login-worker-tg-tg-phone-login', file), 'utf8')))
+      .find((payload) => payload.action === 'verify');
+    assert.ok(tgPhoneVerifyDoorbell);
+    assert.strictEqual(tgPhoneVerifyDoorbell.credential.code, '12345');
+    assert.strictEqual(tgPhoneVerifyDoorbell.credential.phase, 'verify');
+
+    await requestJson(`${baseUrl}/service-account-logins/${tgPhoneLogin.request.request_id}`, {
+      method: 'PATCH',
+      body: {
+        status: 'waiting_password',
+        worker_message: '需要二步密码',
+      },
+    });
+    const tgPhonePasswordVerify = await requestJson(`${baseUrl}/service-account-logins/${tgPhoneLogin.request.request_id}/verify`, {
+      method: 'POST',
+      body: {
+        password: 'two-step-secret',
+      },
+    });
+    assert.strictEqual(tgPhonePasswordVerify.request.status, 'waiting_verification');
+    assert.strictEqual(JSON.stringify(tgPhonePasswordVerify).includes('two-step-secret'), false);
+
     const deletedTgLogin = await requestJson(`${baseUrl}/service-account-logins/${tgLogin.request.request_id}`, {
       method: 'DELETE',
     });

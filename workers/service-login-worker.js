@@ -138,6 +138,14 @@ async function handleLoginPayload(payload) {
     await authenticateTgUserSession(request, payload.credential);
     return;
   }
+  if (request.platform === 'tg' && request.login_mode === 'tg_user_phone') {
+    if (payload.action === 'verify' || payload.credential?.phase === 'verify') {
+      await completeTgUserPhoneLogin(request, payload.credential || {});
+    } else {
+      await startTgUserPhoneLogin(request, payload.credential || {});
+    }
+    return;
+  }
   throw new Error(`unsupported login mode: ${request.platform}/${request.login_mode}`);
 }
 
@@ -166,7 +174,7 @@ function expireRequests() {
     const rows = db.prepare(`
       SELECT request_id, platform, account, display_name, login_mode
       FROM service_account_login_requests
-      WHERE status IN ('requested', 'waiting_qr', 'waiting_verification')
+      WHERE status IN ('requested', 'waiting_qr', 'waiting_verification', 'waiting_code', 'waiting_password')
         ${ACCOUNT_SCOPED || context.account ? 'AND platform = @platform AND account = @account' : ''}
         AND expires_at IS NOT NULL
         AND julianday(expires_at) <= julianday('now')
@@ -181,6 +189,7 @@ function expireRequests() {
         worker_message: '登录任务已过期，请重新发起登录',
       }, row);
       stopWaRequest(row.request_id);
+      cleanupPendingTgPhoneLogin(row);
     }
   });
 }
@@ -443,6 +452,295 @@ async function authenticateTgUserSession(request, credentialPayload) {
   } finally {
     await client.disconnect().catch(() => {});
   }
+}
+
+async function startTgUserPhoneLogin(request, credentialPayload) {
+  const credential = normalizeTgPhoneCredential(request, credentialPayload);
+  const { TelegramClient, StringSession, Api } = loadTelegramUserRuntime();
+  const client = new TelegramClient(new StringSession(''), credential.apiId, credential.apiHash, {
+    connectionRetries: 2,
+    useWSS: false,
+  });
+
+  patchRequest(request.request_id, {
+    status: 'requested',
+    worker_message: 'TG 用户号登录初始化中',
+    error_message: '',
+  }, request);
+
+  try {
+    await client.connect();
+    const sent = await client.invoke(new Api.auth.SendCode({
+      phoneNumber: credential.phoneNumber,
+      apiId: credential.apiId,
+      apiHash: credential.apiHash,
+      settings: new Api.CodeSettings({}),
+    }));
+    const phoneCodeHash = sent.phoneCodeHash || sent.phone_code_hash || '';
+    if (!phoneCodeHash) throw new Error('Telegram did not return phone_code_hash');
+    savePendingTgPhoneLogin(request, {
+      request_id: request.request_id,
+      api_id: credential.apiId,
+      api_hash: credential.apiHash,
+      phone_number: credential.phoneNumber,
+      phone_code_hash: phoneCodeHash,
+      session: client.session.save(),
+      needs_password: false,
+      expires_at: request.expires_at,
+    });
+    patchRequest(request.request_id, {
+      status: 'waiting_code',
+      worker_message: `验证码已发送到 ${maskPhoneNumber(credential.phoneNumber)}，请输入 Telegram 收到的验证码`,
+      error_message: '',
+    }, request);
+  } catch (err) {
+    cleanupPendingTgPhoneLogin(request);
+    patchRequest(request.request_id, {
+      status: 'failed',
+      error_message: err.message,
+      worker_message: 'TG 用户号验证码发送失败',
+    }, request);
+  } finally {
+    await client.disconnect().catch(() => {});
+  }
+}
+
+async function completeTgUserPhoneLogin(request, credentialPayload) {
+  const pending = readPendingTgPhoneLogin(request);
+  if (!pending) {
+    patchRequest(request.request_id, {
+      status: 'failed',
+      error_message: 'TG 登录中间态不存在或已过期，请重新发起登录',
+      worker_message: 'TG 用户号登录状态丢失',
+    }, request);
+    return;
+  }
+
+  const code = String(credentialPayload.code || credentialPayload.phone_code || credentialPayload.phoneCode || '').trim();
+  const password = String(credentialPayload.password || credentialPayload.two_factor_password || credentialPayload.twoFactorPassword || '');
+  if (!pending.needs_password && !code) {
+    patchRequest(request.request_id, {
+      status: 'waiting_code',
+      error_message: '请输入 Telegram 验证码',
+      worker_message: '等待 Telegram 验证码',
+    }, request);
+    return;
+  }
+  if (pending.needs_password && !password) {
+    patchRequest(request.request_id, {
+      status: 'waiting_password',
+      error_message: '请输入 Telegram 二步验证密码',
+      worker_message: '该账号启用了二步验证',
+    }, request);
+    return;
+  }
+
+  const { TelegramClient, StringSession, Api, computeCheck } = loadTelegramUserRuntime({ password: true });
+  const client = new TelegramClient(new StringSession(pending.session || ''), Number(pending.api_id), pending.api_hash, {
+    connectionRetries: 2,
+    useWSS: false,
+  });
+
+  try {
+    await client.connect();
+    if (pending.needs_password) {
+      await submitTgPassword(client, Api, computeCheck, password);
+    } else {
+      try {
+        await client.invoke(new Api.auth.SignIn({
+          phoneNumber: pending.phone_number,
+          phoneCodeHash: pending.phone_code_hash,
+          phoneCode: code,
+        }));
+      } catch (err) {
+        if (!isTgTwoFactorNeeded(err)) throw err;
+        const nextPending = {
+          ...pending,
+          session: client.session.save(),
+          needs_password: true,
+          updated_at: new Date().toISOString(),
+        };
+        savePendingTgPhoneLogin(request, nextPending);
+        if (password) {
+          await submitTgPassword(client, Api, computeCheck, password);
+        } else {
+          patchRequest(request.request_id, {
+            status: 'waiting_password',
+            error_message: '',
+            worker_message: '该账号启用了 Telegram 二步验证，请输入二步密码',
+          }, request);
+          return;
+        }
+      }
+    }
+
+    const me = await client.getMe();
+    const name = [me.firstName, me.lastName].filter(Boolean).join(' ') || me.username || request.display_name || request.account;
+    saveTgCredential(request, {
+      login_mode: 'tg_user_session',
+      session: client.session.save(),
+      api_id: Number(pending.api_id),
+      api_hash: pending.api_hash,
+      user: {
+        id: me.id?.toString?.() || String(me.id || ''),
+        username: me.username || '',
+        first_name: me.firstName || '',
+        last_name: me.lastName || '',
+      },
+    });
+    cleanupPendingTgPhoneLogin(request);
+    patchRequest(request.request_id, {
+      status: 'authenticated',
+      worker_message: `TG 用户账号已登录：${name}`,
+      error_message: '',
+    }, { ...request, display_name: name });
+  } catch (err) {
+    if (!pending.needs_password && isTgInvalidCode(err)) {
+      patchRequest(request.request_id, {
+        status: 'waiting_code',
+        error_message: readableTgLoginError(err, '验证码无效或已过期'),
+        worker_message: '验证码校验失败，可重新输入',
+      }, request);
+      return;
+    }
+    if (pending.needs_password && isTgInvalidPassword(err)) {
+      patchRequest(request.request_id, {
+        status: 'waiting_password',
+        error_message: readableTgLoginError(err, '二步密码错误'),
+        worker_message: '二步密码校验失败，可重新输入',
+      }, request);
+      return;
+    }
+    patchRequest(request.request_id, {
+      status: 'failed',
+      error_message: readableTgLoginError(err, err.message),
+      worker_message: 'TG 用户号登录校验失败',
+    }, request);
+  } finally {
+    await client.disconnect().catch(() => {});
+  }
+}
+
+function loadTelegramUserRuntime({ password = false } = {}) {
+  let TelegramClient;
+  let StringSession;
+  let Api;
+  let computeCheck = null;
+  try {
+    ({ TelegramClient, Api } = require('telegram'));
+    ({ StringSession } = require('telegram/sessions'));
+    if (password) ({ computeCheck } = require('telegram/Password'));
+  } catch (err) {
+    throw new Error(`TG 用户号登录依赖不可用: ${err.message}`);
+  }
+  return { TelegramClient, StringSession, Api, computeCheck };
+}
+
+function normalizeTgPhoneCredential(request, credentialPayload = {}) {
+  const accountKey = request.account.toUpperCase().replace(/[^A-Z0-9]+/g, '_');
+  const apiId = Number(
+    credentialPayload.api_id ||
+    credentialPayload.apiId ||
+    credentialPayload.tg_api_id ||
+    process.env[`WORKBENCH_TG_API_ID_${accountKey}`] ||
+    process.env.WORKBENCH_TG_API_ID ||
+    process.env.TG_API_ID ||
+    0
+  );
+  const apiHash = String(
+    credentialPayload.api_hash ||
+    credentialPayload.apiHash ||
+    credentialPayload.tg_api_hash ||
+    process.env[`WORKBENCH_TG_API_HASH_${accountKey}`] ||
+    process.env.WORKBENCH_TG_API_HASH ||
+    process.env.TG_API_HASH ||
+    ''
+  ).trim();
+  const phoneNumber = normalizePhoneNumber(
+    credentialPayload.phone_number ||
+    credentialPayload.phoneNumber ||
+    credentialPayload.tg_phone_number ||
+    ''
+  );
+  if (!apiId || !apiHash) throw new Error('TG 用户号登录需要 API ID 和 App api_hash');
+  if (!phoneNumber) throw new Error('TG 用户号登录需要手机号');
+  return { apiId, apiHash, phoneNumber };
+}
+
+async function submitTgPassword(client, Api, computeCheck, password) {
+  if (typeof computeCheck !== 'function') throw new Error('TG 二步验证依赖不可用');
+  const passwordInfo = await client.invoke(new Api.account.GetPassword());
+  const passwordCheck = await computeCheck(passwordInfo, password);
+  await client.invoke(new Api.auth.CheckPassword({ password: passwordCheck }));
+}
+
+function pendingTgPhoneLoginPath(requestLike = {}) {
+  const sessionDir = tgSessionDirFor(requestLike);
+  return path.join(sessionDir, `${sanitizeSegment(requestLike.account)}.pending-login.json`);
+}
+
+function savePendingTgPhoneLogin(request, state) {
+  const filePath = pendingTgPhoneLoginPath(request);
+  fs.writeFileSync(filePath, JSON.stringify({
+    platform: 'tg',
+    account: request.account,
+    login_mode: 'tg_user_phone',
+    updated_at: new Date().toISOString(),
+    ...state,
+  }, null, 2), { mode: 0o600 });
+}
+
+function readPendingTgPhoneLogin(request) {
+  try {
+    return JSON.parse(fs.readFileSync(pendingTgPhoneLoginPath(request), 'utf8'));
+  } catch (_) {
+    return null;
+  }
+}
+
+function cleanupPendingTgPhoneLogin(request) {
+  if (!request || normalizeAccountPlatform(request.platform) !== 'tg') return;
+  try {
+    fs.unlinkSync(pendingTgPhoneLoginPath(request));
+  } catch (_) {}
+}
+
+function normalizePhoneNumber(value) {
+  return String(value || '').trim().replace(/[^\d+]/g, '');
+}
+
+function maskPhoneNumber(value) {
+  const phone = normalizePhoneNumber(value);
+  if (!phone) return '-';
+  if (phone.length <= 6) return `${phone.slice(0, 2)}***`;
+  return `${phone.slice(0, Math.min(4, phone.length - 4))}***${phone.slice(-4)}`;
+}
+
+function tgErrorText(err) {
+  return String(err?.errorMessage || err?.message || err || '').toUpperCase();
+}
+
+function isTgTwoFactorNeeded(err) {
+  return tgErrorText(err).includes('SESSION_PASSWORD_NEEDED');
+}
+
+function isTgInvalidCode(err) {
+  const text = tgErrorText(err);
+  return text.includes('PHONE_CODE_INVALID') || text.includes('PHONE_CODE_EXPIRED') || text.includes('PHONE_CODE_EMPTY');
+}
+
+function isTgInvalidPassword(err) {
+  return tgErrorText(err).includes('PASSWORD_HASH_INVALID') || tgErrorText(err).includes('PASSWORD_EMPTY');
+}
+
+function readableTgLoginError(err, fallback) {
+  const text = tgErrorText(err);
+  if (text.includes('PHONE_CODE_INVALID')) return '验证码错误';
+  if (text.includes('PHONE_CODE_EXPIRED')) return '验证码已过期，请重新发起登录';
+  if (text.includes('PHONE_NUMBER_INVALID')) return '手机号格式无效';
+  if (text.includes('FLOOD')) return 'Telegram 限流，请稍后再试';
+  if (text.includes('PASSWORD_HASH_INVALID')) return '二步密码错误';
+  return fallback || err?.message || 'TG 登录失败';
 }
 
 function loadWhatsAppRuntime() {
