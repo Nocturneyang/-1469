@@ -33,6 +33,7 @@
 
 - WA：参考监控项目 WA 登录方式，使用 `whatsapp-web.js`、`LocalAuth`、Chromium 和 `qr/authenticated/ready` 事件；二维码写回工作台 `runtime.sqlite` 的 `qr_payload`。
 - WA 浏览器运行参数与监控项目保持同源思路：使用 `puppeteer-extra` stealth、Mac Chrome User-Agent、本地 `webVersionCache` 兜底，并在初始化前清理该账号 LocalAuth profile 的 `Singleton*` 锁和残留 Chrome 进程。
+- 同一个服务账号同一时间只保留最新登录任务为 active；新任务会把旧的 `requested/waiting_*` 任务置为 `canceled`，避免多个 WA 登录任务互相清理浏览器 profile。
 - TG Bot：参考监控项目 TG Bot 登录方式，使用 `node-telegram-bot-api` 调用 `getMe()` 校验 token；token 只通过一次性 outbox 文件交给 worker，处理后删除 outbox 文件。
 - TG 用户 Session：参考监控项目 TG 用户号方式，使用 GramJS `TelegramClient + StringSession` 校验 session；需要配置 `WORKBENCH_TG_API_ID` / `WORKBENCH_TG_API_HASH` 或账号专属变量。
 - Session 路径独立：WA 使用 `/data/sessions/wa`，TG 使用 `/data/sessions/tg`。

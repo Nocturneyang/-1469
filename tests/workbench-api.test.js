@@ -155,6 +155,20 @@ async function main() {
     assert.strictEqual(waQrPatch.request.qr_payload, 'wa-qr-payload-for-render-test');
     assert.strictEqual(waQrPatch.request.worker_message, 'QR ready');
 
+    const waLoginReplacement = await requestJson(`${baseUrl}/service-account-logins`, {
+      method: 'POST',
+      body: {
+        platform: 'wa',
+        account: 'wa-login-test',
+        display_name: '登录测试 WA 新任务',
+        login_mode: 'wa_qr',
+      },
+    });
+    assert.strictEqual(waLoginReplacement.request.status, 'waiting_qr');
+    const supersededWaLogin = await requestJson(`${baseUrl}/service-account-logins/${waLogin.request.request_id}`);
+    assert.strictEqual(supersededWaLogin.request.status, 'canceled');
+    assert.strictEqual(supersededWaLogin.request.worker_message, '已被新的登录任务取代');
+
     const tgLogin = await requestJson(`${baseUrl}/service-account-logins`, {
       method: 'POST',
       body: {

@@ -19,7 +19,11 @@ const {
   cleanupStaleChromeProfiles,
   enrichChromeLaunchError,
 } = require('../lib/chrome-launch');
-const { updateServiceAccountLoginRequest } = require('../lib/service-account-login-store');
+const {
+  ACTIVE_LOGIN_STATUSES,
+  cancelSupersededLoginRequests,
+  updateServiceAccountLoginRequest,
+} = require('../lib/service-account-login-store');
 
 const DATA_DIR = resolveDataDir();
 const WORKER_PLATFORM = normalizeAccountPlatform(process.env.WORKBENCH_WORKER_PLATFORM);
@@ -158,18 +162,32 @@ async function handleLoginPayload(payload) {
 function resumeWaitingWaRequests() {
   if (ACCOUNT_SCOPED && WORKER_PLATFORM !== 'wa') return;
   forEachRuntimeDb((db, context) => {
+    const activeStatusSql = ACTIVE_LOGIN_STATUSES.map((status) => `'${status}'`).join(', ');
     const rows = db.prepare(`
       SELECT *
       FROM service_account_login_requests
       WHERE platform = 'wa'
         AND login_mode = 'wa_qr'
         ${ACCOUNT_SCOPED || context.account ? 'AND account = @account' : ''}
-        AND status IN ('waiting_qr', 'waiting_verification', 'requested')
+        AND status IN (${activeStatusSql})
         AND (expires_at IS NULL OR expires_at > datetime('now'))
-      ORDER BY created_at ASC
-      LIMIT 10
+      ORDER BY created_at DESC, request_id DESC
+      LIMIT 50
     `).all(ACCOUNT_SCOPED || context.account ? { account: WORKER_ACCOUNT || context.account } : {});
+    const newestByAccount = new Set();
     for (const row of rows) {
+      const accountKey = `${row.platform}:${row.account}`;
+      if (newestByAccount.has(accountKey)) {
+        patchRequest(row.request_id, {
+          status: 'canceled',
+          qr_payload: '',
+          worker_message: '已被新的登录任务取代',
+          error_message: '',
+        }, row);
+        continue;
+      }
+      newestByAccount.add(accountKey);
+      cancelSupersededLoginRequests(db, row);
       startWaLogin(mapRequestRow(row));
     }
   });

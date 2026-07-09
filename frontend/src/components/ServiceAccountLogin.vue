@@ -474,7 +474,7 @@ async function submit() {
   }
   submitting.value = true;
   try {
-    await createServiceAccountLoginRequest({
+    const created = await createServiceAccountLoginRequest({
       platform: form.platform,
       account: form.account,
       display_name: form.display_name || form.account,
@@ -486,8 +486,19 @@ async function submit() {
     });
     form.credential = '';
     form.tg_api_hash = '';
-    await loadRequests();
+    if (created) {
+      requests.value = [
+        created,
+        ...requests.value.filter((item) => item.request_id !== created.request_id),
+      ];
+      renderQrMatrices();
+      syncVerificationDrafts();
+      syncAutoRefresh();
+    }
     ElMessage.success('登录任务已创建');
+    await loadRequests().catch(() => {
+      ElMessage.warning('登录任务已创建，但列表刷新失败，请稍后手动刷新页面');
+    });
   } catch (err) {
     ElMessage.error(err.response?.data?.error || '登录任务创建失败');
   } finally {
