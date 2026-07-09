@@ -33,6 +33,8 @@ function main() {
     assert.strictEqual(config.pipe, undefined);
     assert.strictEqual(config.dumpio, true);
     assert.ok(config.args.includes('--no-sandbox'));
+    assert.ok(config.args.includes('--no-zygote'));
+    assert.ok(config.args.includes('--disable-crashpad'));
     assert.ok(config.args.includes(`--user-agent=${buildUserAgent(null)}`));
     assert.ok(config.args.includes('--one'));
     assert.ok(config.args.includes('--two=2'));
@@ -44,6 +46,16 @@ function main() {
     assert.strictEqual(config.env.DBUS_SYSTEM_BUS_ADDRESS, undefined);
     assert.ok(logs.some((message) => message.includes('chromium ready:')));
     assert.ok(logs.some((message) => message.includes('WA chrome runtime:')));
+
+    const prodConfig = buildChromeLaunchConfig(tmpDir, {
+      env: {
+        PUPPETEER_EXECUTABLE_PATH: process.execPath,
+        DATA_DIR: '/data',
+      },
+    });
+    assert.ok(prodConfig.env.XDG_CONFIG_HOME.startsWith('/tmp/workbench-chrome/'));
+    assert.ok(prodConfig.env.XDG_CACHE_HOME.startsWith('/tmp/workbench-chrome/'));
+    assert.ok(prodConfig.env.XDG_RUNTIME_DIR.startsWith('/tmp/workbench-chrome/'));
 
     const pipeConfig = buildChromeLaunchConfig(tmpDir, {
       env: {
