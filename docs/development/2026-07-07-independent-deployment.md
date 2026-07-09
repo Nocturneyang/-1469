@@ -34,6 +34,7 @@
 - WA：参考监控项目 WA 登录方式，使用 `whatsapp-web.js`、`LocalAuth`、Chromium 和 `qr/authenticated/ready` 事件；二维码写回工作台 `runtime.sqlite` 的 `qr_payload`。
 - WA 浏览器运行参数与监控项目保持同源思路：使用 `puppeteer-extra` stealth、Mac Chrome User-Agent、本地 `webVersionCache` 兜底，并在初始化前清理该账号 LocalAuth profile 的 `Singleton*` 锁和残留 Chrome 进程。
 - 2026-07-09 追加：WA 登录 worker 和账号 runtime worker 在创建 `whatsapp-web.js` client 前执行 Chromium 生产预检：确认 session/profile 目录可写、读取 cgroup/proc 可用内存、运行一次 Chromium headless `about:blank`，并把 Chrome state 固定在 `/tmp/workbench-chrome`。这能把镜像缺依赖、profile 锁、目录不可写、容器内存不足等问题提前失败，不再等到 `client.initialize()` 后反复留下坏状态。
+- 2026-07-09 追加：重新登录同一 WA 账号前，`social-workbench-login-worker` 必须等待该账号 `account-runtime-worker` 的 lease 释放后才允许清理 LocalAuth profile 和启动二维码浏览器。`account-runtime-worker` 关闭时必须先 destroy WA client，再释放 lease，避免两个 `whatsapp-web.js` Client 同时持有同一个 `session-{clientId}`。
 - 同一个服务账号同一时间只保留最新登录任务为 active；新任务会把旧的 `requested/waiting_*` 任务置为 `canceled`，避免多个 WA 登录任务互相清理浏览器 profile。
 - TG Bot：参考监控项目 TG Bot 登录方式，使用 `node-telegram-bot-api` 调用 `getMe()` 校验 token；token 只通过一次性 outbox 文件交给 worker，处理后删除 outbox 文件。
 - TG 用户 Session：参考监控项目 TG 用户号方式，使用 GramJS `TelegramClient + StringSession` 校验 session；需要配置 `WORKBENCH_TG_API_ID` / `WORKBENCH_TG_API_HASH` 或账号专属变量。

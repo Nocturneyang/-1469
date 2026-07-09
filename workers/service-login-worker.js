@@ -227,6 +227,8 @@ function startWaLogin(request) {
     stopWaRequest(previous.requestId);
   }
 
+  if (waitForAccountRuntimeRelease(request)) return;
+
   let wa;
   try {
     wa = loadWhatsAppRuntime();
@@ -268,6 +270,8 @@ function startWaLogin(request) {
     }),
     authTimeoutMs: Number(process.env.WORKBENCH_WA_AUTH_TIMEOUT_MS || 300000),
     qrMaxRetries: Number(process.env.WORKBENCH_WA_QR_MAX_RETRIES || 0),
+    takeoverOnConflict: envFlag(process.env.WORKBENCH_WA_TAKEOVER_ON_CONFLICT, true),
+    takeoverTimeoutMs: boundedNumber(process.env.WORKBENCH_WA_TAKEOVER_TIMEOUT_MS, 5000, 0, 60000),
     ...waWebVersionOptions,
     puppeteer: puppeteerConfig,
   });
@@ -304,6 +308,23 @@ function startWaLogin(request) {
       worker_message: '二维码已扫描，正在等待 WhatsApp 完成登录',
       error_message: '',
     }, request);
+  });
+
+  client.on('loading_screen', (percent, message) => {
+    const progress = Number.isFinite(Number(percent)) ? `${percent}%` : String(percent || '');
+    patchRequest(request.request_id, {
+      status: 'waiting_verification',
+      worker_message: `WA 正在加载${progress ? ` ${progress}` : ''}${message ? `：${message}` : ''}`,
+      error_message: '',
+    }, request);
+  });
+
+  client.on('change_state', (stateName) => {
+    patchRequest(request.request_id, {
+      worker_message: `WA 连接状态：${stateName || 'unknown'}`,
+      error_message: '',
+    }, request);
+    log(`WA state for ${request.account}: ${stateName || 'unknown'}`);
   });
 
   client.on('ready', () => {
@@ -367,6 +388,38 @@ function startWaLogin(request) {
     }, request);
     log(`WA client start failed for ${request.account}: ${launchErr.stack || launchErr.message}`);
     stopWaRequest(request.request_id);
+  });
+}
+
+function waitForAccountRuntimeRelease(request) {
+  if (!ACCOUNT_DB_MODE || ACCOUNT_SCOPED || normalizeAccountPlatform(request.platform) !== 'wa') return false;
+  const lease = getActiveAccountRuntimeLease(request);
+  if (!lease) return false;
+  patchRequest(request.request_id, {
+    status: 'waiting_qr',
+    qr_payload: '',
+    error_message: '',
+    worker_message: `正在释放 ${request.account} 的 WA runtime session，释放后自动生成二维码`,
+  }, request);
+  log(`waiting for account-runtime lease before WA login ${request.account}: holder=${lease.holder_id || '-'} expires=${lease.expires_at || '-'}`);
+  return true;
+}
+
+function getActiveAccountRuntimeLease(request) {
+  return withRuntimeDbFor(request, (db) => {
+    const row = db.prepare(`
+      SELECT holder_id, worker_role, run_id, pid, renewed_at, expires_at
+      FROM account_worker_leases
+      WHERE platform = @platform
+        AND account = @account
+        AND lease_name = 'account-runtime'
+    `).get({
+      platform: normalizeAccountPlatform(request.platform),
+      account: request.account,
+    });
+    if (!row) return null;
+    const expiresAt = Date.parse(row.expires_at || '');
+    return Number.isFinite(expiresAt) && expiresAt > Date.now() ? row : null;
   });
 }
 
@@ -1095,6 +1148,17 @@ function archiveDoorbell(filePath, bucket) {
 
 function sanitizeSegment(value) {
   return String(value || 'unknown').replace(/[^a-zA-Z0-9._-]+/g, '_');
+}
+
+function boundedNumber(value, fallback, min, max) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return fallback;
+  return Math.max(min, Math.min(max, numeric));
+}
+
+function envFlag(value, fallback) {
+  if (value === undefined || value === null || value === '') return fallback;
+  return ['1', 'true', 'yes', 'on'].includes(String(value).trim().toLowerCase());
 }
 
 function log(message) {

@@ -153,6 +153,8 @@ async function startWhatsAppRuntime() {
     }),
     authTimeoutMs: boundedNumber(process.env.WORKBENCH_WA_AUTH_TIMEOUT_MS, 300000, 30000, 900000),
     qrMaxRetries: Number(process.env.WORKBENCH_WA_RUNTIME_QR_MAX_RETRIES || 0),
+    takeoverOnConflict: envFlag(process.env.WORKBENCH_WA_TAKEOVER_ON_CONFLICT, true),
+    takeoverTimeoutMs: boundedNumber(process.env.WORKBENCH_WA_TAKEOVER_TIMEOUT_MS, 5000, 0, 60000),
     ...waWebVersionOptions,
     puppeteer: puppeteerConfig,
   });
@@ -168,6 +170,17 @@ async function startWhatsAppRuntime() {
 
   client.on('authenticated', () => {
     reportHeartbeat('authenticated', 'authenticating', 'WA session 已认证，等待 ready');
+  });
+
+  client.on('loading_screen', (percent, message) => {
+    const progress = Number.isFinite(Number(percent)) ? `${percent}%` : String(percent || '');
+    reportHeartbeat('starting', 'loading', `WA 正在加载${progress ? ` ${progress}` : ''}${message ? `：${message}` : ''}`);
+  });
+
+  client.on('change_state', (stateName) => {
+    const stateText = String(stateName || 'unknown');
+    reportHeartbeat(channelReady ? 'ready' : 'starting', `wa_state_${stateText.toLowerCase()}`, `WA 连接状态：${stateText}`);
+    recordRuntimeEvent('wa_state_changed', 'info', `WA 连接状态：${stateText}`);
   });
 
   client.on('ready', async () => {
@@ -769,7 +782,6 @@ async function shutdown() {
   log('stopping');
   clearInterval(heartbeatTimer);
   clearInterval(sendTimer);
-  releaseLease();
   try {
     if (PLATFORM === 'wa' && channelClient && typeof channelClient.destroy === 'function') {
       await channelClient.destroy();
@@ -780,6 +792,8 @@ async function shutdown() {
     }
   } catch (err) {
     log(`channel shutdown failed: ${err.message}`);
+  } finally {
+    releaseLease();
   }
   outboundConsumer.close();
   rawDb.close();
@@ -817,6 +831,11 @@ function boundedNumber(value, fallback, min, max) {
   const numeric = Number(value);
   if (!Number.isFinite(numeric)) return fallback;
   return Math.max(min, Math.min(max, numeric));
+}
+
+function envFlag(value, fallback) {
+  if (value === undefined || value === null || value === '') return fallback;
+  return ['1', 'true', 'yes', 'on'].includes(String(value).trim().toLowerCase());
 }
 
 function log(message) {
