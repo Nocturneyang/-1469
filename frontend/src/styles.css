@@ -700,6 +700,15 @@ button {
   flex-wrap: wrap;
 }
 
+.service-login-management {
+  min-height: 0;
+  display: grid;
+  align-content: start;
+  gap: 14px;
+  padding: 14px;
+  overflow: auto;
+}
+
 .service-login-layout {
   min-height: 0;
   display: grid;
@@ -739,6 +748,20 @@ button {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 0 12px;
+}
+
+.service-login-dialog-form {
+  min-width: 0;
+  display: grid;
+  gap: 10px;
+}
+
+.service-login-dialog-alert {
+  margin-bottom: 12px;
+}
+
+.service-login-dialog-submit {
+  width: 100%;
 }
 
 .service-login-flow {
@@ -832,9 +855,193 @@ button {
 
 .service-login-list {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(286px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
   align-items: start;
+  gap: 14px;
+}
+
+.service-login-panel-title {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.service-login-panel-tools {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.service-login-account-card {
+  position: relative;
+  min-width: 0;
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 24px 14px 14px;
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 10px 24px rgba(24, 35, 30, 0.05);
+  text-align: center;
+}
+
+.service-login-account-card.service-login-platform-wa {
+  border-top: 3px solid #10b981;
+}
+
+.service-login-account-card.service-login-platform-tg {
+  border-top: 3px solid var(--tg);
+}
+
+.service-login-account-card:hover {
+  border-color: var(--line);
+  box-shadow: var(--shadow);
+}
+
+.service-login-card-status {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  max-width: 120px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1.2;
+  background: #edf2f0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.service-login-card-status.online {
+  color: #047857;
+  background: #dcfce7;
+}
+
+.service-login-card-status.warning {
+  color: #92400e;
+  background: #fef3c7;
+}
+
+.service-login-card-status.danger {
+  color: #b42318;
+  background: #fee2e2;
+}
+
+.service-login-card-icon {
+  width: 48px;
+  height: 48px;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 850;
+  background: linear-gradient(180deg, #22c55e, #128c7e);
+  box-shadow: inset 0 -2px 0 rgba(0, 0, 0, 0.12);
+}
+
+.service-login-card-icon.tg {
+  background: linear-gradient(180deg, #38bdf8, #2563eb);
+}
+
+.service-login-card-name {
+  max-width: 100%;
+  color: var(--text);
+  font-size: 17px;
+  font-weight: 850;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+.service-login-card-id,
+.service-login-card-pushname {
+  max-width: 100%;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.service-login-card-pushname {
+  color: var(--text);
+}
+
+.service-login-runbox {
+  width: 100%;
+  display: grid;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  background: var(--surface-muted);
+  text-align: left;
+}
+
+.service-login-runbox > div {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   gap: 10px;
+}
+
+.service-login-runbox span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.service-login-runbox strong {
+  min-width: 0;
+  font-size: 13px;
+  line-height: 1.3;
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+
+.service-login-runbox strong.ok {
+  color: #047857;
+}
+
+.service-login-runbox strong.pending {
+  color: #b45309;
+}
+
+.service-login-runbox strong.bad {
+  color: #b42318;
+}
+
+.service-login-card-actions {
+  width: 100%;
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: auto;
+}
+
+.service-login-account-card .service-login-runtime-grid,
+.service-login-account-card .service-login-qr,
+.service-login-account-card .service-login-credential-card,
+.service-login-account-card .service-login-worker-message,
+.service-login-account-card .service-login-error {
+  width: 100%;
+}
+
+.service-login-account-card .service-login-runtime-grid strong,
+.service-login-account-card .service-login-worker-message,
+.service-login-account-card .service-login-error {
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .service-login-request {
@@ -1125,9 +1332,14 @@ button {
 
 .service-login-credential-card span,
 .service-login-worker-message {
+  margin: 0;
   color: var(--muted);
   font-size: 13px;
   line-height: 1.5;
+}
+
+.service-login-error {
+  margin: 0;
 }
 
 .service-login-verify-form {
@@ -3146,10 +3358,25 @@ button {
     overflow: visible;
   }
 
+  .service-login-management,
   .service-login-layout {
     grid-template-columns: 1fr;
     padding: 12px;
     overflow: visible;
+  }
+
+  .service-login-panel-title {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .service-login-panel-tools {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .service-login-list {
+    grid-template-columns: 1fr;
   }
 
   .service-login-create-panel {
@@ -3179,6 +3406,15 @@ button {
 
   .service-login-verify-form {
     grid-template-columns: 1fr;
+  }
+
+  .service-login-runbox > div {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .service-login-runbox strong {
+    text-align: left;
   }
 
   .service-login-submit {

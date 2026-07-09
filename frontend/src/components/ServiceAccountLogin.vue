@@ -2,291 +2,418 @@
   <main class="service-login-page">
     <header class="service-login-header">
       <div>
-        <h1>新增服务账号</h1>
-        <p>工作台独立 WA/TG 接入入口，任务、二维码和运行状态只写入工作台运行库</p>
+        <h1>服务账号登录</h1>
+        <p>按监控项目账号登录形态接入 WA/TG，任务和 session 仍只属于工作台</p>
       </div>
       <div class="service-login-actions">
+        <el-button type="primary" @click="openAddModal">添加账号</el-button>
         <el-button @click="loadRequests">刷新</el-button>
         <el-button @click="$emit('back')">返回工作台</el-button>
       </div>
     </header>
 
-    <section class="service-login-layout">
-      <section class="service-login-panel service-login-create-panel">
-        <div class="service-login-panel-head">
-          <h2>新增登录任务</h2>
-          <span>{{ createPanelHint }}</span>
+    <section class="service-login-management">
+      <div class="service-login-summary">
+        <div>
+          <span>全部账号</span>
+          <strong>{{ loginSummary.total }}</strong>
+        </div>
+        <div>
+          <span>待扫码</span>
+          <strong>{{ loginSummary.waitingQr }}</strong>
+        </div>
+        <div>
+          <span>已登录</span>
+          <strong>{{ loginSummary.authenticated }}</strong>
+        </div>
+        <div>
+          <span>异常/过期</span>
+          <strong>{{ loginSummary.blocked }}</strong>
+        </div>
+      </div>
+
+      <section class="service-login-panel service-login-task-panel">
+        <div class="service-login-panel-head service-login-task-head">
+          <div class="service-login-panel-title">
+            <div class="service-login-request-head">
+              <div>
+                <h2>帐号管理</h2>
+                <span>WA 扫码、TG Bot、TG 用户号和 StringSession 按账号卡片展示</span>
+              </div>
+            </div>
+            <div class="service-login-panel-tools">
+              <el-tag v-if="autoRefreshing" type="success">自动刷新中</el-tag>
+              <el-button type="primary" @click="openAddModal">添加账号</el-button>
+            </div>
+          </div>
         </div>
 
-        <el-form label-position="top" class="service-login-form">
-          <div class="service-login-form-grid">
-            <el-form-item label="平台">
-              <el-segmented v-model="form.platform" :options="platformOptions" @change="handlePlatformChange" />
-            </el-form-item>
-            <el-form-item label="登录方式">
-              <el-select v-model="form.login_mode" @change="handleLoginModeChange">
-                <el-option
-                  v-for="mode in modeOptions"
-                  :key="mode.value"
-                  :label="mode.label"
-                  :value="mode.value"
+        <div v-if="loading" class="service-login-empty">加载中...</div>
+        <div v-else-if="!requests.length" class="service-login-empty">
+          <strong>暂无账号</strong>
+          <span>点击“添加账号”开始接入 WA 或 TG 服务账号。</span>
+        </div>
+        <div v-else class="service-login-list">
+          <article
+            v-for="request in requests"
+            :key="request.request_id"
+            class="service-login-account-card"
+            :class="[
+              `service-login-platform-${request.platform || 'unknown'}`,
+              `service-login-status-${request.status || 'unknown'}`,
+            ]"
+          >
+            <div class="service-login-card-status" :class="statusClass(request.status)">
+              {{ statusText(request.status) }}
+            </div>
+            <div class="service-login-card-icon" :class="request.platform === 'tg' ? 'tg' : 'wa'">
+              {{ platformIcon(request) }}
+            </div>
+            <div class="service-login-card-name">{{ accountKindText(request) }}</div>
+            <div class="service-login-card-id">{{ request.account }}</div>
+            <div v-if="request.display_name && request.display_name !== request.account" class="service-login-card-pushname">
+              {{ request.display_name }}
+            </div>
+
+            <div class="service-login-runbox">
+              <div>
+                <span>运行评估</span>
+                <strong :class="assessmentClass(request.status)">{{ assessmentText(request) }}</strong>
+              </div>
+              <div>
+                <span>上次更新</span>
+                <strong>{{ timeText(request.updated_at) }}</strong>
+              </div>
+            </div>
+
+            <div v-if="request.login_mode === 'wa_qr'" class="service-login-qr">
+              <div
+                v-if="qrMatrices[request.request_id]"
+                class="service-login-qr-grid"
+                :style="{ '--qr-size': qrMatrices[request.request_id].size }"
+                aria-label="WA 登录二维码"
+              >
+                <i
+                  v-for="(cell, index) in qrMatrices[request.request_id].cells"
+                  :key="`${request.request_id}-${index}`"
+                  :class="{ dark: cell }"
                 />
-              </el-select>
-            </el-form-item>
-            <el-form-item label="服务账号标识">
-              <el-input v-model.trim="form.account" placeholder="例如 wa-support-01 或 tg-support-bot" />
+              </div>
+              <div v-else class="service-login-qr-pending" :class="{ expired: request.status === 'expired' }">
+                <strong>{{ qrPlaceholderTitle(request) }}</strong>
+                <span>{{ qrPlaceholderText(request) }}</span>
+              </div>
+              <span v-if="qrMatrices[request.request_id]">请使用 WhatsApp 扫描二维码登录</span>
+            </div>
+
+            <div v-else class="service-login-credential-card">
+              <strong>{{ tgCredentialTitle(request) }}</strong>
+              <span>{{ tgCredentialHint(request) }}</span>
+              <div
+                v-if="shouldShowTgVerification(request) && verificationDrafts[request.request_id]"
+                class="service-login-verify-form"
+              >
+                <el-input
+                  v-if="request.status === 'waiting_code'"
+                  v-model.trim="verificationDrafts[request.request_id].code"
+                  placeholder="请输入 Telegram 验证码"
+                  size="small"
+                />
+                <el-input
+                  v-if="request.status === 'waiting_password'"
+                  v-model="verificationDrafts[request.request_id].password"
+                  type="password"
+                  placeholder="请输入 Telegram 二步验证密码"
+                  show-password
+                  size="small"
+                />
+                <el-button
+                  type="primary"
+                  size="small"
+                  :loading="isVerifying(request)"
+                  @click="submitVerification(request)"
+                >
+                  验证登录
+                </el-button>
+              </div>
+            </div>
+
+            <div class="service-login-runtime-grid">
+              <div>
+                <span>登录方式</span>
+                <strong>{{ loginModeText(request.login_mode) }}</strong>
+              </div>
+              <div>
+                <span>请求人</span>
+                <strong>{{ request.requested_by || '-' }}</strong>
+              </div>
+              <div>
+                <span>凭据提示</span>
+                <strong>{{ request.credential_hint || '-' }}</strong>
+              </div>
+              <div>
+                <span>过期时间</span>
+                <strong>{{ timeText(request.expires_at) }}</strong>
+              </div>
+              <div>
+                <span>创建时间</span>
+                <strong>{{ timeText(request.created_at) }}</strong>
+              </div>
+              <div>
+                <span>更新时间</span>
+                <strong>{{ timeText(request.updated_at) }}</strong>
+              </div>
+            </div>
+
+            <p v-if="request.worker_message" class="service-login-worker-message">
+              {{ request.worker_message }}
+            </p>
+            <p v-if="request.error_message" class="service-login-error">{{ request.error_message }}</p>
+
+            <div class="service-login-card-actions">
+              <el-button size="small" @click="openRelogin(request)">重新登录</el-button>
+              <el-button
+                size="small"
+                type="danger"
+                plain
+                :icon="Delete"
+                :loading="isDeleting(request)"
+                @click="confirmDelete(request)"
+              >
+                删除
+              </el-button>
+            </div>
+          </article>
+        </div>
+      </section>
+    </section>
+
+    <el-dialog
+      v-model="addModalVisible"
+      title="新增服务账号"
+      width="620px"
+      class="service-login-dialog"
+      @close="resetCreateFlow"
+    >
+      <el-tabs v-model="activeTab">
+        <el-tab-pane label="WhatsApp" name="wa">
+          <el-form label-position="top" class="service-login-dialog-form">
+            <el-form-item label="设备标识符">
+              <el-input v-model.trim="form.account" placeholder="例如 wa_support_01 或 SalesAccount" />
             </el-form-item>
             <el-form-item label="展示名称">
               <el-input v-model.trim="form.display_name" placeholder="例如 客服一号" />
             </el-form-item>
-          </div>
-
-          <template v-if="form.login_mode === 'tg_user_phone'">
-            <div class="service-login-form-grid service-login-tg-api-grid">
-              <el-form-item label="TG API ID">
-                <el-input
-                  v-model.trim="form.tg_api_id"
-                  inputmode="numeric"
-                  placeholder="例如 123456"
-                />
-              </el-form-item>
-              <el-form-item label="App api_hash">
-                <el-input
-                  v-model.trim="form.tg_api_hash"
-                  type="password"
-                  placeholder="从 my.telegram.org 获取的 api_hash"
-                  show-password
-                />
-              </el-form-item>
+            <div class="service-login-flow">
+              <div
+                v-for="step in flowSteps"
+                :key="step.label"
+                class="service-login-flow-step"
+                :class="{ active: step.active }"
+              >
+                <strong>{{ step.label }}</strong>
+                <span>{{ step.text }}</span>
+              </div>
             </div>
-            <el-form-item label="手机号">
-              <el-input
-                v-model.trim="form.tg_phone_number"
-                placeholder="例如 +8613800000000"
-              />
+            <el-button type="primary" class="service-login-dialog-submit" :loading="submitting" @click="submit">
+              部署 WhatsApp 终端
+            </el-button>
+          </el-form>
+        </el-tab-pane>
+
+        <el-tab-pane label="Telegram Bot" name="tg-bot">
+          <el-form label-position="top" class="service-login-dialog-form">
+            <el-form-item label="设备标识符">
+              <el-input v-model.trim="form.account" placeholder="例如 bot_support_01 或 BotAccount" />
             </el-form-item>
-          </template>
-
-          <template v-else-if="form.login_mode === 'tg_user_session'">
-            <div class="service-login-form-grid service-login-tg-api-grid">
-              <el-form-item label="TG API ID">
-                <el-input
-                  v-model.trim="form.tg_api_id"
-                  inputmode="numeric"
-                  placeholder="例如 123456"
-                />
-              </el-form-item>
-              <el-form-item label="App api_hash">
-                <el-input
-                  v-model.trim="form.tg_api_hash"
-                  type="password"
-                  placeholder="从 my.telegram.org 获取的 api_hash"
-                  show-password
-                />
-              </el-form-item>
-            </div>
-            <el-form-item :label="credentialLabel">
+            <el-form-item label="展示名称">
+              <el-input v-model.trim="form.display_name" placeholder="例如 TG 客服机器人" />
+            </el-form-item>
+            <el-form-item label="Bot Token">
               <el-input
                 v-model.trim="form.credential"
-                :type="showCredential ? 'text' : 'password'"
-                :placeholder="credentialPlaceholder"
+                type="password"
+                placeholder="向 BotFather 申请的 token"
                 show-password
               />
             </el-form-item>
-          </template>
+            <el-button type="primary" class="service-login-dialog-submit" :loading="submitting" @click="submit">
+              部署 TG 官方机器人
+            </el-button>
+          </el-form>
+        </el-tab-pane>
 
-          <el-form-item v-else-if="needsCredential" :label="credentialLabel">
-            <el-input
-              v-model.trim="form.credential"
-              :type="showCredential ? 'text' : 'password'"
-              :placeholder="credentialPlaceholder"
-              show-password
+        <el-tab-pane label="TG 用户号协议" name="tgu">
+          <el-alert
+            title="TG 用户号建议只用于低频人工服务场景，登录后仍由工作台 runtime worker 接管 session。"
+            type="warning"
+            show-icon
+            :closable="false"
+            class="service-login-dialog-alert"
+          />
+          <el-form v-if="tguStep === 1" label-position="top" class="service-login-dialog-form">
+            <el-form-item label="账号名称">
+              <el-input v-model.trim="form.account" placeholder="例如 user_support_01 或 UserAccount" />
+            </el-form-item>
+            <el-form-item label="展示名称">
+              <el-input v-model.trim="form.display_name" placeholder="例如 TG 用户号客服" />
+            </el-form-item>
+            <div class="service-login-form-grid service-login-tg-api-grid">
+              <el-form-item label="API ID">
+                <el-input v-model.trim="form.tg_api_id" inputmode="numeric" placeholder="从 my.telegram.org 获取" />
+              </el-form-item>
+              <el-form-item label="API Hash">
+                <el-input v-model.trim="form.tg_api_hash" type="password" placeholder="api_hash" show-password />
+              </el-form-item>
+            </div>
+            <el-form-item label="登录手机号">
+              <el-input v-model.trim="form.tg_phone_number" placeholder="必须包含国家代码，如 +8613800138000" />
+            </el-form-item>
+            <div class="service-login-flow">
+              <div
+                v-for="step in tguFlowSteps"
+                :key="step.label"
+                class="service-login-flow-step"
+                :class="{ active: step.active }"
+              >
+                <strong>{{ step.label }}</strong>
+                <span>{{ step.text }}</span>
+              </div>
+            </div>
+            <el-button type="primary" class="service-login-dialog-submit" :loading="submitting" @click="submit">
+              发送验证码
+            </el-button>
+          </el-form>
+
+          <div v-else-if="tguStep === 2" class="service-login-dialog-form">
+            <el-alert
+              :title="tguStepAlertTitle"
+              :type="tguStepAlertType"
+              :closable="false"
+              class="service-login-dialog-alert"
             />
-          </el-form-item>
-
-          <div class="service-login-flow">
-            <div
-              v-for="step in flowSteps"
-              :key="step.label"
-              class="service-login-flow-step"
-              :class="{ active: step.active }"
-            >
-              <strong>{{ step.label }}</strong>
-              <span>{{ step.text }}</span>
+            <div class="service-login-flow">
+              <div
+                v-for="step in tguFlowSteps"
+                :key="step.label"
+                class="service-login-flow-step"
+                :class="{ active: step.active }"
+              >
+                <strong>{{ step.label }}</strong>
+                <span>{{ step.text }}</span>
+              </div>
             </div>
+            <el-form label-position="top">
+              <el-form-item label="请输入 5 位数登录验证码">
+                <el-input v-model.trim="tguDraft.code" placeholder="12345" />
+              </el-form-item>
+              <el-button
+                type="primary"
+                class="service-login-dialog-submit"
+                :loading="isActiveTguVerifying"
+                :disabled="!canSubmitTguCode"
+                @click="submitTguCode"
+              >
+                验证登录
+              </el-button>
+              <el-button class="service-login-dialog-submit" @click="returnToTguStart">返回修改</el-button>
+            </el-form>
           </div>
 
-          <div class="service-login-submit">
-            <span>{{ submitHint }}</span>
-            <el-button type="primary" :loading="submitting" @click="submit">发起登录</el-button>
-          </div>
-        </el-form>
-      </section>
-
-      <section class="service-login-workspace">
-        <div class="service-login-summary">
-          <div>
-            <span>全部任务</span>
-            <strong>{{ loginSummary.total }}</strong>
-          </div>
-          <div>
-            <span>等待扫码</span>
-            <strong>{{ loginSummary.waitingQr }}</strong>
-          </div>
-          <div>
-            <span>已登录</span>
-            <strong>{{ loginSummary.authenticated }}</strong>
-          </div>
-          <div>
-            <span>异常/过期</span>
-            <strong>{{ loginSummary.blocked }}</strong>
-          </div>
-        </div>
-
-        <section class="service-login-panel service-login-task-panel">
-          <div class="service-login-panel-head service-login-task-head">
-            <div class="service-login-request-head">
-              <div>
-                <h2>登录任务</h2>
-                <span>只保存任务状态、二维码 payload 和脱敏提示，不与监控项目共享数据</span>
+          <div v-else-if="tguStep === 3" class="service-login-dialog-form">
+            <el-alert
+              title="此账号开启了 Telegram 二步验证"
+              type="warning"
+              :closable="false"
+              class="service-login-dialog-alert"
+            />
+            <div class="service-login-flow">
+              <div
+                v-for="step in tguFlowSteps"
+                :key="step.label"
+                class="service-login-flow-step"
+                :class="{ active: step.active }"
+              >
+                <strong>{{ step.label }}</strong>
+                <span>{{ step.text }}</span>
               </div>
-              <el-tag v-if="autoRefreshing" type="success">自动刷新中</el-tag>
             </div>
+            <el-form label-position="top">
+              <el-form-item label="请输入两步验证密码">
+                <el-input v-model="tguDraft.password" type="password" placeholder="密码" show-password />
+              </el-form-item>
+              <el-button
+                type="primary"
+                class="service-login-dialog-submit"
+                :loading="isActiveTguVerifying"
+                :disabled="!canSubmitTguPassword"
+                @click="submitTguPassword"
+              >
+                提交 2FA 密码
+              </el-button>
+            </el-form>
           </div>
 
-          <div v-if="loading" class="service-login-empty">加载中...</div>
-          <div v-else-if="!requests.length" class="service-login-empty">暂无登录任务。</div>
-          <div v-else class="service-login-list">
-            <article
-              v-for="request in requests"
-              :key="request.request_id"
-              class="service-login-request"
-              :class="[
-                `service-login-platform-${request.platform || 'unknown'}`,
-                `service-login-status-${request.status || 'unknown'}`,
-              ]"
-            >
-              <div class="service-login-account">
-                <div class="service-login-status" :class="statusClass(request.status)">
-                  {{ statusText(request.status) }}
-                </div>
-                <div class="service-login-avatar" :class="request.platform === 'tg' ? 'tg' : 'wa'">
-                  {{ platformIcon(request) }}
-                </div>
-                <strong>{{ request.display_name || request.account }}</strong>
-                <span>{{ platformText(request.platform) }} · {{ request.account }}</span>
-                <small>{{ loginModeText(request.login_mode) }}</small>
-                <el-button
-                  class="service-login-delete-button"
-                  text
-                  type="danger"
-                  size="small"
-                  :icon="Delete"
-                  :loading="isDeleting(request)"
-                  @click="confirmDelete(request)"
-                >
-                  删除
-                </el-button>
+          <div v-else class="service-login-dialog-form">
+            <el-alert
+              title="登录成功，工作台 runtime worker 已保存 TG 用户号 session。"
+              type="success"
+              :closable="false"
+              class="service-login-dialog-alert"
+            />
+            <div class="service-login-flow">
+              <div
+                v-for="step in tguFlowSteps"
+                :key="step.label"
+                class="service-login-flow-step"
+                :class="{ active: step.active }"
+              >
+                <strong>{{ step.label }}</strong>
+                <span>{{ step.text }}</span>
               </div>
-
-              <div class="service-login-request-main">
-                <div class="service-login-assessment">
-                  <div>
-                    <span>运行评估:</span>
-                    <strong :class="assessmentClass(request.status)">{{ assessmentText(request) }}</strong>
-                  </div>
-                  <div>
-                    <span>过期时间:</span>
-                    <strong>{{ timeText(request.expires_at) }}</strong>
-                  </div>
-                </div>
-
-                <div class="service-login-runtime-grid">
-                  <div>
-                    <span>请求人</span>
-                    <strong>{{ request.requested_by || '-' }}</strong>
-                  </div>
-                  <div>
-                    <span>凭据提示</span>
-                    <strong>{{ request.credential_hint || '-' }}</strong>
-                  </div>
-                  <div>
-                    <span>创建时间</span>
-                    <strong>{{ timeText(request.created_at) }}</strong>
-                  </div>
-                  <div>
-                    <span>更新时间</span>
-                    <strong>{{ timeText(request.updated_at) }}</strong>
-                  </div>
-                </div>
-
-                <div v-if="request.login_mode === 'wa_qr'" class="service-login-qr">
-                  <div
-                    v-if="qrMatrices[request.request_id]"
-                    class="service-login-qr-grid"
-                    :style="{ '--qr-size': qrMatrices[request.request_id].size }"
-                    aria-label="WA 登录二维码"
-                  >
-                    <i
-                      v-for="(cell, index) in qrMatrices[request.request_id].cells"
-                      :key="`${request.request_id}-${index}`"
-                      :class="{ dark: cell }"
-                    />
-                  </div>
-                  <div v-else class="service-login-qr-pending" :class="{ expired: request.status === 'expired' }">
-                    <strong>{{ qrPlaceholderTitle(request) }}</strong>
-                    <span>{{ qrPlaceholderText(request) }}</span>
-                  </div>
-                  <span v-if="qrMatrices[request.request_id]">打开 WhatsApp 扫描二维码完成登录</span>
-                </div>
-
-                <div v-else class="service-login-credential-card">
-                  <strong>{{ tgCredentialTitle(request) }}</strong>
-                  <span>{{ tgCredentialHint(request) }}</span>
-                  <div
-                    v-if="shouldShowTgVerification(request) && verificationDrafts[request.request_id]"
-                    class="service-login-verify-form"
-                  >
-                    <el-input
-                      v-if="request.status === 'waiting_code'"
-                      v-model.trim="verificationDrafts[request.request_id].code"
-                      placeholder="Telegram 验证码"
-                      size="small"
-                    />
-                    <el-input
-                      v-if="request.status === 'waiting_password'"
-                      v-model="verificationDrafts[request.request_id].password"
-                      type="password"
-                      placeholder="Telegram 二步验证密码"
-                      show-password
-                      size="small"
-                    />
-                    <el-button
-                      type="primary"
-                      size="small"
-                      :loading="isVerifying(request)"
-                      @click="submitVerification(request)"
-                    >
-                      提交验证
-                    </el-button>
-                  </div>
-                </div>
-
-                <p v-if="request.worker_message" class="service-login-worker-message">
-                  {{ request.worker_message }}
-                </p>
-                <p v-if="request.error_message" class="service-login-error">{{ request.error_message }}</p>
-              </div>
-            </article>
+            </div>
+            <el-button type="primary" class="service-login-dialog-submit" @click="closeAddModal">
+              完成
+            </el-button>
           </div>
-        </section>
-      </section>
-    </section>
+        </el-tab-pane>
+
+        <el-tab-pane label="导入 StringSession" name="tg-session">
+          <el-form label-position="top" class="service-login-dialog-form">
+            <el-form-item label="设备标识符">
+              <el-input v-model.trim="form.account" placeholder="例如 tg_session_01 或 SessionAccount" />
+            </el-form-item>
+            <el-form-item label="展示名称">
+              <el-input v-model.trim="form.display_name" placeholder="例如 TG Session 客服号" />
+            </el-form-item>
+            <div class="service-login-form-grid service-login-tg-api-grid">
+              <el-form-item label="API ID">
+                <el-input v-model.trim="form.tg_api_id" inputmode="numeric" placeholder="从 my.telegram.org 获取" />
+              </el-form-item>
+              <el-form-item label="API Hash">
+                <el-input v-model.trim="form.tg_api_hash" type="password" placeholder="api_hash" show-password />
+              </el-form-item>
+            </div>
+            <el-form-item label="StringSession">
+              <el-input
+                v-model.trim="form.credential"
+                type="password"
+                placeholder="粘贴已生成或导出的 StringSession"
+                show-password
+              />
+            </el-form-item>
+            <el-button type="primary" class="service-login-dialog-submit" :loading="submitting" @click="submit">
+              导入并校验 Session
+            </el-button>
+          </el-form>
+        </el-tab-pane>
+      </el-tabs>
+    </el-dialog>
   </main>
 </template>
 
 <script setup>
-import { computed, onMounted, onUnmounted, reactive, ref } from 'vue';
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import { Delete } from '@element-plus/icons-vue';
 import QRCodeModel from 'qrcode-terminal/vendor/QRCode/index.js';
@@ -328,6 +455,14 @@ const verifyingIds = ref(new Set());
 const verificationDrafts = reactive({});
 const showCredential = ref(false);
 const qrMatrices = reactive({});
+const addModalVisible = ref(false);
+const activeTab = ref('wa');
+const tguStep = ref(1);
+const activeTguRequestId = ref('');
+const tguDraft = reactive({
+  code: '',
+  password: '',
+});
 let refreshTimer = null;
 
 const activeStatuses = new Set(['requested', 'waiting_qr', 'waiting_verification', 'waiting_code', 'waiting_password']);
@@ -358,7 +493,7 @@ const createPanelHint = computed(() => (
 ));
 const submitHint = computed(() => {
   if (form.login_mode === 'wa_qr') return '提交后等待 WA worker 回写二维码，页面会自动刷新。';
-  if (form.login_mode === 'tg_user_phone') return '提交后由 TG worker 发送验证码，下一步在任务卡片里输入验证码。';
+  if (form.login_mode === 'tg_user_phone') return '提交后由 TG worker 发送验证码，下一步在弹窗内输入验证码。';
   if (form.login_mode === 'tg_user_session') return '提交后由 TG worker 用 API ID/Hash 校验 Session 并接管账号。';
   return '提交后由 TG worker 校验并接管登录，页面只显示脱敏提示。';
 });
@@ -390,6 +525,12 @@ const flowSteps = computed(() => {
     { label: '3', text: '同步服务账号档案', active: false },
   ];
 });
+const tguFlowSteps = computed(() => [
+  { label: '1', text: '填写 API ID/Hash 和手机号', active: tguStep.value === 1 },
+  { label: '2', text: '输入 Telegram 验证码', active: tguStep.value === 2 },
+  { label: '3', text: '按需提交二步验证密码', active: tguStep.value === 3 },
+  { label: '4', text: '生成 Session 并接入工作台', active: tguStep.value === 4 },
+]);
 const loginSummary = computed(() => {
   const summary = {
     total: requests.value.length,
@@ -405,6 +546,35 @@ const loginSummary = computed(() => {
   return summary;
 });
 const autoRefreshing = computed(() => requests.value.some((request) => activeStatuses.has(request.status)));
+const activeTguRequest = computed(() => (
+  requests.value.find((request) => request.request_id === activeTguRequestId.value) || null
+));
+const isActiveTguVerifying = computed(() => (
+  Boolean(activeTguRequest.value) && isVerifying(activeTguRequest.value)
+));
+const canSubmitTguCode = computed(() => (
+  activeTguRequest.value?.status === 'waiting_code' && Boolean(String(tguDraft.code || '').trim())
+));
+const canSubmitTguPassword = computed(() => (
+  activeTguRequest.value?.status === 'waiting_password' && Boolean(String(tguDraft.password || ''))
+));
+const tguStepAlertTitle = computed(() => {
+  const request = activeTguRequest.value;
+  if (!request) return '登录任务已提交，正在等待工作台 worker 发送验证码。';
+  if (request.status === 'waiting_code') return request.worker_message || '验证码已发送至手机或其它在线设备。';
+  if (request.status === 'waiting_verification') return request.worker_message || '验证信息已提交，正在等待 TG worker 返回结果。';
+  if (request.status === 'failed') return request.error_message || request.worker_message || 'TG 用户号验证码发送失败。';
+  if (request.status === 'expired') return '登录任务已过期，请重新发起。';
+  return request.worker_message || '工作台 worker 正在处理 TG 用户号登录。';
+});
+const tguStepAlertType = computed(() => {
+  const status = activeTguRequest.value?.status;
+  if (status === 'failed') return 'error';
+  if (status === 'expired' || status === 'canceled') return 'warning';
+  return 'success';
+});
+
+watch(activeTab, applyActiveTab);
 
 onMounted(async () => {
   await loadRequests();
@@ -413,6 +583,60 @@ onMounted(async () => {
 onUnmounted(() => {
   stopAutoRefresh();
 });
+
+function openAddModal() {
+  if (!addModalVisible.value) resetCreateForm();
+  addModalVisible.value = true;
+  applyActiveTab();
+}
+
+function closeAddModal() {
+  addModalVisible.value = false;
+}
+
+function resetCreateFlow() {
+  if (submitting.value) return;
+  activeTab.value = 'wa';
+  resetCreateForm();
+}
+
+function resetCreateForm() {
+  form.platform = 'wa';
+  form.login_mode = 'wa_qr';
+  form.account = '';
+  form.display_name = '';
+  form.credential = '';
+  form.tg_api_id = '';
+  form.tg_api_hash = '';
+  form.tg_phone_number = '';
+  tguStep.value = 1;
+  activeTguRequestId.value = '';
+  tguDraft.code = '';
+  tguDraft.password = '';
+}
+
+function applyActiveTab() {
+  if (activeTab.value === 'wa') {
+    form.platform = 'wa';
+    form.login_mode = 'wa_qr';
+  } else if (activeTab.value === 'tg-bot') {
+    form.platform = 'tg';
+    form.login_mode = 'tg_bot_token';
+  } else if (activeTab.value === 'tgu') {
+    form.platform = 'tg';
+    form.login_mode = 'tg_user_phone';
+  } else if (activeTab.value === 'tg-session') {
+    form.platform = 'tg';
+    form.login_mode = 'tg_user_session';
+  }
+  handleLoginModeChange();
+  if (form.login_mode !== 'tg_user_phone') {
+    tguStep.value = 1;
+    activeTguRequestId.value = '';
+    tguDraft.code = '';
+    tguDraft.password = '';
+  }
+}
 
 function handlePlatformChange() {
   form.login_mode = form.platform === 'wa' ? 'wa_qr' : 'tg_user_phone';
@@ -440,6 +664,7 @@ async function loadRequests() {
     requests.value = await fetchServiceAccountLoginRequests();
     renderQrMatrices();
     syncVerificationDrafts();
+    syncTguDialogFlow();
     syncAutoRefresh();
   } catch (err) {
     ElMessage.error('无法加载登录任务');
@@ -493,9 +718,20 @@ async function submit() {
       ];
       renderQrMatrices();
       syncVerificationDrafts();
+      if (created.login_mode === 'tg_user_phone') {
+        activeTguRequestId.value = created.request_id;
+        tguStep.value = 2;
+      }
+      syncTguDialogFlow();
       syncAutoRefresh();
     }
-    ElMessage.success('登录任务已创建');
+    if (form.login_mode === 'tg_user_phone') {
+      ElMessage.success('验证码发送任务已提交');
+    } else {
+      ElMessage.success('登录任务已创建');
+      addModalVisible.value = false;
+      resetCreateForm();
+    }
     await loadRequests().catch(() => {
       ElMessage.warning('登录任务已创建，但列表刷新失败，请稍后手动刷新页面');
     });
@@ -504,6 +740,67 @@ async function submit() {
   } finally {
     submitting.value = false;
   }
+}
+
+function openRelogin(request) {
+  if (!request) return;
+  activeTab.value = request.login_mode === 'wa_qr'
+    ? 'wa'
+    : request.login_mode === 'tg_bot_token'
+      ? 'tg-bot'
+      : request.login_mode === 'tg_user_session'
+        ? 'tg-session'
+        : 'tgu';
+  applyActiveTab();
+  form.account = request.account || '';
+  form.display_name = request.display_name || request.account || '';
+  form.credential = '';
+  form.tg_api_hash = '';
+  form.tg_phone_number = '';
+  tguStep.value = 1;
+  activeTguRequestId.value = '';
+  addModalVisible.value = true;
+}
+
+function returnToTguStart() {
+  tguStep.value = 1;
+  activeTguRequestId.value = '';
+  tguDraft.code = '';
+  tguDraft.password = '';
+}
+
+async function submitTguCode() {
+  await submitTguDialogVerification('code');
+}
+
+async function submitTguPassword() {
+  await submitTguDialogVerification('password');
+}
+
+async function submitTguDialogVerification(kind) {
+  const request = activeTguRequest.value;
+  if (!request) {
+    ElMessage.warning('未找到当前 TG 用户号登录任务');
+    return;
+  }
+  if (kind === 'code' && request.status !== 'waiting_code') {
+    ElMessage.warning('请等待 Telegram 验证码发送完成');
+    return;
+  }
+  if (kind === 'password' && request.status !== 'waiting_password') {
+    ElMessage.warning('请等待二步验证状态');
+    return;
+  }
+  const draft = verificationDrafts[request.request_id] || { code: '', password: '' };
+  if (kind === 'code') {
+    draft.code = tguDraft.code;
+    draft.password = '';
+  } else {
+    draft.code = '';
+    draft.password = tguDraft.password;
+  }
+  verificationDrafts[request.request_id] = draft;
+  await submitVerification(request);
 }
 
 async function submitVerification(request) {
@@ -606,6 +903,22 @@ function syncVerificationDrafts() {
   });
 }
 
+function syncTguDialogFlow() {
+  const request = activeTguRequest.value;
+  if (!request) return;
+  if (request.status === 'waiting_code') {
+    tguStep.value = 2;
+  } else if (request.status === 'waiting_password') {
+    tguStep.value = 3;
+  } else if (request.status === 'authenticated') {
+    tguStep.value = 4;
+    tguDraft.code = '';
+    tguDraft.password = '';
+  } else if (request.status === 'failed' || request.status === 'expired' || request.status === 'canceled') {
+    tguStep.value = Math.max(2, tguStep.value);
+  }
+}
+
 function renderQrMatrices() {
   const nextKeys = new Set();
   requests.value.forEach((request) => {
@@ -665,6 +978,14 @@ function platformIcon(request) {
   if (request.platform === 'wa') return 'WA';
   if (request.login_mode === 'tg_user_session' || request.login_mode === 'tg_user_phone') return 'TG';
   return 'BOT';
+}
+
+function accountKindText(request) {
+  if (request.platform === 'wa') return 'WhatsApp';
+  if (request.login_mode === 'tg_bot_token') return 'Telegram Bot';
+  if (request.login_mode === 'tg_user_session') return 'TG StringSession';
+  if (request.login_mode === 'tg_user_phone') return 'TG 用户号';
+  return platformText(request.platform);
 }
 
 function loginModeText(mode) {
