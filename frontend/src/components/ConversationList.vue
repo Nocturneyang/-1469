@@ -11,16 +11,6 @@
       </button>
     </div>
 
-    <div v-if="selectedCount" class="bulk-toolbar">
-      <strong>已选 {{ selectedCount }}</strong>
-      <button type="button" @click="emit('bulk-action', 'mark_read')">标已读</button>
-      <button type="button" @click="emit('bulk-action', 'assign')">认领</button>
-      <button type="button" @click="emit('bulk-action', 'status_in_progress')">跟进中</button>
-      <button type="button" @click="emit('bulk-action', 'status_resolved')">已解决</button>
-      <button type="button" @click="emit('bulk-action', 'star')">星标</button>
-      <button type="button" @click="emit('bulk-action', 'add_tags')">套用标签</button>
-    </div>
-
     <div v-if="loading" class="list-state">加载中...</div>
     <div v-else-if="!groups.length" class="list-state">暂无会话</div>
 
@@ -30,18 +20,9 @@
         :key="group.id"
         type="button"
         class="conversation-row"
-        :class="{ selected: selectedId === group.id, 'bulk-selected': isBulkSelected(group) }"
+        :class="{ selected: selectedId === group.id }"
         @click="$emit('select', group)"
       >
-        <span
-          class="bulk-check"
-          :class="{ checked: isBulkSelected(group) }"
-          role="checkbox"
-          :aria-checked="isBulkSelected(group)"
-          @click.stop="emit('bulk-toggle', group)"
-        >
-          <el-icon v-if="isBulkSelected(group)"><Check /></el-icon>
-        </span>
         <div class="platform-icon" :class="platformClass(group.platform)">
           {{ platformShort(group.platform) }}
         </div>
@@ -78,8 +59,7 @@
 </template>
 
 <script setup>
-import { computed } from 'vue';
-import { Check, Folder, Sort } from '@element-plus/icons-vue';
+import { Folder, Sort } from '@element-plus/icons-vue';
 import { formatTime, platformClass } from '../utils/format';
 
 const props = defineProps({
@@ -99,14 +79,9 @@ const props = defineProps({
     type: String,
     default: '全部',
   },
-  selectedBulkIds: {
-    type: Array,
-    default: () => [],
-  },
 });
 
-const emit = defineEmits(['select', 'refresh', 'bulk-toggle', 'bulk-action']);
-const selectedCount = computed(() => props.selectedBulkIds.length);
+defineEmits(['select', 'refresh']);
 
 function platformShort(platform) {
   if (platform === 'wa') return 'W';
@@ -140,10 +115,6 @@ function presenceText(group) {
   const typing = active.find((row) => row.mode === 'typing');
   if (typing) return `${typing.actor_name || typing.operator_id} 正在输入`;
   return `${active[0].actor_name || active[0].operator_id} 正在查看`;
-}
-
-function isBulkSelected(group) {
-  return props.selectedBulkIds.includes(group.id);
 }
 
 function statusText(status) {

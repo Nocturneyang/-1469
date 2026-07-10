@@ -54,11 +54,8 @@
           :loading="loadingGroups"
           :selected-id="selectedGroup && selectedGroup.id"
           :scope-label="scopeLabel"
-          :selected-bulk-ids="selectedBulkIds"
           @select="selectGroup"
           @refresh="loadGroups"
-          @bulk-toggle="handleBulkToggle"
-          @bulk-action="handleBulkAction"
         />
 
         <div class="thread-shell">
@@ -123,7 +120,6 @@ import Composer from './components/Composer.vue';
 import ConversationInspector from './components/ConversationInspector.vue';
 import {
   assignGroup,
-  bulkGroupAction,
   cancelOutbound,
   createClientMsgId,
   createGroupNote,
@@ -176,7 +172,6 @@ const messageFilters = ref({
   date_to: '',
   has_attachment: false,
 });
-const selectedBulkIds = ref([]);
 const loadingGroups = ref(false);
 const loadingOlder = ref(false);
 const stickToBottom = ref(true);
@@ -348,7 +343,6 @@ watch(
     clearTimeout(searchTimer);
     clearPresence();
     selectedGroup.value = null;
-    selectedBulkIds.value = [];
     quoteMessage.value = null;
     pendingReadProgress = null;
     clearTimeout(readProgressTimer);
@@ -400,7 +394,6 @@ async function loadGroups({ silent = false, clearSelectionOnMissing = false } = 
       noServiceAccount.value = true;
     }
     groups.value = nextGroups;
-    selectedBulkIds.value = selectedBulkIds.value.filter((id) => nextGroups.some((group) => group.id === id));
     if (!selectedGroup.value) return;
     const currentGroup = nextGroups.find((group) => group.id === selectedGroup.value.id);
     if (currentGroup) {
@@ -839,59 +832,6 @@ function clearPresence(group = selectedGroup.value) {
   if (!group) return;
   updateGroupPresence(group, 'viewing', false).catch(() => {});
   updateGroupPresence(group, 'typing', false).catch(() => {});
-}
-
-function handleBulkToggle(group) {
-  if (!group) return;
-  const ids = new Set(selectedBulkIds.value);
-  if (ids.has(group.id)) ids.delete(group.id);
-  else ids.add(group.id);
-  selectedBulkIds.value = [...ids];
-}
-
-async function handleBulkAction(action) {
-  const selectedGroups = groups.value.filter((group) => selectedBulkIds.value.includes(group.id));
-  if (!selectedGroups.length) return;
-  const payload = {};
-  let actionName = action;
-  if (action === 'assign') payload.assigned_to = currentOperatorId.value;
-  if (action === 'status_in_progress') {
-    actionName = 'status';
-    payload.status = 'in_progress';
-  }
-  if (action === 'status_resolved') {
-    actionName = 'status';
-    payload.status = 'resolved';
-  }
-  if (action === 'star') payload.starred = true;
-  if (action === 'add_tags') {
-    const manualIds = selectedManualGroupIds(selectedGroup.value);
-    if (!manualIds.length) {
-      ElMessage.warning('请先在当前会话右侧选择至少一个工作台标签');
-      return;
-    }
-    payload.manual_group_ids = manualIds;
-  }
-  try {
-    const result = await bulkGroupAction(actionName, selectedGroups.map(bulkItemFromGroup), payload);
-    selectedBulkIds.value = [];
-    await loadLabels();
-    await loadManualGroups();
-    await loadGroups({ silent: true, clearSelectionOnMissing: true });
-    if (selectedGroup.value) await loadWorkspace({ silent: true });
-    ElMessage.success(`批量处理完成：${result.changed}/${result.requested}`);
-  } catch (err) {
-    ElMessage.error('批量处理失败');
-  }
-}
-
-function bulkItemFromGroup(group) {
-  return {
-    platform: group.platform,
-    account: group.account,
-    group_id: group.group_id,
-    last_message_id: group.last_message_id,
-  };
 }
 
 async function handleMarkRead() {

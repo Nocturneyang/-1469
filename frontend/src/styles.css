@@ -1921,41 +1921,6 @@ button {
   font-weight: 760;
 }
 
-.bulk-toolbar {
-  position: sticky;
-  top: 58px;
-  z-index: 2;
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 7px;
-  padding: 9px 12px;
-  border-bottom: 1px solid var(--line-soft);
-  background: rgba(247, 250, 248, 0.98);
-}
-
-.bulk-toolbar strong {
-  margin-right: 2px;
-  color: var(--accent-strong);
-  font-size: 12px;
-}
-
-.bulk-toolbar button {
-  min-height: 26px;
-  border: 1px solid var(--line);
-  border-radius: 7px;
-  padding: 0 8px;
-  background: var(--surface);
-  color: var(--text);
-  font-size: 12px;
-  font-weight: 640;
-}
-
-.bulk-toolbar button:hover {
-  border-color: rgba(5, 150, 105, 0.32);
-  color: var(--accent-strong);
-}
-
 .sort-button {
   margin-left: auto;
   border: 0;
@@ -1973,7 +1938,7 @@ button {
   width: 100%;
   min-height: 116px;
   display: grid;
-  grid-template-columns: 24px 38px minmax(0, 1fr);
+  grid-template-columns: 38px minmax(0, 1fr);
   gap: 12px;
   padding: 14px 16px;
   border: 0;
@@ -1984,10 +1949,6 @@ button {
 
 .conversation-row.selected {
   background: linear-gradient(90deg, rgba(5, 150, 105, 0.11), rgba(255, 255, 255, 0.96) 64%);
-}
-
-.conversation-row.bulk-selected {
-  background: #f1fbf4;
 }
 
 .conversation-row.selected::before {
@@ -2002,28 +1963,6 @@ button {
 
 .conversation-row:hover {
   background: var(--surface-soft);
-}
-
-.bulk-check {
-  width: 20px;
-  height: 20px;
-  align-self: start;
-  margin-top: 7px;
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  background: var(--surface);
-  color: #fff;
-  display: inline-grid;
-  place-items: center;
-}
-
-.bulk-check.checked {
-  border-color: var(--accent);
-  background: var(--accent);
-}
-
-.bulk-check .el-icon {
-  font-size: 13px;
 }
 
 .platform-icon {
