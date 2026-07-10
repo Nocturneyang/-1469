@@ -114,14 +114,18 @@ export async function hydrateWorkbenchAuth(options = {}) {
   const hasTokenInUrl = params.has('token') || params.has('satoken') || params.has('access_token');
   const hydratedAt = Number(window.localStorage.getItem('sso_hydrated_at') || 0);
   const storedUser = readStoredAuthUser();
-  if (!hasTokenInUrl && storedUser && Date.now() - hydratedAt < SSO_HYDRATE_TTL_MS) {
+  const storedToken = window.localStorage.getItem('auth_token') || window.localStorage.getItem('sso_token') || '';
+  if (!hasTokenInUrl && storedUser && storedToken && Date.now() - hydratedAt < SSO_HYDRATE_TTL_MS) {
     return storedUser;
   }
   if (ssoHydratePromise) return ssoHydratePromise;
 
   const token = getSsoTokenFromUrl();
   const headers = {};
-  if (token) headers.Authorization = `Bearer ${token}`;
+  if (token) {
+    headers.Authorization = `Bearer ${token}`;
+    headers.satoken = token;
+  }
 
   ssoHydratePromise = fetch('/token/userinfo', {
     method: 'GET',
@@ -174,7 +178,12 @@ api.interceptors.request.use((config) => {
 api.interceptors.response.use(
   (response) => response,
   async (error) => {
-    if (error.response && error.response.status === 401) {
+    const status = error.response && error.response.status;
+    const detail = String(error.response?.data?.error || '');
+    const invalidAuth = status === 401 || (
+      status === 403 && /Forbidden \(Token invalid or expired\)/i.test(detail)
+    );
+    if (invalidAuth) {
       clearAuthStorage();
       await redirectToSsoOrHome();
     }

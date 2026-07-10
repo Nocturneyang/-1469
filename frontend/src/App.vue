@@ -239,6 +239,8 @@ let workspaceRequestSeq = 0;
 let groupsRequestSeq = 0;
 let messageRequestSeq = 0;
 const messageCache = new Map();
+let bootstrapRetryTimer = null;
+let bootstrapRetryCount = 0;
 let presenceHeartbeatTimer = null;
 let typingPresenceTimer = null;
 const readProgressByGroup = new Map();
@@ -282,6 +284,7 @@ onBeforeUnmount(() => {
   clearTimeout(searchTimer);
   clearTimeout(readProgressTimer);
   clearTimeout(typingPresenceTimer);
+  clearTimeout(bootstrapRetryTimer);
   stopPresenceHeartbeat();
   clearPresence();
   stopAutoRefresh();
@@ -293,6 +296,17 @@ async function bootstrapWorkbench() {
   if (workbenchBootstrapped.value) return;
   workbenchBootstrapped.value = true;
   const me = await fetchMe().catch(() => null);
+  if (!me) {
+    workbenchBootstrapped.value = false;
+    if (!isAuthRedirecting() && bootstrapRetryCount < 3) {
+      bootstrapRetryCount += 1;
+      bootstrapRetryTimer = setTimeout(() => {
+        bootstrapWorkbench().catch(() => {});
+      }, 800);
+    }
+    return;
+  }
+  bootstrapRetryCount = 0;
   currentUser.value = me?.user || null;
   if (me && me.operator) {
     currentOperator.value = {
