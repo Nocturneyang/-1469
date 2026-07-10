@@ -80,6 +80,12 @@
           <span>接入方式</span>
           <strong>{{ methodText(account.platform) }}</strong>
         </div>
+
+        <div v-if="!isReady(account)" class="service-access-card-actions">
+          <el-button type="danger" plain size="small" @click="$emit('delete-account', account)">
+            删除残留账号
+          </el-button>
+        </div>
       </article>
 
       <section v-if="!accounts.length" class="service-access-empty">
@@ -104,7 +110,7 @@ const props = defineProps({
   },
 });
 
-defineEmits(['back', 'open-login']);
+defineEmits(['back', 'open-login', 'delete-account']);
 
 const readyStatuses = new Set(['online', 'authenticated', 'ready', 'monitoring', 'healthy']);
 

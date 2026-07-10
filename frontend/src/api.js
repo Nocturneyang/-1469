@@ -251,6 +251,11 @@ export async function deleteServiceAccountLoginRequest(requestId) {
   return data.request;
 }
 
+export async function deleteServiceAccount(platform, account) {
+  const { data } = await api.delete(`/accounts/${encodeURIComponent(platform)}/${encodeURIComponent(account)}`);
+  return data;
+}
+
 export async function fetchMessages(group, params = {}) {
   const { data } = await api.get(`/groups/${encodeURIComponent(group.group_id)}/messages`, {
     params: {

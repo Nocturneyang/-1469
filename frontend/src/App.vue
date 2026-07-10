@@ -15,6 +15,7 @@
     :account-scope="accountScope"
     @back="goWorkbench"
     @open-login="openServiceLogin"
+    @delete-account="handleDeleteServiceAccount"
   />
 
   <ServiceAccountLogin v-else-if="currentView === 'serviceLogin'" @back="goWorkbench" />
@@ -107,7 +108,7 @@
 
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
-import { ElMessage } from 'element-plus';
+import { ElMessage, ElMessageBox } from 'element-plus';
 import AccountSettings from './components/AccountSettings.vue';
 import PermissionConfig from './components/PermissionConfig.vue';
 import ServiceAccountAccess from './components/ServiceAccountAccess.vue';
@@ -125,6 +126,7 @@ import {
   createGroupNote,
   createManualGroup,
   createReply,
+  deleteServiceAccount,
   fetchAccounts,
   fetchGroupWorkspace,
   fetchGroups,
@@ -603,6 +605,26 @@ function clearServiceAccount() {
     accountKeys: [],
     labelId: '',
   };
+}
+
+async function handleDeleteServiceAccount(account) {
+  if (!account || isConnectedAccount(account)) return;
+  const label = account.account_display_name || account.account;
+  try {
+    await ElMessageBox.confirm(
+      `将永久删除 ${label}（${account.account}）及其登录任务、会话数据和本地 session。此操作不可恢复。`,
+      '删除未接入账号',
+      { confirmButtonText: '永久删除', cancelButtonText: '取消', type: 'warning' },
+    );
+    await deleteServiceAccount(account.platform, account.account);
+    accounts.value = accounts.value.filter((item) => accountKey(item) !== accountKey(account));
+    if (filters.value.accountKeys.includes(accountKey(account))) clearServiceAccount();
+    await Promise.all([loadLabels(), loadManualGroups(), loadGroups({ silent: true })]);
+    ElMessage.success('残留服务账号已删除');
+  } catch (err) {
+    if (err === 'cancel' || err === 'close') return;
+    ElMessage.error('删除失败，请稍后重试');
+  }
 }
 
 function toggleServiceRail() {

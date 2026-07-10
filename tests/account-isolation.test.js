@@ -172,6 +172,13 @@ async function main() {
     assert.strictEqual(released.released, 1);
     assertAccountWorkbenchRow(accountDataDir, 'wa', 'wa-isolated', 'group_assignments', 1);
     assertGlobalWorkbenchRowCount(workbenchDbPath, 'group_assignments', 0);
+
+    const removedAccount = await requestJson(`${baseUrl}/accounts/wa/${encodeURIComponent('wa-isolated')}`, {
+      method: 'DELETE',
+    });
+    assert.strictEqual(removedAccount.ok, true);
+    assert.strictEqual(removedAccount.account, 'wa-isolated');
+    assert.strictEqual(fs.existsSync(path.join(accountDataDir, 'wa', 'wa-isolated')), false);
   } finally {
     await close(server);
     workbenchDb.close();

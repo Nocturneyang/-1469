@@ -648,6 +648,11 @@ button {
   background: var(--surface-soft);
 }
 
+.service-access-card-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
 .service-access-empty {
   min-height: 180px;
   display: grid;

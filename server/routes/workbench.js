@@ -302,6 +302,26 @@ function createWorkbenchRouter({ workbenchDb, runtimeDb, rawDbPath = DEFAULT_RAW
     res.json({ ok: true, request });
   });
 
+  router.delete('/accounts/:platform/:account', requireAdmin, (req, res) => {
+    const operator = currentOperatorContext(workbenchDb, req);
+    const platform = requirePlatform(req.params.platform);
+    const account = requireText(req.params.account, 'account');
+    const accountScope = getAccountScope();
+    const manageAccountScope = allowedAccountScope(workbenchDb, operator, accountScope, 'can_manage');
+    requireVisibleAccount(manageAccountScope, platform, account);
+    const exists = accountData.listAccounts({ accountScope: manageAccountScope })
+      .some((item) => item.platform === platform && item.account === account);
+    if (!exists) throw createHttpError(404, 'service account not found');
+
+    const deleted_account_data = accountData.deleteServiceAccountData({ platform, account }, {
+      outboxDir: doorbellRoot,
+    });
+    writeAction(workbenchDb, operator.id, 'service_account.delete', platform, account, null, account, {
+      deleted_account_data,
+    });
+    res.json({ ok: true, platform, account, deleted_account_data });
+  });
+
   router.get('/channel-labels', (req, res) => {
     const accountScope = getAccountScope();
     const operator = currentOperatorContext(workbenchDb, req);
