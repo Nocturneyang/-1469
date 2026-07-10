@@ -12,7 +12,13 @@ const DEFAULT_WORKBENCH_DB_PATH =
   resolveDbPath('WORKBENCH_DB_PATH', 'workbench.sqlite');
 const schemaPath = path.join(__dirname, 'schema.sql');
 
-function openWorkbenchDb(dbPath = DEFAULT_WORKBENCH_DB_PATH) {
+function openWorkbenchDb(dbPath = DEFAULT_WORKBENCH_DB_PATH, options = {}) {
+  if (options.readonly) {
+    const db = new Database(dbPath, { readonly: true, fileMustExist: true });
+    // 列表查询和渠道 worker 会并发访问账号库；读连接不应参与迁移或抢写锁。
+    db.pragma('busy_timeout = 3000');
+    return db;
+  }
   ensureDirectory(dbPath);
   const db = new Database(dbPath);
   db.pragma('journal_mode = WAL');

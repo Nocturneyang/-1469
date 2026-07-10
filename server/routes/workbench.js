@@ -1085,6 +1085,9 @@ function createWorkbenchRouter({ workbenchDb, runtimeDb, rawDbPath = DEFAULT_RAW
   router.use((err, req, res, next) => {
     if (!err) return next();
     const status = err.statusCode || err.status || 500;
+    if (status >= 500) {
+      console.error(`[workbench] ${req.method} ${req.originalUrl || req.url} failed:`, err.message);
+    }
     res.status(status).json({
       ok: false,
       error: status >= 500 ? 'internal_error' : err.message,
@@ -1641,10 +1644,8 @@ function saveConversationPresence(db, platform, account, groupId, operatorId, mo
 }
 
 function loadPresenceMap(db, centralDb) {
-  db.prepare(`
-    DELETE FROM conversation_presence
-    WHERE datetime(expires_at) <= datetime('now')
-  `).run();
+  // 列表刷新是高频只读路径。过期状态由查询条件排除，不在这里清理，
+  // 否则每次打开/刷新会话都会把读取升级为写入并和 worker 争 SQLite 锁。
   const map = new Map();
   const actorNames = loadOperatorNameMap(centralDb);
   const rows = db.prepare(`
@@ -2450,7 +2451,7 @@ function deleteAdminOperator(db, operatorId, currentOperatorId, accountData) {
   };
 
   if (accountData?.isolated) {
-    accountData.mapWorkbenchDbs({}, releaseAssignments);
+    accountData.mapWorkbenchDbs({ writable: true }, releaseAssignments);
   }
 
   db.transaction(() => {

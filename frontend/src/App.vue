@@ -193,6 +193,8 @@ const CHANNEL_REFRESH_MS = 700;
 const CHANNEL_REFRESH_MAX_ATTEMPTS = 20;
 const MESSAGE_PAGE_LIMIT = 60;
 const MESSAGE_CACHE_LIMIT = 24;
+const WORKBENCH_CACHE_TTL_MS = 10 * 60 * 1000;
+const WORKBENCH_GROUP_CACHE_TTL_MS = 2 * 60 * 1000;
 const LIVE_OUTBOUND_STATUSES = new Set(['pending', 'sending']);
 const CONNECTED_ACCOUNT_STATUSES = new Set(['online', 'authenticated', 'ready', 'monitoring', 'healthy']);
 const currentOperatorId = computed(() => (
@@ -238,6 +240,9 @@ let messageRequestSeq = 0;
 const messageCache = new Map();
 let bootstrapRetryTimer = null;
 let bootstrapRetryCount = 0;
+let activeCacheUserId = '';
+let cacheWriteTimer = null;
+let restoringWorkbenchCache = false;
 let presenceHeartbeatTimer = null;
 let typingPresenceTimer = null;
 const readProgressByGroup = new Map();
@@ -272,6 +277,7 @@ onMounted(async () => {
   const authUser = await hydrateWorkbenchAuth();
   if (!authUser && isAuthRedirecting()) return;
   if (currentView.value === 'admin') return;
+  hydrateWorkbenchCache(authUser);
   await bootstrapWorkbench();
 });
 
@@ -282,6 +288,7 @@ onBeforeUnmount(() => {
   clearTimeout(readProgressTimer);
   clearTimeout(typingPresenceTimer);
   clearTimeout(bootstrapRetryTimer);
+  clearTimeout(cacheWriteTimer);
   stopPresenceHeartbeat();
   clearPresence();
   stopAutoRefresh();
@@ -305,6 +312,7 @@ async function bootstrapWorkbench() {
   }
   bootstrapRetryCount = 0;
   currentUser.value = me?.user || null;
+  activeCacheUserId = cacheUserId(currentUser.value);
   if (me && me.operator) {
     currentOperator.value = {
       ...me.operator,
@@ -317,15 +325,19 @@ async function bootstrapWorkbench() {
       ...me.portal_access,
     };
   }
-  const health = await fetchHealth().catch(() => null);
-  if (health && health.account_scope) {
-    accountScope.value = health.account_scope;
-  }
-  accounts.value = await fetchAccounts().catch(() => []);
+  const [health, nextAccounts] = await Promise.all([
+    fetchHealth().catch(() => null),
+    fetchAccounts().catch(() => null),
+  ]);
+  if (health && health.account_scope) accountScope.value = health.account_scope;
+  if (Array.isArray(nextAccounts)) accounts.value = nextAccounts;
   syncPlatformFilterWithScope({ preferMessageAccounts: true });
-  await loadLabels();
-  await loadManualGroups();
-  await loadGroups();
+  await Promise.all([
+    loadLabels(),
+    loadManualGroups(),
+    loadGroups({ useRetry: true }),
+  ]);
+  scheduleWorkbenchCacheWrite();
   startAutoRefresh();
 }
 
@@ -342,6 +354,7 @@ watch(() => [activeLabelPlatform.value, selectedAccountParam.value || ''], async
 watch(
   () => ({ ...filters.value, platforms: [...filters.value.platforms] }),
   () => {
+    if (restoringWorkbenchCache) return;
     clearTimeout(searchTimer);
     clearPresence();
     selectedGroup.value = null;
@@ -373,19 +386,22 @@ watch(
   },
 );
 
-async function loadGroups({ silent = false, clearSelectionOnMissing = false } = {}) {
+async function loadGroups({ silent = false, clearSelectionOnMissing = false, useRetry = false } = {}) {
   const requestSeq = ++groupsRequestSeq;
-  if (!silent) loadingGroups.value = true;
+  if (!silent && !groups.value.length) loadingGroups.value = true;
   error.value = '';
   noServiceAccount.value = false;
   try {
-    const { groups: nextGroups, account_scope } = await fetchGroups({
+    const request = () => fetchGroups({
       platforms: filters.value.platforms.join(','),
       accounts: selectedAccountParam.value,
       scope: filters.value.scope,
       label_id: filters.value.labelId || undefined,
       search: filters.value.search || undefined,
     });
+    const { groups: nextGroups, account_scope } = useRetry
+      ? await retryTransientRequest(request)
+      : await request();
     if (requestSeq !== groupsRequestSeq) return;
     // 检测无服务账号配置（mode=operator-no-workbench 或帐号列表为空）
     if (
@@ -396,6 +412,7 @@ async function loadGroups({ silent = false, clearSelectionOnMissing = false } = 
       noServiceAccount.value = true;
     }
     groups.value = nextGroups;
+    scheduleWorkbenchCacheWrite();
     if (!selectedGroup.value) return;
     const currentGroup = nextGroups.find((group) => group.id === selectedGroup.value.id);
     if (currentGroup) {
@@ -405,7 +422,8 @@ async function loadGroups({ silent = false, clearSelectionOnMissing = false } = 
     }
   } catch (err) {
     if (isAuthRedirecting()) return;
-    error.value = '工作台 API 暂不可用，请检查服务状态';
+    // 缓存仍可使用时保持作业面，不把瞬时数据锁竞争误报成整个平台不可用。
+    if (!groups.value.length) error.value = '会话数据暂时无法刷新，正在自动重试';
   } finally {
     if (requestSeq === groupsRequestSeq) loadingGroups.value = false;
   }
@@ -414,13 +432,14 @@ async function loadGroups({ silent = false, clearSelectionOnMissing = false } = 
 async function loadLabels() {
   const requestSeq = ++labelRequestSeq;
   const platform = activeLabelPlatform.value;
-  labels.value = [];
   const nextLabels = await fetchLabels({
     ...(platform ? { platform } : {}),
     ...(selectedAccountParam.value ? { accounts: selectedAccountParam.value } : {}),
-  }).catch(() => []);
+  }).catch(() => null);
   if (requestSeq !== labelRequestSeq) return;
+  if (!Array.isArray(nextLabels)) return;
   labels.value = nextLabels;
+  scheduleWorkbenchCacheWrite();
   if (filters.value.labelId && !hasLabel(nextLabels, filters.value.labelId)) {
     filters.value = { ...filters.value, labelId: '' };
   }
@@ -428,10 +447,98 @@ async function loadLabels() {
 
 async function loadManualGroups() {
   const platform = activeLabelPlatform.value;
-  manualGroups.value = await fetchManualGroups({
+  const nextGroups = await fetchManualGroups({
     ...(platform ? { platform } : {}),
     ...(selectedAccountParam.value ? { accounts: selectedAccountParam.value } : {}),
-  }).catch(() => []);
+  }).catch(() => null);
+  if (Array.isArray(nextGroups)) manualGroups.value = nextGroups;
+  scheduleWorkbenchCacheWrite();
+}
+
+function isTransientApiError(err) {
+  const status = Number(err?.response?.status || 0);
+  return !status || status >= 500 || ['ECONNABORTED', 'ERR_NETWORK'].includes(String(err?.code || ''));
+}
+
+async function retryTransientRequest(request, attempts = 3) {
+  let lastError;
+  for (let index = 0; index < attempts; index += 1) {
+    try {
+      return await request();
+    } catch (err) {
+      lastError = err;
+      if (!isTransientApiError(err) || index === attempts - 1) throw err;
+      await new Promise((resolve) => setTimeout(resolve, 350 * (index + 1)));
+    }
+  }
+  throw lastError;
+}
+
+function cacheUserId(user) {
+  return String(user?.id || user?.username || '').trim();
+}
+
+function workbenchCacheKey(userId = activeCacheUserId) {
+  return userId ? `workbench.bootstrap.v1.${userId}` : '';
+}
+
+function hydrateWorkbenchCache(user) {
+  const userId = cacheUserId(user);
+  const key = workbenchCacheKey(userId);
+  if (!key) return;
+  try {
+    const snapshot = JSON.parse(window.localStorage.getItem(key) || 'null');
+    if (!snapshot || Date.now() - Number(snapshot.savedAt || 0) > WORKBENCH_CACHE_TTL_MS) return;
+    activeCacheUserId = userId;
+    restoringWorkbenchCache = true;
+    if (Array.isArray(snapshot.accounts)) accounts.value = snapshot.accounts;
+    if (snapshot.accountScope) accountScope.value = snapshot.accountScope;
+    if (snapshot.filters) filters.value = { ...filters.value, ...snapshot.filters };
+    if (Array.isArray(snapshot.labels)) labels.value = snapshot.labels;
+    if (Array.isArray(snapshot.manualGroups)) manualGroups.value = snapshot.manualGroups;
+    const cachedGroups = snapshot.groupsByFilter?.[groupFilterCacheKey()];
+    if (cachedGroups && Date.now() - Number(cachedGroups.savedAt || 0) <= WORKBENCH_GROUP_CACHE_TTL_MS) {
+      groups.value = cachedGroups.groups;
+    }
+  } catch (_) {
+    // 旧格式或被清理的浏览器存储不影响正常加载。
+  } finally {
+    restoringWorkbenchCache = false;
+  }
+}
+
+function groupFilterCacheKey() {
+  return JSON.stringify({
+    platforms: filters.value.platforms,
+    accountKeys: filters.value.accountKeys,
+    scope: filters.value.scope,
+    labelId: filters.value.labelId,
+    search: filters.value.search,
+  });
+}
+
+function scheduleWorkbenchCacheWrite() {
+  if (!activeCacheUserId) return;
+  clearTimeout(cacheWriteTimer);
+  cacheWriteTimer = setTimeout(() => {
+    try {
+      const key = workbenchCacheKey();
+      const existing = JSON.parse(window.localStorage.getItem(key) || 'null') || {};
+      const groupsByFilter = { ...(existing.groupsByFilter || {}) };
+      groupsByFilter[groupFilterCacheKey()] = { savedAt: Date.now(), groups: groups.value };
+      window.localStorage.setItem(key, JSON.stringify({
+        savedAt: Date.now(),
+        accounts: accounts.value,
+        accountScope: accountScope.value,
+        filters: filters.value,
+        labels: labels.value,
+        manualGroups: manualGroups.value,
+        groupsByFilter,
+      }));
+    } catch (_) {
+      // 缓存是加速层，存储配额不足时不影响工作台。
+    }
+  }, 80);
 }
 
 function hasLabel(nextLabels, labelId) {
