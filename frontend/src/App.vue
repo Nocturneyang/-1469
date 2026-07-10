@@ -5,7 +5,7 @@
     :user="currentUser"
     :portal-access="portalAccess"
     :account-scope="accountScope"
-    :accounts="accounts"
+    :accounts="connectedAccounts"
     @back="goWorkbench"
   />
 
@@ -23,7 +23,7 @@
 
   <div v-else class="app-shell" :class="{ 'rail-collapsed': serviceRailCollapsed }">
     <ServiceAccountRail
-      :accounts="accounts"
+      :accounts="connectedAccounts"
       :selected-account-keys="filters.accountKeys"
       :account-scope="accountScope"
       :portal-access="portalAccess"
@@ -41,7 +41,7 @@
       <TopFilters
         v-model="filters"
         :labels="labels"
-        :accounts="accounts"
+        :accounts="connectedAccounts"
         :available-platforms="availablePlatforms"
         :account-scope="accountScope"
         :syncing="syncingChannels"
@@ -194,6 +194,7 @@ const CHANNEL_REFRESH_MAX_ATTEMPTS = 20;
 const MESSAGE_PAGE_LIMIT = 60;
 const MESSAGE_CACHE_LIMIT = 24;
 const LIVE_OUTBOUND_STATUSES = new Set(['pending', 'sending']);
+const CONNECTED_ACCOUNT_STATUSES = new Set(['online', 'authenticated', 'ready', 'monitoring', 'healthy']);
 const currentOperatorId = computed(() => (
   currentOperator.value && currentOperator.value.id ? currentOperator.value.id : 'demo-operator'
 ));
@@ -212,9 +213,10 @@ const selectedAccountParam = computed(() => (
   filters.value.accountKeys.length ? filters.value.accountKeys.join(',') : undefined
 ));
 
+const connectedAccounts = computed(() => accounts.value.filter((account) => isConnectedAccount(account)));
+
 const availablePlatforms = computed(() => {
-  if (!accountScope.value || !accountScope.value.active) return ['wa', 'tg'];
-  return [...new Set((accountScope.value.accounts || [])
+  return [...new Set(connectedAccounts.value
     .map((account) => account.platform)
     .filter((platform) => platform === 'wa' || platform === 'tg'))];
 });
@@ -441,17 +443,33 @@ function hasLabel(nextLabels, labelId) {
 function syncPlatformFilterWithScope({ preferMessageAccounts = false } = {}) {
   const platforms = availablePlatforms.value;
   if (!platforms.length) {
-    filters.value = { ...filters.value, platforms: [] };
+    filters.value = { ...filters.value, platforms: [], accountKeys: [], labelId: '' };
     return;
   }
   const current = filters.value.platforms.filter((platform) => platforms.includes(platform));
-  const platformCounts = new Map(accounts.value.map((account) => [account.platform, Number(account.message_count || 0)]));
+  const connectedKeys = new Set(connectedAccounts.value.map(accountKey));
+  const accountKeys = filters.value.accountKeys.filter((key) => connectedKeys.has(key));
+  const platformCounts = new Map(connectedAccounts.value.map((account) => [account.platform, Number(account.message_count || 0)]));
   const preferred = platforms.filter((platform) => (platformCounts.get(platform) || 0) > 0);
   const defaultPlatform = (preferred[0] || platforms[0]);
   const next = preferMessageAccounts || !current.length ? [defaultPlatform] : current;
-  if (next.length !== filters.value.platforms.length || next.some((platform, index) => platform !== filters.value.platforms[index])) {
-    filters.value = { ...filters.value, platforms: next, accountKeys: [], labelId: '' };
+  if (
+    next.length !== filters.value.platforms.length ||
+    next.some((platform, index) => platform !== filters.value.platforms[index]) ||
+    accountKeys.length !== filters.value.accountKeys.length
+  ) {
+    filters.value = { ...filters.value, platforms: next, accountKeys, labelId: accountKeys.length ? filters.value.labelId : '' };
   }
+}
+
+function isConnectedAccount(account) {
+  if (!account) return false;
+  if (account.is_connected === true || account.is_connected === 1) return true;
+  return CONNECTED_ACCOUNT_STATUSES.has(String(account.account_status || '').toLowerCase());
+}
+
+function accountKey(account) {
+  return `${account.platform}:${account.account}`;
 }
 
 async function selectGroup(group) {

@@ -35,7 +35,7 @@
     <el-select
       class="account-select"
       :model-value="modelValue.accountKeys || []"
-      placeholder="全部服务账号"
+      placeholder="全部已接入账号"
       clearable
       multiple
       collapse-tags

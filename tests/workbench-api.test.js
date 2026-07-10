@@ -33,6 +33,8 @@ async function main() {
     assert.strictEqual(accounts.accounts.length, 1);
     assert.strictEqual(accounts.accounts[0].account, 'nanya_wa');
     assert.strictEqual(accounts.accounts[0].account_display_name, 'Nanya Support');
+    assert.strictEqual(accounts.accounts[0].is_connected, true);
+    assert.strictEqual(accounts.accounts[0].can_send, true);
     assert.strictEqual(accounts.accounts.some((account) => account.platform === 'teams'), false);
 
     const adminAccess = await requestJson(`${baseUrl}/admin/access`);
@@ -327,6 +329,7 @@ async function main() {
     assert.ok(emptyServiceAccount);
     assert.strictEqual(emptyServiceAccount.account_display_name, 'No Message Support');
     assert.strictEqual(emptyServiceAccount.message_count, 0);
+    assert.strictEqual(emptyServiceAccount.is_connected, true);
 
     seedSyncedChannelMetadata(workbenchDb);
     const labelList = await requestJson(`${baseUrl}/channel-labels?platform=wa`);

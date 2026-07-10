@@ -44,6 +44,7 @@ const OUTBOUND_STATUSES = new Set(['pending', 'sending', 'sent', 'delivered', 'f
 const CONVERSATION_STATUSES = new Set(['pending', 'in_progress', 'resolved', 'paused']);
 const CONVERSATION_PRIORITIES = new Set(['low', 'normal', 'high', 'urgent']);
 const PRESENCE_MODES = new Set(['viewing', 'typing', 'replying']);
+const CONNECTED_ACCOUNT_STATUSES = new Set(['online', 'authenticated', 'ready', 'monitoring', 'healthy']);
 const MAX_ATTACHMENTS = 4;
 const MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024;
 const MAX_TOTAL_ATTACHMENT_BYTES = 12 * 1024 * 1024;
@@ -165,10 +166,9 @@ function createWorkbenchRouter({ workbenchDb, runtimeDb, rawDbPath = DEFAULT_RAW
     const accountScope = getAccountScope();
     const operator = currentOperatorContext(workbenchDb, req);
     const visibleAccountScope = allowedAccountScope(workbenchDb, operator, accountScope, 'can_view');
-    const accounts = accountData.listAccounts({ accountScope: visibleAccountScope }).map((account) => ({
-      ...account,
-      ...accountChannelStats(accountData, workbenchDb, account.platform, account.account),
-    }));
+    const accounts = accountData.listAccounts({ accountScope: visibleAccountScope }).map((account) => (
+      mapServiceAccount(account, accountData, workbenchDb)
+    ));
     res.json({ ok: true, accounts, account_scope: mapAccountScope(visibleAccountScope) });
   });
 
@@ -2369,6 +2369,18 @@ function accountChannelStats(accountData, workbenchDb, platform, account) {
     synced_group_count: countSyncedGroups(accountDb, platform, account),
     last_channel_sync_at: lastChannelSyncAt(accountDb, platform, account),
   }));
+}
+
+function mapServiceAccount(account, accountData, workbenchDb) {
+  const status = String(account.account_status || '').toLowerCase();
+  const isConnected = CONNECTED_ACCOUNT_STATUSES.has(status);
+  const sendEnabled = Number(account.send_enabled) !== 0;
+  return {
+    ...account,
+    ...accountChannelStats(accountData, workbenchDb, account.platform, account.account),
+    is_connected: isConnected,
+    can_send: isConnected && sendEnabled,
+  };
 }
 
 function listAdminOperators(db) {

@@ -50,17 +50,17 @@
       type="button"
       class="rail-all-button"
       :class="{ active: !selectedAccountKeys.length }"
-      :title="`全部服务账号，${totalMessageCount} 条消息`"
+      :title="`全部已接入账号，${totalMessageCount} 条消息`"
       @click="$emit('clear')"
     >
       <span class="rail-icon">全</span>
       <span>
-        <strong>全部服务账号</strong>
+        <strong>全部已接入账号</strong>
         <small>{{ totalMessageCount }} 条消息</small>
       </span>
     </button>
 
-    <div class="rail-section-title">服务账号</div>
+    <div class="rail-section-title">已接入账号</div>
     <div class="rail-account-list">
       <button
         v-for="account in accounts"

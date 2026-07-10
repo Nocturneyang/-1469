@@ -208,6 +208,12 @@ Deploy Hub 配置位于：
 /Users/a2026/Desktop/工作台/.deployhub/k8s/app.yaml
 ```
 
+完整生产迭代部署流程见：
+
+```text
+/Users/a2026/Desktop/工作台/docs/development/production-deploy-runbook.md
+```
+
 当前部署配置：
 
 ```yaml

@@ -13,7 +13,7 @@
 
     <section class="service-access-summary">
       <div class="service-access-stat">
-        <span>服务账号</span>
+        <span>账号记录</span>
         <strong>{{ accounts.length }}</strong>
       </div>
       <div class="service-access-stat">
@@ -56,7 +56,7 @@
           </div>
           <div>
             <span>发送</span>
-            <strong>{{ enabledText(account.send_enabled) }}</strong>
+            <strong>{{ sendText(account) }}</strong>
           </div>
           <div>
             <span>分组同步</span>
@@ -109,7 +109,7 @@ defineEmits(['back', 'open-login']);
 const readyStatuses = new Set(['online', 'authenticated', 'ready', 'monitoring', 'healthy']);
 
 const readyCount = computed(() => props.accounts.filter((account) => isReady(account)).length);
-const sendEnabledCount = computed(() => props.accounts.filter((account) => Number(account.send_enabled) !== 0).length);
+const sendEnabledCount = computed(() => props.accounts.filter((account) => canSend(account)).length);
 const scopeText = computed(() => {
   if (!props.accountScope?.active) return '全部';
   if (props.accountScope.mode === 'explicit') return '显式授权';
@@ -118,11 +118,18 @@ const scopeText = computed(() => {
 });
 
 function isReady(account) {
+  if (account.is_connected === true || account.is_connected === 1) return true;
   return readyStatuses.has(String(account.account_status || '').toLowerCase());
+}
+
+function canSend(account) {
+  if (account.can_send === true || account.can_send === 1) return true;
+  return isReady(account) && Number(account.send_enabled) !== 0;
 }
 
 function statusType(account) {
   if (isReady(account)) return 'success';
+  if (String(account.account_status || '').toLowerCase() === 'failed') return 'danger';
   if (account.account_status) return 'warning';
   return 'info';
 }
@@ -149,6 +156,11 @@ function roleText(role) {
 
 function enabledText(value) {
   return Number(value) === 0 || value === false ? '关闭' : '开启';
+}
+
+function sendText(account) {
+  if (!isReady(account)) return '未接入';
+  return enabledText(account.send_enabled);
 }
 
 function riskText(risk) {
