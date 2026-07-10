@@ -198,7 +198,7 @@ function labelSourceText(label) {
     return '工作台标签';
   }
   if (label.source === 'wa_label') return 'WA 同步标签';
-  if (label.source === 'tg_group') return 'TG 同步分组';
+  if (label.source === 'tg_group' || label.source === 'tg_folder') return 'TG 同步文件夹';
   return label.source || '渠道分组';
 }
 </script>

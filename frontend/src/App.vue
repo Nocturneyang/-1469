@@ -70,9 +70,8 @@
             :stick-to-bottom="stickToBottom"
             :current-operator-id="currentOperatorId"
             :message-filters="messageFilters"
-            @mark-read="handleMarkRead"
-            @assign="handleAssign"
-            @open-native="handleOpenNative"
+            :manual-groups="manualGroups"
+            :saving-manual-groups="savingManualGroups"
             @retry="handleRetry"
             @cancel="handleCancel"
             @load-older="handleLoadOlder"
@@ -80,6 +79,8 @@
             @stick-state-change="handleStickStateChange"
             @quote="handleQuote"
             @message-search-change="handleMessageSearchChange"
+            @manual-groups-change="handleManualGroupsChange"
+            @manual-group-create="handleManualGroupCreate"
           />
           <Composer
             :group="selectedGroup"
@@ -94,12 +95,8 @@
         <ConversationInspector
           :group="selectedGroup"
           :messages="messages"
-          :manual-groups="manualGroups"
           :workspace-detail="workspaceDetail"
           :loading-workspace="loadingWorkspace"
-          :saving-manual-groups="savingManualGroups"
-          @manual-groups-change="handleManualGroupsChange"
-          @manual-group-create="handleManualGroupCreate"
           @workspace-save="handleWorkspaceSave"
           @note-create="handleNoteCreate"
         />
@@ -196,6 +193,11 @@ const AUTO_REFRESH_MS = 5000;
 const PENDING_REFRESH_MS = 1500;
 const PENDING_REFRESH_MAX_MS = 45000;
 const READ_PROGRESS_DEBOUNCE_MS = 350;
+const FILTER_DEBOUNCE_MS = 80;
+const CHANNEL_REFRESH_MS = 700;
+const CHANNEL_REFRESH_MAX_ATTEMPTS = 20;
+const MESSAGE_PAGE_LIMIT = 60;
+const MESSAGE_CACHE_LIMIT = 24;
 const LIVE_OUTBOUND_STATUSES = new Set(['pending', 'sending']);
 const currentOperatorId = computed(() => (
   currentOperator.value && currentOperator.value.id ? currentOperator.value.id : 'demo-operator'
@@ -225,6 +227,8 @@ const availablePlatforms = computed(() => {
 let searchTimer = null;
 let autoRefreshTimer = null;
 let pendingRefreshTimer = null;
+let channelRefreshTimer = null;
+let channelRefreshInFlight = false;
 let pendingRefreshStartedAt = 0;
 let refreshingActive = false;
 let readProgressTimer = null;
@@ -232,6 +236,9 @@ let pendingReadProgress = null;
 let readProgressInFlight = false;
 let labelRequestSeq = 0;
 let workspaceRequestSeq = 0;
+let groupsRequestSeq = 0;
+let messageRequestSeq = 0;
+const messageCache = new Map();
 let presenceHeartbeatTimer = null;
 let typingPresenceTimer = null;
 const readProgressByGroup = new Map();
@@ -279,6 +286,7 @@ onBeforeUnmount(() => {
   clearPresence();
   stopAutoRefresh();
   stopPendingRefresh();
+  stopChannelRefreshPolling();
 });
 
 async function bootstrapWorkbench() {
@@ -330,7 +338,7 @@ watch(
     quoteMessage.value = null;
     pendingReadProgress = null;
     clearTimeout(readProgressTimer);
-    searchTimer = setTimeout(() => loadGroups({ clearSelectionOnMissing: true }), 180);
+    searchTimer = setTimeout(() => loadGroups({ clearSelectionOnMissing: true }), FILTER_DEBOUNCE_MS);
   },
   { deep: true },
 );
@@ -341,7 +349,9 @@ watch(
     stickToBottom.value = true;
     quoteMessage.value = null;
     if (selectedGroup.value) {
-      await Promise.all([loadMessages(), loadWorkspace()]);
+      hydrateCachedMessages(selectedGroup.value);
+      loadMessages().catch(() => {});
+      loadWorkspace().catch(() => {});
       startPresenceHeartbeat();
     }
     else {
@@ -354,6 +364,7 @@ watch(
 );
 
 async function loadGroups({ silent = false, clearSelectionOnMissing = false } = {}) {
+  const requestSeq = ++groupsRequestSeq;
   if (!silent) loadingGroups.value = true;
   error.value = '';
   noServiceAccount.value = false;
@@ -365,6 +376,7 @@ async function loadGroups({ silent = false, clearSelectionOnMissing = false } = 
       label_id: filters.value.labelId || undefined,
       search: filters.value.search || undefined,
     });
+    if (requestSeq !== groupsRequestSeq) return;
     // 检测无服务账号配置（mode=operator-no-workbench 或帐号列表为空）
     if (
       account_scope &&
@@ -386,7 +398,7 @@ async function loadGroups({ silent = false, clearSelectionOnMissing = false } = 
     if (isAuthRedirecting()) return;
     error.value = '工作台 API 暂不可用，请检查服务状态';
   } finally {
-    if (!silent) loadingGroups.value = false;
+    if (requestSeq === groupsRequestSeq) loadingGroups.value = false;
   }
 }
 
@@ -436,6 +448,7 @@ function syncPlatformFilterWithScope({ preferMessageAccounts = false } = {}) {
 }
 
 async function selectGroup(group) {
+  if (group && selectedGroup.value && group.id === selectedGroup.value.id) return;
   if (selectedGroup.value && (!group || group.id !== selectedGroup.value.id)) {
     clearPresence(selectedGroup.value);
   }
@@ -479,16 +492,59 @@ function readStoredRailCollapsed() {
 
 async function loadMessages(params = {}) {
   if (!selectedGroup.value) return;
-  const page = await fetchMessages(selectedGroup.value, {
-    ...activeMessageFilterParams(),
-    ...params,
-  });
-  if (params.before_id) {
-    messages.value = mergeMessages(page.messages, messages.value);
-  } else {
-    messages.value = page.messages;
+  const group = selectedGroup.value;
+  const requestSeq = ++messageRequestSeq;
+  const cacheKey = messageCacheKey(group);
+  if (!params.before_id) hydrateCachedMessages(group);
+  try {
+    const page = await fetchMessages(group, {
+      ...activeMessageFilterParams(),
+      limit: MESSAGE_PAGE_LIMIT,
+      ...params,
+    });
+    if (
+      requestSeq !== messageRequestSeq ||
+      !selectedGroup.value ||
+      selectedGroup.value.id !== group.id
+    ) return;
+    const nextMessages = params.before_id
+      ? mergeMessages(page.messages, messages.value)
+      : page.messages;
+    messages.value = nextMessages;
+    messagePaging.value = page.paging;
+    writeMessageCache(cacheKey, nextMessages, page.paging);
+  } catch (err) {
+    // 保留已显示的缓存，网络抖动时不让会话窗口退回空白。
   }
-  messagePaging.value = page.paging;
+}
+
+function messageCacheKey(group) {
+  return `${group.id}:${JSON.stringify(activeMessageFilterParams())}`;
+}
+
+function hydrateCachedMessages(group) {
+  const key = messageCacheKey(group);
+  const entry = messageCache.get(key);
+  if (!entry) {
+    messages.value = [];
+    messagePaging.value = { has_more: false, before_id: null };
+    return;
+  }
+  messageCache.delete(key);
+  messageCache.set(key, entry);
+  messages.value = entry.messages;
+  messagePaging.value = entry.paging;
+}
+
+function writeMessageCache(key, nextMessages, paging) {
+  messageCache.delete(key);
+  messageCache.set(key, {
+    messages: Array.isArray(nextMessages) ? [...nextMessages] : [],
+    paging: paging || { has_more: false, before_id: null },
+  });
+  while (messageCache.size > MESSAGE_CACHE_LIMIT) {
+    messageCache.delete(messageCache.keys().next().value);
+  }
 }
 
 async function loadWorkspace({ silent = false } = {}) {
@@ -549,9 +605,12 @@ async function handleSend(message) {
     });
     stickToBottom.value = true;
     quoteMessage.value = null;
-    await loadMessages();
-    await loadWorkspace({ silent: true });
-    await loadGroups();
+    // 外发任务已经写入工作台账本后立即恢复输入，消息/列表刷新放到后台并行执行。
+    sending.value = false;
+    await Promise.all([
+      loadMessages(),
+      loadGroups({ silent: true }),
+    ]);
     if (LIVE_OUTBOUND_STATUSES.has(reply.status)) startPendingRefresh();
   } catch (err) {
     ElMessage.error('发送任务创建失败');
@@ -562,26 +621,51 @@ async function handleSend(message) {
 
 async function handleChannelSync() {
   if (syncingChannels.value) return;
-  const platform = filters.value.platforms[0];
-  if (!platform) return;
+  const platforms = filters.value.platforms.filter((platform) => ['wa', 'tg'].includes(platform));
+  if (!platforms.length) return;
   syncingChannels.value = true;
   try {
-    const result = await requestChannelSync({
+    const results = await Promise.all(platforms.map((platform) => requestChannelSync({
       platform,
       accounts: filters.value.accountKeys,
       reason: 'manual',
-    });
-    ElMessage.success(`已请求同步 ${result.requests.length} 个账号`);
-    setTimeout(() => {
-      loadLabels();
-      loadManualGroups();
-      loadGroups({ silent: true });
-    }, 2500);
+    })));
+    const requestCount = results.reduce((count, result) => count + Number(result.requests?.length || 0), 0);
+    ElMessage.success(`已请求同步 ${requestCount} 个账号，完成后自动刷新`);
+    startChannelRefreshPolling();
   } catch (err) {
     ElMessage.error('同步请求失败');
   } finally {
     syncingChannels.value = false;
   }
+}
+
+function startChannelRefreshPolling() {
+  stopChannelRefreshPolling();
+  let attempts = 0;
+  const refresh = async () => {
+    if (channelRefreshInFlight) return;
+    channelRefreshInFlight = true;
+    attempts += 1;
+    try {
+      await Promise.all([
+        loadLabels(),
+        loadManualGroups(),
+        loadGroups({ silent: true }),
+      ]);
+    } finally {
+      channelRefreshInFlight = false;
+      if (attempts >= CHANNEL_REFRESH_MAX_ATTEMPTS) stopChannelRefreshPolling();
+    }
+  };
+  refresh().catch(() => {});
+  channelRefreshTimer = setInterval(() => refresh().catch(() => {}), CHANNEL_REFRESH_MS);
+}
+
+function stopChannelRefreshPolling() {
+  if (channelRefreshTimer) clearInterval(channelRefreshTimer);
+  channelRefreshTimer = null;
+  channelRefreshInFlight = false;
 }
 
 async function handleManualGroupCreate(payload) {

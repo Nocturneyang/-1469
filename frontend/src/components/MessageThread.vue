@@ -6,7 +6,19 @@
           {{ platformShort(group.platform) }}
         </div>
         <div>
-          <h1 :title="group.group_name">{{ group.group_name }}</h1>
+          <div class="thread-name-line">
+            <div v-if="workbenchTags.length" class="thread-title-tags" aria-label="工作台标签">
+              <span
+                v-for="label in workbenchTags"
+                :key="label.id || label.native_group_id || label.native_label_id"
+                class="group-tag workbench-tag"
+                :title="labelTitle(label)"
+              >
+                {{ labelDisplayName(label) }}
+              </span>
+            </div>
+            <h1 :title="group.group_name">{{ group.group_name }}</h1>
+          </div>
           <p>{{ platformName(group.platform) }} <span>|</span> 通过 {{ accountDisplayName }} 观测和回复</p>
           <div class="thread-status-line">
             <em :class="canSend(group) ? 'status-ok' : 'status-warn'">
@@ -20,9 +32,67 @@
         </div>
       </div>
       <div class="thread-actions">
-        <el-button :icon="Check" @click="$emit('mark-read')">标记已读</el-button>
-        <el-button :icon="Switch" :disabled="!canAssign(group)" @click="$emit('assign')">{{ assignmentActionText }}</el-button>
-        <el-button :icon="TopRight" @click="$emit('open-native')">打开原生群</el-button>
+        <el-popover placement="bottom-end" :width="360" trigger="click">
+          <template #reference>
+            <el-button class="thread-tag-button">工作台标签</el-button>
+          </template>
+          <div class="thread-tag-popover">
+            <div class="section-title">工作台标签</div>
+            <div class="tag-stack">
+              <span
+                v-for="label in workbenchTags"
+                :key="label.id || label.native_group_id || label.native_label_id"
+                class="group-tag workbench-tag"
+                :title="labelTitle(label)"
+              >
+                {{ labelDisplayName(label) }}
+              </span>
+              <span v-if="!workbenchTags.length" class="group-tag muted">暂无标签</span>
+            </div>
+            <el-select
+              class="manual-group-select"
+              :model-value="selectedManualGroupIds"
+              multiple
+              clearable
+              collapse-tags
+              collapse-tags-tooltip
+              placeholder="选择或移除工作台标签"
+              :disabled="!canManageManualGroups || savingManualGroups"
+              @change="emit('manual-groups-change', $event)"
+            >
+              <el-option
+                v-for="option in manualGroupOptions"
+                :key="option.value"
+                :label="option.label"
+                :value="option.value"
+              >
+                <div class="manual-group-option" :class="{ child: option.level === 2 }">
+                  <span>{{ option.name }}</span>
+                  <small>{{ option.subtitle }}</small>
+                </div>
+              </el-option>
+            </el-select>
+            <div class="manual-create-row">
+              <el-input
+                v-model="manualDraft.name"
+                size="small"
+                clearable
+                placeholder="新标签名称"
+                :disabled="!canManageManualGroups || savingManualGroups"
+              />
+              <el-button
+                size="small"
+                type="primary"
+                :loading="savingManualGroups"
+                :disabled="!canSubmitManualGroup"
+                @click="submitManualGroup"
+              >
+                新建并打标
+              </el-button>
+            </div>
+            <div class="manual-tag-helper">{{ manualHelperText }}</div>
+          </div>
+        </el-popover>
       </div>
     </header>
 
@@ -129,7 +199,7 @@
 
 <script setup>
 import { computed, nextTick, reactive, ref, watch } from 'vue';
-import { Check, Document, Switch, TopRight } from '@element-plus/icons-vue';
+import { Document } from '@element-plus/icons-vue';
 import { formatMessageTime, platformClass, platformName, statusText } from '../utils/format';
 
 const props = defineProps({
@@ -161,12 +231,17 @@ const props = defineProps({
     type: Object,
     default: () => ({}),
   },
+  manualGroups: {
+    type: Array,
+    default: () => [],
+  },
+  savingManualGroups: {
+    type: Boolean,
+    default: false,
+  },
 });
 
 const emit = defineEmits([
-  'mark-read',
-  'assign',
-  'open-native',
   'retry',
   'cancel',
   'load-older',
@@ -174,6 +249,8 @@ const emit = defineEmits([
   'stick-state-change',
   'quote',
   'message-search-change',
+  'manual-groups-change',
+  'manual-group-create',
 ]);
 
 const scrollRef = ref(null);
@@ -186,6 +263,7 @@ const localSearch = reactive({
 });
 const lastStickState = ref(true);
 const lastReadProgress = ref({ groupId: '', rawId: 0 });
+const manualDraft = reactive({ name: '' });
 const BOTTOM_THRESHOLD_PX = 96;
 const READ_VISIBLE_THRESHOLD_PX = 24;
 
@@ -217,13 +295,6 @@ watch(
   { immediate: true, deep: true },
 );
 
-const assignmentActionText = computed(() => {
-  const assignment = props.group && props.group.assignment;
-  if (!assignment) return '认领';
-  if (assignment.assigned_to === props.currentOperatorId) return '释放';
-  return '移交';
-});
-
 const accountDisplayName = computed(() => {
   if (!props.group) return '';
   return props.group.account_display_name || props.group.account || '';
@@ -251,8 +322,89 @@ function canSend(group) {
   );
 }
 
-function canAssign(group) {
-  return Boolean(group && (!group.permissions || group.permissions.can_assign !== false));
+const canManageManualGroups = computed(() => (
+  props.group &&
+  props.group.permissions &&
+  props.group.permissions.can_manage === true
+));
+
+const workbenchTags = computed(() => (
+  ((props.group && props.group.labels) || []).filter(isWorkbenchTag)
+));
+
+const selectedManualGroupIds = computed(() => (
+  workbenchTags.value
+    .map((label) => String(label.native_group_id || label.native_label_id || '').trim())
+    .filter(Boolean)
+));
+
+const accountManualGroups = computed(() => {
+  if (!props.group) return [];
+  return props.manualGroups.filter((item) => (
+    item.platform === props.group.platform &&
+    item.service_account === props.group.account
+  ));
+});
+
+const levelOneManualGroups = computed(() => (
+  accountManualGroups.value
+    .filter((item) => Number(item.group_level || 1) === 1)
+    .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'zh-Hans-CN'))
+));
+
+const manualGroupOptions = computed(() => {
+  const parents = new Map(levelOneManualGroups.value.map((item) => [String(item.native_group_id), item]));
+  return accountManualGroups.value
+    .map((item) => {
+      const level = Number(item.group_level || 1);
+      const parent = item.parent_native_group_id ? parents.get(String(item.parent_native_group_id)) : null;
+      return {
+        value: item.native_group_id,
+        name: item.name,
+        level,
+        label: parent ? `${parent.name} / ${item.name}` : item.name,
+        subtitle: parent ? '工作台标签 · 子标签' : '工作台标签',
+        sortKey: `${parent ? parent.name : item.name}:${level}:${item.name}`,
+      };
+    })
+    .sort((a, b) => a.sortKey.localeCompare(b.sortKey, 'zh-Hans-CN'));
+});
+
+const canSubmitManualGroup = computed(() => (
+  canManageManualGroups.value &&
+  !props.savingManualGroups &&
+  Boolean(manualDraft.name.trim())
+));
+
+const manualHelperText = computed(() => (
+  canManageManualGroups.value ? '标签保存在工作台自己的数据库中，不会写回 WA/TG 原生分组。' : '当前账号没有标签管理权限'
+));
+
+watch(
+  () => props.group && props.group.id,
+  () => {
+    manualDraft.name = '';
+  },
+);
+
+function submitManualGroup() {
+  if (!canSubmitManualGroup.value) return;
+  emit('manual-group-create', { name: manualDraft.name.trim(), group_level: 1 });
+  manualDraft.name = '';
+}
+
+function isWorkbenchTag(label) {
+  return Number(label?.is_manual) === 1 || String(label?.source || '').startsWith('manual');
+}
+
+function labelDisplayName(label) {
+  if (!label) return '';
+  const name = label.name || label.native_label_id || label.native_group_id || '';
+  return isWorkbenchTag(label) && label.parent_name ? `${label.parent_name} / ${name}` : name;
+}
+
+function labelTitle(label) {
+  return `工作台标签 · ${labelDisplayName(label)}`;
 }
 
 function attachmentPreview(attachment) {

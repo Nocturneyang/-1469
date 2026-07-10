@@ -11,51 +11,6 @@
         </div>
       </section>
 
-      <section class="inspector-section workflow-section">
-        <div class="section-title">会话工作流</div>
-        <div class="status-segments">
-          <button
-            v-for="option in statusOptions"
-            :key="option.value"
-            type="button"
-            :class="{ active: profileDraft.status === option.value }"
-            :disabled="!canEditWorkflow"
-            @click="saveWorkflow({ status: option.value })"
-          >
-            {{ option.label }}
-          </button>
-        </div>
-        <div class="workflow-fields">
-          <button
-            type="button"
-            class="star-toggle"
-            :class="{ active: profileDraft.starred }"
-            :disabled="!canEditWorkflow"
-            @click="saveWorkflow({ starred: !profileDraft.starred })"
-          >
-            {{ profileDraft.starred ? '已星标' : '星标' }}
-          </button>
-          <label>
-            重要度
-            <select v-model="profileDraft.priority" :disabled="!canEditWorkflow" @change="saveWorkflow({ priority: profileDraft.priority })">
-              <option value="low">低</option>
-              <option value="normal">普通</option>
-              <option value="high">高</option>
-              <option value="urgent">紧急</option>
-            </select>
-          </label>
-          <label>
-            跟进提醒
-            <input
-              v-model="profileDraft.follow_up_at"
-              type="datetime-local"
-              :disabled="!canEditWorkflow"
-              @change="saveWorkflow({ follow_up_at: profileDraft.follow_up_at })"
-            >
-          </label>
-        </div>
-      </section>
-
       <section class="inspector-section customer-profile-section">
         <div class="section-title">群备注字段</div>
         <label>
@@ -73,68 +28,6 @@
         <el-button size="small" type="primary" :disabled="!canManageManualGroups" @click="saveProfileFields">
           保存群资料
         </el-button>
-      </section>
-
-      <section class="inspector-section workbench-tags-section">
-        <div class="section-title">工作台标签</div>
-        <div class="tag-stack">
-          <span
-            v-for="label in workbenchTags"
-            :key="label.id || label.native_label_id"
-            class="group-tag workbench-tag"
-            :title="labelTitle(label)"
-          >
-            {{ labelDisplayName(label) }}
-          </span>
-          <span v-if="!workbenchTags.length" class="group-tag muted">暂无标签</span>
-        </div>
-
-        <el-select
-          class="manual-group-select"
-          :model-value="selectedManualGroupIds"
-          multiple
-          clearable
-          collapse-tags
-          collapse-tags-tooltip
-          placeholder="选择或移除工作台标签"
-          :disabled="!canManageManualGroups || savingManualGroups"
-          @change="emitManualGroupsChange"
-        >
-          <el-option
-            v-for="option in manualGroupOptions"
-            :key="option.value"
-            :label="option.label"
-            :value="option.value"
-          >
-            <div class="manual-group-option" :class="{ child: option.level === 2 }">
-              <span>{{ option.name }}</span>
-              <small>{{ option.subtitle }}</small>
-            </div>
-          </el-option>
-        </el-select>
-
-        <div class="manual-create-row">
-          <el-input
-            v-model="manualDraft.name"
-            size="small"
-            clearable
-            placeholder="新标签名称"
-            :disabled="!canManageManualGroups || savingManualGroups"
-          />
-          <el-button
-            size="small"
-            type="primary"
-            :loading="savingManualGroups"
-            :disabled="!canSubmitManualGroup"
-            @click="submitManualGroup"
-          >
-            新建并打标
-          </el-button>
-        </div>
-
-        <div class="manual-tag-helper">
-          {{ manualHelperText }}
-        </div>
       </section>
 
       <section class="inspector-section">
@@ -279,14 +172,6 @@ const props = defineProps({
     type: Array,
     default: () => [],
   },
-  manualGroups: {
-    type: Array,
-    default: () => [],
-  },
-  savingManualGroups: {
-    type: Boolean,
-    default: false,
-  },
   workspaceDetail: {
     type: Object,
     default: () => ({ profile: null, notes: [], timeline: [], presence: [] }),
@@ -297,27 +182,13 @@ const props = defineProps({
   },
 });
 
-const emit = defineEmits(['manual-groups-change', 'manual-group-create', 'workspace-save', 'note-create']);
-const manualDraft = reactive({
-  name: '',
-});
+const emit = defineEmits(['workspace-save', 'note-create']);
 const noteDraft = ref('');
 const profileDraft = reactive({
-  status: 'pending',
-  priority: 'normal',
-  starred: false,
-  follow_up_at: '',
   internal_display_name: '',
   customer_type: '',
   owner_note: '',
 });
-
-const statusOptions = [
-  { value: 'pending', label: '待处理' },
-  { value: 'in_progress', label: '跟进中' },
-  { value: 'resolved', label: '已解决' },
-  { value: 'paused', label: '暂停' },
-];
 
 const isOnline = computed(() => {
   if (!props.group || !props.group.account_status) return false;
@@ -338,12 +209,6 @@ const canManageManualGroups = computed(() => (
   props.group &&
   props.group.permissions &&
   props.group.permissions.can_manage === true
-));
-
-const canEditWorkflow = computed(() => (
-  props.group &&
-  props.group.permissions &&
-  props.group.permissions.can_view !== false
 ));
 
 const workspaceProfile = computed(() => (
@@ -369,66 +234,13 @@ const displayGroupName = computed(() => (
   ''
 ));
 
-const accountManualGroups = computed(() => {
-  if (!props.group) return [];
-  return props.manualGroups.filter((item) => (
-    item.platform === props.group.platform &&
-    item.service_account === props.group.account
-  ));
-});
-
-const levelOneManualGroups = computed(() => (
-  accountManualGroups.value
-    .filter((item) => Number(item.group_level || 1) === 1)
-    .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'zh-Hans-CN'))
-));
-
-const workbenchTags = computed(() => (
-  ((props.group && props.group.labels) || []).filter(isWorkbenchTag)
-));
-
 const channelGroups = computed(() => (
   ((props.group && props.group.labels) || []).filter((label) => !isWorkbenchTag(label))
-));
-
-const selectedManualGroupIds = computed(() => (
-  workbenchTags.value
-    .map((label) => String(label.native_group_id || label.native_label_id || '').trim())
-    .filter(Boolean)
-));
-
-const manualGroupOptions = computed(() => {
-  const parents = new Map(levelOneManualGroups.value.map((item) => [String(item.native_group_id), item]));
-  return accountManualGroups.value
-    .map((item) => {
-      const level = Number(item.group_level || 1);
-      const parent = item.parent_native_group_id ? parents.get(String(item.parent_native_group_id)) : null;
-      return {
-        value: item.native_group_id,
-        name: item.name,
-        level,
-        label: parent ? `${parent.name} / ${item.name}` : item.name,
-        subtitle: parent ? '工作台标签 · 子标签' : '工作台标签',
-        sortKey: `${parent ? parent.name : item.name}:${level}:${item.name}`,
-      };
-    })
-    .sort((a, b) => a.sortKey.localeCompare(b.sortKey, 'zh-Hans-CN'));
-});
-
-const canSubmitManualGroup = computed(() => {
-  if (!canManageManualGroups.value || props.savingManualGroups) return false;
-  if (!manualDraft.name.trim()) return false;
-  return true;
-});
-
-const manualHelperText = computed(() => (
-  canManageManualGroups.value ? '标签保存在工作台自己的数据库中，不会写回 WA/TG 原生分组。' : '当前账号没有标签管理权限'
 ));
 
 watch(
   () => props.group && props.group.id,
   () => {
-    manualDraft.name = '';
     noteDraft.value = '';
     syncProfileDraft();
   },
@@ -439,28 +251,6 @@ watch(
   () => syncProfileDraft(),
   { immediate: true, deep: true },
 );
-
-function emitManualGroupsChange(values) {
-  emit('manual-groups-change', values);
-}
-
-function submitManualGroup() {
-  if (!canSubmitManualGroup.value) return;
-  emit('manual-group-create', {
-    name: manualDraft.name.trim(),
-    group_level: 1,
-  });
-  manualDraft.name = '';
-}
-
-function saveWorkflow(patch) {
-  if (!canEditWorkflow.value) return;
-  const normalized = { ...patch };
-  if (Object.prototype.hasOwnProperty.call(normalized, 'follow_up_at')) {
-    normalized.follow_up_at = normalizeDateTimeLocal(normalized.follow_up_at);
-  }
-  emit('workspace-save', normalized);
-}
 
 function saveProfileFields() {
   if (!canManageManualGroups.value) return;
@@ -480,10 +270,6 @@ function submitNote() {
 
 function syncProfileDraft() {
   const profile = workspaceProfile.value || {};
-  profileDraft.status = profile.status || profile.conversation_status || 'pending';
-  profileDraft.priority = profile.priority || 'normal';
-  profileDraft.starred = Boolean(profile.starred);
-  profileDraft.follow_up_at = toDateTimeLocal(profile.follow_up_at);
   profileDraft.internal_display_name = profile.internal_display_name || '';
   profileDraft.customer_type = profile.customer_type || '';
   profileDraft.owner_note = profile.owner_note || '';
@@ -526,20 +312,6 @@ function riskText(risk) {
 
 function statusClass(value) {
   return value ? 'status-ok' : 'status-warn';
-}
-
-function toDateTimeLocal(value) {
-  if (!value) return '';
-  const date = new Date(value);
-  if (!Number.isFinite(date.getTime())) return '';
-  const pad = (number) => String(number).padStart(2, '0');
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
-}
-
-function normalizeDateTimeLocal(value) {
-  if (!value) return null;
-  const date = new Date(value);
-  return Number.isFinite(date.getTime()) ? date.toISOString() : null;
 }
 
 function presenceModeText(mode) {

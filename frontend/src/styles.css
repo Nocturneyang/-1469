@@ -2214,6 +2214,32 @@ button {
   line-height: 1.2;
 }
 
+.thread-name-line {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.thread-name-line h1 {
+  min-width: 0;
+}
+
+.thread-title-tags {
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  max-width: min(360px, 28vw);
+}
+
+.thread-title-tags .group-tag {
+  max-width: 150px;
+  min-height: 22px;
+  padding: 2px 7px;
+  font-size: 11px;
+}
+
 .thread-title p {
   margin: 4px 0 0;
   color: var(--muted);
@@ -2270,6 +2296,19 @@ button {
   border-radius: 8px;
   font-size: 12px;
   font-weight: 640;
+}
+
+.thread-tag-button {
+  min-width: 104px;
+}
+
+.thread-tag-popover {
+  display: grid;
+  gap: 9px;
+}
+
+.thread-tag-popover .section-title {
+  margin-bottom: 0;
 }
 
 .message-search-bar {
@@ -3546,6 +3585,15 @@ button {
   }
 
   .thread-title h1 {
+    max-width: 72vw;
+  }
+
+  .thread-name-line {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .thread-title-tags {
     max-width: 72vw;
   }
 

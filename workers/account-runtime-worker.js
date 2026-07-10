@@ -64,6 +64,7 @@ let channelKind = '';
 let channelReady = false;
 let lastMessageAt = null;
 let lastSyncAt = 0;
+let syncInFlight = false;
 
 const outboundConsumer = createOutboundConsumer({
   db: workbenchDb,
@@ -559,14 +560,19 @@ function telegramMessageId(sent) {
 }
 
 function processSyncRequests() {
+  // 请求必须等渠道 ready 后再读取；否则 readAndClear 会把门铃删除而没有实际同步。
+  if (!CHAT_SYNC_ENABLED || !channelReady || !channelClient) return;
   const requests = readAndClearChannelSyncRequests(OUTBOX_DIR, PLATFORM, ACCOUNT);
-  if (!requests.length || !channelReady) return;
+  if (!requests.length) return;
   syncChannelSnapshot(requests[requests.length - 1].reason || 'manual')
     .catch((err) => reportError('manual_sync_failed', err, { fatal: false }));
 }
 
 async function syncChannelSnapshot(reason) {
   if (!CHAT_SYNC_ENABLED || !channelReady || !channelClient) return null;
+  if (syncInFlight) return null;
+  syncInFlight = true;
+  try {
   if (PLATFORM === 'wa' && typeof channelClient.getChats === 'function') {
     const chats = await channelClient.getChats();
     const groups = chats.map((chat) => ({
@@ -580,11 +586,16 @@ async function syncChannelSnapshot(reason) {
         pinned: Boolean(chat.pinned),
       },
     })).filter((group) => group.group_id);
+    const labelSnapshot = await syncWhatsAppLabels(chats).catch((err) => {
+      reportError('wa_label_sync_failed', err, { fatal: false });
+      return null;
+    });
     const result = replaceChannelSnapshot({
       db: workbenchDb,
       platform: PLATFORM,
       account: ACCOUNT,
       groups,
+      ...(labelSnapshot || {}),
     });
     lastSyncAt = Date.now();
     reportHeartbeat('ready', 'sync', `WA 群列表已同步：${result.group_count}`);
@@ -607,13 +618,16 @@ async function syncChannelSnapshot(reason) {
         },
       };
     }).filter((group) => group.group_id);
+    const folderSnapshot = await syncTelegramFolders(dialogs).catch((err) => {
+      reportError('tg_folder_sync_failed', err, { fatal: false });
+      return null;
+    });
     const result = replaceChannelSnapshot({
       db: workbenchDb,
       platform: PLATFORM,
       account: ACCOUNT,
       groups,
-      labels: [],
-      maps: [],
+      ...(folderSnapshot || {}),
     });
     lastSyncAt = Date.now();
     reportHeartbeat('ready', 'sync', `TG 会话列表已同步：${result.group_count}`);
@@ -621,6 +635,134 @@ async function syncChannelSnapshot(reason) {
     return result;
   }
   return null;
+  } finally {
+    syncInFlight = false;
+  }
+}
+
+async function syncWhatsAppLabels(chats) {
+  const canListLabels = typeof channelClient.getLabels === 'function';
+  const canListChatLabels = (chats || []).some((chat) => typeof chat.getLabels === 'function');
+  if (!canListLabels && !canListChatLabels) return null;
+
+  const labelRows = canListLabels ? await channelClient.getLabels() : [];
+  const labels = new Map();
+  const maps = [];
+  const addLabel = (label) => {
+    const nativeLabelId = String(
+      label?.id?._serialized || label?.id || label?.labelId || label?.label_id || '',
+    ).trim();
+    if (!nativeLabelId) return '';
+    const name = String(label?.name || label?.title || nativeLabelId).trim();
+    if (!labels.has(nativeLabelId)) {
+      labels.set(nativeLabelId, {
+        native_label_id: nativeLabelId,
+        name,
+        color: label?.color || label?.hexColor || null,
+        kind: 'label',
+        raw_json: label,
+      });
+    }
+    return nativeLabelId;
+  };
+
+  (Array.isArray(labelRows) ? labelRows : []).forEach(addLabel);
+  for (const chat of chats || []) {
+    const chatId = String(chat?.id?._serialized || chat?.id?.user || chat?.id || '').trim();
+    if (!chatId) continue;
+    let chatLabels = chat?.labels;
+    if (typeof chat?.getLabels === 'function') chatLabels = await chat.getLabels();
+    for (const label of Array.isArray(chatLabels) ? chatLabels : []) {
+      const nativeLabelId = addLabel(label);
+      if (nativeLabelId) maps.push({ group_id: chatId, native_label_id: nativeLabelId });
+    }
+  }
+  return { labels: [...labels.values()], maps };
+}
+
+async function syncTelegramFolders(dialogs) {
+  if (typeof channelClient.invoke !== 'function') return null;
+  let Api;
+  try {
+    ({ Api } = require('telegram'));
+  } catch (_) {
+    return null;
+  }
+  if (!Api?.messages?.GetDialogFilters) return null;
+  const response = await channelClient.invoke(new Api.messages.GetDialogFilters({}));
+  const filters = Array.isArray(response) ? response : (response?.filters || []);
+  const labels = filters
+    .filter((filter) => filter && Number(filter.id) > 0)
+    .map((filter) => ({
+      native_label_id: `folder:${filter.id}`,
+      name: String(filter.title || `文件夹 ${filter.id}`),
+      kind: 'folder',
+      raw_json: filter,
+    }));
+  const labelIds = new Set(labels.map((label) => label.native_label_id));
+  const maps = [];
+  for (const dialog of dialogs || []) {
+    const folderId = dialog?.folderId ?? dialog?.folder_id ?? dialog?.folder?.id;
+    const entity = dialog.entity || {};
+    const groupId = stringifyTelegramId(entity.id || dialog.id || dialog.inputEntity || '');
+    if (!groupId) continue;
+    if (folderId !== undefined && folderId !== null) {
+      const nativeLabelId = `folder:${folderId}`;
+      if (labelIds.has(nativeLabelId)) maps.push({ group_id: groupId, native_label_id: nativeLabelId });
+      continue;
+    }
+    // 某些 GramJS 版本不把 folderId 挂到 Dialog 上，使用文件夹的 includePeers
+    // 做一次物化映射；这样规则型文件夹也能在工作台中按当前会话显示。
+    const dialogKeys = telegramPeerKeys(dialog, entity, groupId);
+    for (const filter of filters) {
+      if (!filter || Number(filter.id) <= 0) continue;
+      const nativeLabelId = `folder:${filter.id}`;
+      if (!labelIds.has(nativeLabelId) || !telegramFolderMatchesDialog(filter, entity, dialogKeys)) continue;
+      maps.push({ group_id: groupId, native_label_id: nativeLabelId });
+    }
+  }
+  return { labels, maps };
+}
+
+function telegramPeerKeys(dialog, entity, groupId) {
+  const values = [
+    dialog?.peer,
+    dialog?.inputPeer,
+    dialog?.inputEntity,
+    entity,
+    groupId,
+  ];
+  const keys = new Set();
+  values.forEach((value) => {
+    if (!value) return;
+    const peer = value.peer || value;
+    if (peer.userId !== undefined) keys.add(`user:${stringifyTelegramId(peer.userId)}`);
+    if (peer.chatId !== undefined) keys.add(`chat:${stringifyTelegramId(peer.chatId)}`);
+    if (peer.channelId !== undefined) keys.add(`channel:${stringifyTelegramId(peer.channelId)}`);
+    if (peer.id !== undefined) keys.add(`id:${stringifyTelegramId(peer.id)}`);
+    keys.add(`raw:${stringifyTelegramId(peer)}`);
+  });
+  return keys;
+}
+
+function telegramFolderMatchesDialog(filter, entity, dialogKeys) {
+  const includePeers = Array.isArray(filter.includePeers) ? filter.includePeers : [];
+  if (includePeers.length) {
+    const included = includePeers.some((peer) => {
+      const keys = telegramPeerKeys({ peer }, peer, '');
+      return [...keys].some((key) => dialogKeys.has(key));
+    });
+    if (!included) return false;
+  }
+  const excludedPeers = Array.isArray(filter.excludePeers) ? filter.excludePeers : [];
+  if (excludedPeers.some((peer) => {
+    const keys = telegramPeerKeys({ peer }, peer, '');
+    return [...keys].some((key) => dialogKeys.has(key));
+  })) return false;
+  if (filter.groups && !(entity.megagroup || entity.gigagroup || entity.className === 'Chat' || entity.className === 'Channel')) return false;
+  if (filter.broadcasts && !(entity.broadcast || entity.className === 'Channel' && !entity.megagroup)) return false;
+  if (filter.bots && !entity.bot) return false;
+  return true;
 }
 
 function readTgCredential() {
