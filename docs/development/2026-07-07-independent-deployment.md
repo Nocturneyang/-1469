@@ -34,6 +34,8 @@
 - WA：参考监控项目 WA 登录方式，使用 `whatsapp-web.js`、`LocalAuth`、Chromium 和 `qr/authenticated/ready` 事件；二维码写回工作台 `runtime.sqlite` 的 `qr_payload`。
 - WA 浏览器运行参数与监控项目保持同源思路：使用 `puppeteer-extra` stealth、Mac Chrome User-Agent、本地 `webVersionCache` 兜底，并在初始化前清理该账号 LocalAuth profile 的 `Singleton*` 锁和残留 Chrome 进程。
 - 2026-07-09 追加：WA 登录 worker 和账号 runtime worker 在创建 `whatsapp-web.js` client 前执行 Chromium 生产预检：确认 session/profile 目录可写、读取 cgroup/proc 可用内存、运行一次 Chromium headless `about:blank`，并把 Chrome state 固定在 `/tmp/workbench-chrome`。这能把镜像缺依赖、profile 锁、目录不可写、容器内存不足等问题提前失败，不再等到 `client.initialize()` 后反复留下坏状态。
+- 2026-07-09 追加：生产镜像安装 `dbus` / `dbus-x11`，entrypoint 启动 system/session bus 并把有效地址传给 Chromium。WA 启动参数移除 `--no-zygote`、`--process-per-site` 和强制禁用 crashpad 等激进开关，避免部分 Debian Chromium 在 headless 启动阶段收到 `SIGTRAP`。
+- 2026-07-10 追加：生产入口不再向 Chromium 传递 `autolaunch:` 或空的 D-Bus 地址；headless 预检先使用 `--headless=new`，再回退 `--headless`。如果两次都只有 D-Bus 连接噪音并收到 `SIGTRAP`，预检记录 warning 后继续交给 Puppeteer，避免把非致命 D-Bus 噪音误判为 WA 环境不可用；预检失败会完整写入 login worker 日志。
 - 2026-07-09 追加：重新登录同一 WA 账号前，`social-workbench-login-worker` 必须等待该账号 `account-runtime-worker` 的 lease 释放后才允许清理 LocalAuth profile 和启动二维码浏览器。`account-runtime-worker` 关闭时必须先 destroy WA client，再释放 lease，避免两个 `whatsapp-web.js` Client 同时持有同一个 `session-{clientId}`。
 - 同一个服务账号同一时间只保留最新登录任务为 active；新任务会把旧的 `requested/waiting_*` 任务置为 `canceled`，避免多个 WA 登录任务互相清理浏览器 profile。
 - TG Bot：参考监控项目 TG Bot 登录方式，使用 `node-telegram-bot-api` 调用 `getMe()` 校验 token；token 只通过一次性 outbox 文件交给 worker，处理后删除 outbox 文件。
@@ -46,7 +48,7 @@ WA 二维码生成失败排查：
 - 页面显示 `Protocol error (Target.setDiscoverTargets): Target closed` 时，优先查看 `social-workbench-login-worker` 日志里的 `chromium ready:` 自检输出。
 - 如果自检失败，检查生产镜像是否安装 `chromium`，以及 `PUPPETEER_EXECUTABLE_PATH` 是否指向可执行文件。
 - 如果自检成功但客户端仍启动失败，检查 `/data/accounts` 或 `/data/sessions` 是否可写、账号 profile 目录是否残留 `SingletonLock` / `SingletonCookie` / `SingletonSocket`、容器是否因内存被重启。
-- `Code=null` 通常表示 Chromium 被外部 signal 终止，优先检查容器 OOM、`WORKBENCH_ACCOUNT_WORKER_MAX_WORKERS` 并发和 `WORKBENCH_WA_CHROME_MIN_AVAILABLE_MB` 阈值。stderr 中 D-Bus 连接失败通常不是致命根因。
+- `Code=null` 通常表示 Chromium 被 signal 终止，优先检查具体 signal、容器 OOM、`WORKBENCH_ACCOUNT_WORKER_MAX_WORKERS` 并发和 `WORKBENCH_WA_CHROME_MIN_AVAILABLE_MB` 阈值。只有 D-Bus 错误时，确认 entrypoint 已启动 bus 且 worker 继承 `DBUS_SESSION_BUS_ADDRESS` / `DBUS_SYSTEM_BUS_ADDRESS`。
 - 需要 Chrome 进程 stderr 时，可临时设置 `WORKBENCH_WA_PUPPETEER_DUMPIO=1`；默认关闭，避免生产日志过噪。
 - 默认沿用 Puppeteer websocket 连接方式，与监控项目 WA worker 保持一致；如生产环境需要切换 pipe，可临时设置 `WORKBENCH_WA_PUPPETEER_PIPE=1`。
 - 默认只同时拉起 1 个账号 runtime worker：`WORKBENCH_ACCOUNT_WORKER_MAX_WORKERS=1`。确认容器内存充足后再逐步提高；每增加一个 WA 账号都要预留一份 Chromium 内存。

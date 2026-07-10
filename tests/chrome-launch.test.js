@@ -23,8 +23,8 @@ function main() {
       WORKBENCH_WA_PUPPETEER_EXTRA_ARGS: '--one --two=2',
       WORKBENCH_WA_CHROME_PREFLIGHT: '0',
       WORKBENCH_WA_CHROME_MIN_AVAILABLE_MB: '0',
-      DBUS_SESSION_BUS_ADDRESS: 'disabled:',
-      DBUS_SYSTEM_BUS_ADDRESS: 'disabled:',
+      DBUS_SESSION_BUS_ADDRESS: 'unix:path=/tmp/workbench-session-bus',
+      DBUS_SYSTEM_BUS_ADDRESS: 'unix:path=/tmp/workbench-system-bus',
     };
     const logs = [];
     const config = buildChromeLaunchConfig(tmpDir, {
@@ -36,8 +36,9 @@ function main() {
     assert.strictEqual(config.pipe, undefined);
     assert.strictEqual(config.dumpio, true);
     assert.ok(config.args.includes('--no-sandbox'));
-    assert.ok(config.args.includes('--no-zygote'));
-    assert.ok(config.args.includes('--disable-crashpad'));
+    assert.strictEqual(config.args.includes('--no-zygote'), false);
+    assert.strictEqual(config.args.includes('--disable-crashpad'), false);
+    assert.strictEqual(config.args.includes('--process-per-site'), false);
     assert.ok(config.args.includes(`--user-agent=${buildUserAgent(null)}`));
     assert.ok(config.args.includes('--one'));
     assert.ok(config.args.includes('--two=2'));
@@ -45,8 +46,20 @@ function main() {
     assert.ok(config.env.XDG_CACHE_HOME.startsWith(path.join(tmpDir, '.chromium')));
     assert.ok(config.env.XDG_RUNTIME_DIR.startsWith(path.join(tmpDir, '.chromium')));
     assert.strictEqual(config.env.NO_AT_BRIDGE, '1');
-    assert.strictEqual(config.env.DBUS_SESSION_BUS_ADDRESS, undefined);
-    assert.strictEqual(config.env.DBUS_SYSTEM_BUS_ADDRESS, undefined);
+    assert.strictEqual(config.env.DBUS_SESSION_BUS_ADDRESS, env.DBUS_SESSION_BUS_ADDRESS);
+    assert.strictEqual(config.env.DBUS_SYSTEM_BUS_ADDRESS, env.DBUS_SYSTEM_BUS_ADDRESS);
+
+    const cleanedDbusConfig = buildChromeLaunchConfig(tmpDir, {
+      env: {
+        PUPPETEER_EXECUTABLE_PATH: process.execPath,
+        DBUS_SESSION_BUS_ADDRESS: 'autolaunch:',
+        DBUS_SYSTEM_BUS_ADDRESS: '',
+        WORKBENCH_WA_CHROME_PREFLIGHT: '0',
+        WORKBENCH_WA_CHROME_MIN_AVAILABLE_MB: '0',
+      },
+    });
+    assert.strictEqual(cleanedDbusConfig.env.DBUS_SESSION_BUS_ADDRESS, undefined);
+    assert.strictEqual(cleanedDbusConfig.env.DBUS_SYSTEM_BUS_ADDRESS, undefined);
     assert.ok(logs.some((message) => message.includes('chromium ready:')));
     assert.ok(logs.some((message) => message.includes('WA chrome runtime:')));
 
@@ -118,6 +131,25 @@ function main() {
         WORKBENCH_WA_CHROME_MIN_AVAILABLE_MB: '0',
       },
     }), /Chromium headless 预检失败/);
+
+    const dbusSigtrapChrome = path.join(tmpDir, 'dbus-sigtrap-chromium');
+    fs.writeFileSync(dbusSigtrapChrome, [
+      '#!/bin/sh',
+      'if [ "$1" = "--version" ]; then echo "Chromium 150.0.0.0"; exit 0; fi',
+      'echo "[1:2:0101/010101.000000:ERROR:dbus/bus.cc:405] Failed to connect to the bus" >&2',
+      'kill -TRAP $$',
+      '',
+    ].join('\n'));
+    fs.chmodSync(dbusSigtrapChrome, 0o755);
+    const dbusSigtrapConfig = buildChromeLaunchConfig(tmpDir, {
+      env: {
+        PUPPETEER_EXECUTABLE_PATH: dbusSigtrapChrome,
+        WORKBENCH_WA_CHROME_MIN_AVAILABLE_MB: '0',
+      },
+      log: (message) => logs.push(message),
+    });
+    assert.strictEqual(dbusSigtrapConfig.executablePath, dbusSigtrapChrome);
+    assert.ok(logs.some((message) => message.includes('D-Bus-only stderr')));
 
     const original = new Error('Protocol error (Target.setDiscoverTargets): Target closed');
     const enriched = enrichChromeLaunchError(original, config);

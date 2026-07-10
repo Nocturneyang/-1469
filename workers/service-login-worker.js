@@ -259,6 +259,7 @@ function startWaLogin(request) {
       error_message: err.message,
       worker_message: 'WA 浏览器启动环境不可用',
     }, request);
+    log(`WA browser preflight unavailable for ${request.account}: ${err.stack || err.message}`);
     return;
   }
 
