@@ -674,7 +674,7 @@ async function loadRequests({ silent = false } = {}) {
     syncTguDialogFlow();
     syncAutoRefresh();
   } catch (err) {
-    ElMessage.error('无法加载登录任务');
+    if (!silent) ElMessage.error('无法加载登录任务');
   } finally {
     if (!silent) loading.value = false;
     requestsLoading = false;

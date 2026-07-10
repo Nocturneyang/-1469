@@ -7,8 +7,10 @@ const DEFAULT_RUNTIME_DB_PATH =
 function openRuntimeDb(dbPath = DEFAULT_RUNTIME_DB_PATH) {
   ensureDirectory(dbPath);
   const db = new Database(dbPath);
-  db.pragma('journal_mode = WAL');
   db.pragma('busy_timeout = 5000');
+  // API 轮询和 WA/TG worker 会同时打开并写入账号 runtime.sqlite。
+  // 先设置等待锁，避免 journal_mode=WAL 在并发打开时直接抛 SQLITE_BUSY。
+  db.pragma('journal_mode = WAL');
   db.exec(`
     CREATE TABLE IF NOT EXISTS collector_heartbeats (
       account_id TEXT NOT NULL,
