@@ -48,7 +48,7 @@
           </div>
         </div>
 
-        <div v-if="loading" class="service-login-empty">加载中...</div>
+        <div v-if="loading && !requests.length" class="service-login-empty">加载中...</div>
         <div v-else-if="!requests.length" class="service-login-empty">
           <strong>暂无账号</strong>
           <span>点击“添加账号”开始接入 WA 或 TG 服务账号。</span>
@@ -464,6 +464,7 @@ const tguDraft = reactive({
   password: '',
 });
 let refreshTimer = null;
+let requestsLoading = false;
 
 const activeStatuses = new Set(['requested', 'waiting_qr', 'waiting_verification', 'waiting_code', 'waiting_password']);
 
@@ -658,10 +659,16 @@ function handleLoginModeChange() {
   }
 }
 
-async function loadRequests() {
-  loading.value = true;
+async function loadRequests({ silent = false } = {}) {
+  // 自动刷新不能把整张账号卡片切换成 loading 状态，否则生产环境接口
+  // 响应稍慢时，二维码会在每次轮询期间消失。也不要允许轮询请求重叠，
+  // 避免较早的响应覆盖较新的登录任务状态。
+  if (requestsLoading) return;
+  requestsLoading = true;
+  if (!silent) loading.value = true;
   try {
-    requests.value = await fetchServiceAccountLoginRequests();
+    const nextRequests = await fetchServiceAccountLoginRequests();
+    requests.value = silent ? mergeActiveRequests(nextRequests) : nextRequests;
     renderQrMatrices();
     syncVerificationDrafts();
     syncTguDialogFlow();
@@ -669,8 +676,19 @@ async function loadRequests() {
   } catch (err) {
     ElMessage.error('无法加载登录任务');
   } finally {
-    loading.value = false;
+    if (!silent) loading.value = false;
+    requestsLoading = false;
   }
+}
+
+function mergeActiveRequests(nextRequests) {
+  const nextIds = new Set(nextRequests.map((request) => request.request_id));
+  const missingActiveRequests = requests.value.filter((request) => (
+    activeStatuses.has(request.status) && !nextIds.has(request.request_id)
+  ));
+  return missingActiveRequests.length
+    ? [...nextRequests, ...missingActiveRequests]
+    : nextRequests;
 }
 
 async function submit() {
@@ -922,9 +940,16 @@ function syncTguDialogFlow() {
 function renderQrMatrices() {
   const nextKeys = new Set();
   requests.value.forEach((request) => {
-    if (!request.qr_payload) return;
-    nextKeys.add(request.request_id);
-    qrMatrices[request.request_id] = buildQrMatrix(request.qr_payload);
+    if (request.qr_payload) {
+      nextKeys.add(request.request_id);
+      qrMatrices[request.request_id] = buildQrMatrix(request.qr_payload);
+      return;
+    }
+    // worker 在刷新/重连的短暂窗口内可能先回写 waiting_qr，再回写新的
+    // qr_payload。保留当前二维码，避免用户正在扫码时页面闪空。
+    if (request.status === 'waiting_qr' && qrMatrices[request.request_id]) {
+      nextKeys.add(request.request_id);
+    }
   });
   Object.keys(qrMatrices).forEach((key) => {
     if (!nextKeys.has(key)) delete qrMatrices[key];
@@ -956,7 +981,7 @@ function syncAutoRefresh() {
   const shouldRefresh = requests.value.some((request) => activeStatuses.has(request.status));
   if (shouldRefresh && !refreshTimer) {
     refreshTimer = window.setInterval(() => {
-      loadRequests();
+      loadRequests({ silent: true });
     }, 3000);
   }
   if (!shouldRefresh) stopAutoRefresh();
