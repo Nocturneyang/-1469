@@ -7,16 +7,6 @@
         </div>
         <div>
           <div class="thread-name-line">
-            <div v-if="workbenchTags.length" class="thread-title-tags" aria-label="工作台标签">
-              <span
-                v-for="label in workbenchTags"
-                :key="label.id || label.native_group_id || label.native_label_id"
-                class="group-tag workbench-tag"
-                :title="labelTitle(label)"
-              >
-                {{ labelDisplayName(label) }}
-              </span>
-            </div>
             <h1 :title="group.group_name">{{ group.group_name }}</h1>
           </div>
           <p>{{ platformName(group.platform) }} <span>|</span> 通过 {{ accountDisplayName }} 观测和回复</p>
@@ -28,6 +18,22 @@
               {{ group.sync_groups_enabled ? '同步渠道分组' : '工作台标签' }}
             </em>
             <em class="status-neutral">{{ accountRoleText(group.account_role) }}</em>
+            <span
+              v-for="label in workbenchTags"
+              :key="`workbench:${label.id || label.native_group_id || label.native_label_id}`"
+              class="group-tag workbench-tag thread-header-tag"
+              :title="labelTitle(label)"
+            >
+              {{ labelDisplayName(label) }}
+            </span>
+            <span
+              v-for="label in channelGroupTags"
+              :key="`channel:${label.id || label.native_group_id || label.native_label_id}`"
+              class="group-tag channel-tag thread-header-tag"
+              :title="channelGroupTitle(label)"
+            >
+              {{ labelDisplayName(label) }}
+            </span>
           </div>
         </div>
       </div>
@@ -332,6 +338,10 @@ const workbenchTags = computed(() => (
   ((props.group && props.group.labels) || []).filter(isWorkbenchTag)
 ));
 
+const channelGroupTags = computed(() => (
+  ((props.group && props.group.labels) || []).filter((label) => label && !isWorkbenchTag(label))
+));
+
 const selectedManualGroupIds = computed(() => (
   workbenchTags.value
     .map((label) => String(label.native_group_id || label.native_label_id || '').trim())
@@ -405,6 +415,10 @@ function labelDisplayName(label) {
 
 function labelTitle(label) {
   return `工作台标签 · ${labelDisplayName(label)}`;
+}
+
+function channelGroupTitle(label) {
+  return `渠道分组 · ${labelDisplayName(label)}`;
 }
 
 function attachmentPreview(attachment) {
