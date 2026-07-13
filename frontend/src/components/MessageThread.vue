@@ -6,15 +6,10 @@
         <div class="thread-title-copy">
           <div class="thread-name-line"><h1 :title="group.group_name">{{ group.internal_display_name || group.group_name }}</h1></div>
           <p>{{ platformName(group.platform) }} · {{ accountDisplayName }} · {{ canSend(group) ? '可回复' : '只读' }}</p>
-          <div class="thread-status-line">
-            <em :class="canSend(group) ? 'status-ok' : 'status-warn'">{{ canSend(group) ? '可发送' : '发送不可用' }}</em>
-            <em class="status-neutral">{{ accountRoleText(group.account_role) }}</em>
-          </div>
         </div>
       </div>
 
       <div class="thread-label-zone">
-        <span class="thread-label-caption">当前会话标签</span>
         <div class="thread-label-row">
           <span v-for="label in visibleHeaderTags" :key="labelKey(label)" class="header-tag" :class="isWorkbenchTag(label) ? 'workbench' : 'channel'" :title="labelTitle(label)">
             {{ headerLabelText(label) }}
@@ -26,8 +21,8 @@
               <span v-for="label in headerTags" :key="`all-${labelKey(label)}`" class="header-tag" :class="isWorkbenchTag(label) ? 'workbench' : 'channel'">{{ headerLabelText(label) }}</span>
             </div>
           </el-popover>
-          <el-popover v-if="canManageManualGroups" placement="bottom-end" :width="300" trigger="click">
-            <template #reference><el-button text class="header-tag-edit">编辑</el-button></template>
+          <el-popover v-if="canManageManualGroups" placement="bottom-end" :width="312" trigger="click" popper-class="tag-editor-popper" :teleported="true">
+            <template #reference><el-button circle text class="header-tag-edit" aria-label="编辑工作台标签"><el-icon><EditPen /></el-icon></el-button></template>
             <div class="thread-tag-popover">
               <div class="tag-popover-heading"><strong>工作台标签</strong><span>仅在工作台内生效</span></div>
               <el-select
@@ -90,7 +85,7 @@
 
 <script setup>
 import { computed, nextTick, reactive, ref, watch } from 'vue';
-import { Document } from '@element-plus/icons-vue';
+import { Document, EditPen } from '@element-plus/icons-vue';
 import { formatMessageTime, platformClass, platformName, statusText } from '../utils/format';
 
 const props = defineProps({
@@ -121,7 +116,6 @@ const manualGroupOptions = computed(() => props.manualGroups
 const canSubmitManualGroup = computed(() => canManageManualGroups.value && !props.savingManualGroups && Boolean(manualDraft.name.trim()));
 
 function platformShort(platform) { return platform === 'wa' ? 'W' : platform === 'tg' ? 'T' : '?'; }
-function accountRoleText(role) { return ({ service: '服务账号', both: '双用途', collector: '采集账号' })[role] || role || '服务账号'; }
 function canSend(group) { return Boolean(group && group.send_enabled !== false && Number(group.send_enabled) !== 0 && (!group.permissions || group.permissions.can_reply !== false)); }
 function isWorkbenchTag(label) { return Number(label?.is_manual) === 1 || String(label?.source || '').startsWith('manual'); }
 function labelKey(label) { return label.id || label.native_label_id || label.native_group_id || label.name; }

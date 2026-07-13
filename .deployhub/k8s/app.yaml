@@ -118,7 +118,7 @@ spec:
             - name: WORKBENCH_LABEL_SYNC_ENABLED
               value: "1"
             - name: WORKBENCH_SEND_ENABLED
-              value: "0"
+              value: "1"
             - name: SSO_ENABLED
               value: "true"
             - name: SSO_LOGIN_URL
