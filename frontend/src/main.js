@@ -12,6 +12,7 @@ import { ElFormItem } from 'element-plus/es/components/form/index.mjs';
 import ElIcon from 'element-plus/es/components/icon/index.mjs';
 import ElInput from 'element-plus/es/components/input/index.mjs';
 import { ElOption, ElOptionGroup } from 'element-plus/es/components/select/index.mjs';
+import ElPopover from 'element-plus/es/components/popover/index.mjs';
 import ElSegmented from 'element-plus/es/components/segmented/index.mjs';
 import ElSelect from 'element-plus/es/components/select/index.mjs';
 import { ElTabPane } from 'element-plus/es/components/tabs/index.mjs';
@@ -39,6 +40,7 @@ const app = createApp(App);
   ElInput,
   ElOption,
   ElOptionGroup,
+  ElPopover,
   ElSegmented,
   ElSelect,
   ElTabPane,

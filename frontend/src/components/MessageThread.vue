@@ -3,9 +3,12 @@
     <header v-if="group" class="thread-header">
       <div class="thread-title">
         <div class="platform-icon large" :class="platformClass(group.platform)">{{ platformShort(group.platform) }}</div>
-        <div class="thread-title-copy">
-          <div class="thread-name-line"><h1 :title="group.group_name">{{ group.internal_display_name || group.group_name }}</h1></div>
-          <p>{{ platformName(group.platform) }} · {{ accountDisplayName }} · {{ canSend(group) ? '可回复' : '只读' }}</p>
+        <div class="thread-name-line">
+          <h1 :title="group.group_name">{{ group.internal_display_name || group.group_name }}</h1>
+          <span class="thread-separator">·</span>
+          <span class="thread-platform-badge" :class="platformClass(group.platform)">{{ platformShort(group.platform) }}</span>
+          <span class="thread-separator">·</span>
+          <span class="thread-account" :title="accountDisplayName">{{ accountDisplayName }}</span>
         </div>
       </div>
 
@@ -88,7 +91,7 @@
 <script setup>
 import { computed, nextTick, reactive, ref, watch } from 'vue';
 import { Document, EditPen } from '@element-plus/icons-vue';
-import { formatMessageTime, platformClass, platformName, statusText } from '../utils/format';
+import { formatMessageTime, platformClass, statusText } from '../utils/format';
 
 const props = defineProps({
   group: { type: Object, default: null }, messages: { type: Array, default: () => [] }, paging: { type: Object, default: () => ({ has_more: false, before_id: null }) }, loadingOlder: { type: Boolean, default: false }, stickToBottom: { type: Boolean, default: true }, manualGroups: { type: Array, default: () => [] }, savingManualGroups: { type: Boolean, default: false },
