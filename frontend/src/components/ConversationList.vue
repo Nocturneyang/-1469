@@ -21,7 +21,7 @@
             <span v-for="label in visibleLabels(group)" :key="labelKey(label)" class="mini-tag" :class="tagClass(label)" :title="labelText(label)">{{ labelText(label) }}</span>
             <span v-if="group.labels.length > 2" class="mini-tag tag-more">+{{ group.labels.length - 2 }}</span>
           </div>
-          <div class="workflow-line"><span class="workflow-pill">{{ statusText(group.conversation_status || group.status) }}</span><em>{{ accountDisplayName(group) }}</em></div>
+          <div class="workflow-line"><span class="workflow-pill" :class="group.conversation_status || group.status">{{ statusText(group.conversation_status || group.status) }}</span><em>{{ accountDisplayName(group) }}</em></div>
           <div class="preview-line"><span :title="preview(group)">{{ preview(group) }}</span></div>
         </div>
         <span v-if="group.unread_count" class="unread-badge">{{ group.unread_count }}</span>

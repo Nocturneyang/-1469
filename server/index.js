@@ -295,7 +295,7 @@ function configuredOrigins() {
   const values = [process.env.WORKBENCH_PUBLIC_ORIGIN, ...(process.env.WORKBENCH_ALLOWED_ORIGINS || '').split(',')]
     .map((value) => String(value || '').trim()).filter(Boolean);
   if (process.env.NODE_ENV !== 'production') {
-    values.push('http://localhost:3310', 'http://127.0.0.1:3310');
+    values.push('http://localhost:3310', 'http://127.0.0.1:3310', 'http://localhost:3311', 'http://127.0.0.1:3311');
   }
   return new Set(values);
 }
@@ -375,7 +375,7 @@ function safeReturnUrl(req, requested) {
 }
 
 if (require.main === module) {
-  const port = Number(process.env.WORKBENCH_PORT || process.env.PORT || 3310);
+  const port = Number(process.env.WORKBENCH_PORT || process.env.PORT || 3311);
   const app = createApp();
   app.listen(port, () => {
     console.log(`[workbench] API/UI listening on http://localhost:${port}`);
