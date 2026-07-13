@@ -1,9 +1,20 @@
 <template>
   <header class="topbar">
     <div class="toolbar-title">
-      <strong>Inbox</strong>
+      <strong>社媒客服工作台</strong>
       <span>{{ toolbarSubtitle }}</span>
     </div>
+
+    <el-input
+      class="topbar-search"
+      :model-value="modelValue.search"
+      clearable
+      placeholder="搜索会话…"
+      aria-label="搜索会话"
+      @input="(search) => update({ search })"
+    >
+      <template #prefix><el-icon><Search /></el-icon></template>
+    </el-input>
 
     <div class="segmented platform-tabs" aria-label="平台过滤">
       <button
@@ -85,7 +96,7 @@
 
 <script setup>
 import { computed } from 'vue';
-import { Refresh } from '@element-plus/icons-vue';
+import { Refresh, Search } from '@element-plus/icons-vue';
 
 const props = defineProps({
   modelValue: { type: Object, required: true },

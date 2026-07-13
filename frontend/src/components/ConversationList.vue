@@ -1,13 +1,8 @@
 <template>
   <aside class="conversation-pane">
     <div class="conversation-meta">
-      <div><span>{{ scopeLabel }}</span><strong>{{ groups.length }}</strong></div>
-      <button class="sort-button" type="button" @click="$emit('refresh')">按最新消息 <el-icon><Sort /></el-icon></button>
-    </div>
-    <div class="conversation-search">
-      <el-input :model-value="search" clearable placeholder="搜索会话" @input="$emit('search-change', $event)">
-        <template #prefix><el-icon><Search /></el-icon></template>
-      </el-input>
+      <div><strong>会话列表</strong><span>{{ scopeLabel }} · {{ groups.length }}</span></div>
+      <button class="sort-button" type="button" title="刷新会话" aria-label="刷新会话" @click="$emit('refresh')"><el-icon><Refresh /></el-icon></button>
     </div>
 
     <div v-if="loading" class="list-state">加载中...</div>
@@ -31,7 +26,7 @@
 </template>
 
 <script setup>
-import { Search, Sort } from '@element-plus/icons-vue';
+import { Refresh } from '@element-plus/icons-vue';
 import { formatTime, platformClass } from '../utils/format';
 
 defineProps({ groups: { type: Array, default: () => [] }, loading: { type: Boolean, default: false }, selectedId: { type: String, default: '' }, scopeLabel: { type: String, default: '全部' }, search: { type: String, default: '' } });

@@ -21,7 +21,7 @@ import 'element-plus/dist/index.css';
 import './styles.css';
 import App from './App.vue';
 
-window.__SOCIAL_WORKBENCH_BUILD__ = '2026-07-10-security-reliability-three-column';
+window.__SOCIAL_WORKBENCH_BUILD__ = '2026-07-13-stitch-engineered-workbench';
 
 const app = createApp(App);
 [

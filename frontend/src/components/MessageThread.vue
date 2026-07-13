@@ -55,12 +55,14 @@
     </div>
     <div v-else class="message-scroll" ref="scrollRef" @scroll="handleScroll">
       <div v-if="paging && paging.has_more" class="load-older-row"><el-button :loading="loadingOlder" @click="$emit('load-older')">加载更早消息</el-button></div>
+      <div class="message-date"><span>今天</span></div>
       <div v-for="message in messages" :key="message.id" class="message-row" :class="message.direction === 'outbound' ? 'outbound' : 'inbound'" :data-raw-id="message.raw_id || null" :data-readable="isReadableMessage(message) ? 'true' : null">
-        <div v-if="message.direction !== 'outbound'" class="sender-chip">客</div>
-        <article class="bubble" :class="{ failed: message.status === 'failed' || message.status === 'dead' }">
-          <div class="bubble-author">{{ message.direction === 'outbound' ? accountDisplayName : message.sender_name }}</div>
-          <blockquote v-if="message.quote_msg_id">引用消息 {{ message.quote_msg_id }}</blockquote>
-          <p>{{ message.display_text || message.text || (message.has_media ? '[媒体消息]' : '') }}</p>
+        <div class="sender-chip">{{ message.direction === 'outbound' ? '我' : '客' }}</div>
+        <div class="message-content">
+          <div class="bubble-author"><span>{{ message.direction === 'outbound' ? '您' : (message.sender_name || group.group_name) }}</span><time>{{ formatMessageTime(message.timestamp || message.created_at) }}</time></div>
+          <article class="bubble" :class="{ failed: message.status === 'failed' || message.status === 'dead' }">
+            <blockquote v-if="message.quote_msg_id">引用消息 {{ message.quote_msg_id }}</blockquote>
+            <p>{{ message.display_text || message.text || (message.has_media ? '[媒体消息]' : '') }}</p>
           <div v-if="message.attachments && message.attachments.length" class="attachment-stack">
             <div v-for="attachment in message.attachments" :key="attachment.id || attachment.name" class="attachment-row">
               <img v-if="attachmentPreview(attachment)" :src="attachmentPreview(attachment)" alt="">
@@ -70,14 +72,14 @@
             </div>
           </div>
           <div v-if="message.error_display || message.error_message" class="status-detail">{{ message.error_display || message.error_message }}</div>
-          <footer>
-            <time>{{ formatMessageTime(message.timestamp || message.created_at) }}</time>
+            <footer>
             <span v-if="statusText(message.status)" class="status" :class="`status-${message.status}`">{{ statusText(message.status) }}</span>
             <button type="button" class="message-action-button" @click="$emit('quote', message)">引用</button>
             <button v-if="['pending', 'paused'].includes(message.status) && canSend(group)" type="button" class="message-action-button" @click="$emit('cancel', message)">取消</button>
             <button v-if="['failed', 'dead', 'paused', 'canceled'].includes(message.status) && canSend(group)" type="button" class="message-action-button danger" @click="$emit('retry', message)">重试</button>
-          </footer>
-        </article>
+            </footer>
+          </article>
+        </div>
       </div>
     </div>
   </section>

@@ -1,10 +1,10 @@
 <template>
   <aside class="service-rail" :class="{ collapsed }">
     <div class="rail-brand">
-      <div class="brand-mark">客</div>
+      <div class="brand-mark">SW</div>
       <div class="brand-copy">
-        <strong>客服工作台</strong>
-        <span>WA / TG Inbox</span>
+        <strong>社媒工作台</strong>
+        <span>IM Operations</span>
       </div>
       <button
         type="button"
@@ -22,7 +22,7 @@
 
     <div class="portal-shortcuts" aria-label="工作台导航">
       <span class="portal-shortcut active" title="客服工作台">
-        <span>客</span>
+        <span><el-icon><ChatDotRound /></el-icon></span>
         <strong>工作台</strong>
       </span>
       <button
@@ -31,7 +31,7 @@
         title="服务账号总览与登录"
         @click="$emit('open-service-access')"
       >
-        <span>号</span>
+        <span><el-icon><Connection /></el-icon></span>
         <strong>服务账号</strong>
       </button>
       <a
@@ -41,7 +41,7 @@
         title="坐席权限管理"
         @click.prevent="$emit('open-permissions')"
       >
-        <span>权</span>
+        <span><el-icon><UserFilled /></el-icon></span>
         <strong>权限管理</strong>
       </a>
     </div>
@@ -53,7 +53,7 @@
       :title="`全部已接入账号，${totalMessageCount} 条消息`"
       @click="$emit('clear')"
     >
-      <span class="rail-icon">全</span>
+      <span class="rail-icon"><el-icon><Collection /></el-icon></span>
       <span>
         <strong>全部已接入账号</strong>
         <small>{{ totalMessageCount }} 条消息</small>
@@ -98,7 +98,7 @@
       title="我的账户"
       @click="$emit('open-account-settings')"
     >
-      <span class="rail-icon">我</span>
+      <span class="rail-icon"><el-icon><User /></el-icon></span>
       <span>
         <strong>{{ operatorName }}</strong>
         <small>我的账户 / 退出</small>
@@ -109,7 +109,15 @@
 
 <script setup>
 import { computed } from 'vue';
-import { Expand, Fold } from '@element-plus/icons-vue';
+import {
+  ChatDotRound,
+  Collection,
+  Connection,
+  Expand,
+  Fold,
+  User,
+  UserFilled,
+} from '@element-plus/icons-vue';
 import { platformClass, platformName } from '../utils/format';
 
 const props = defineProps({

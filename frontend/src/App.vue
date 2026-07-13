@@ -645,9 +645,11 @@ function toggleServiceRail() {
 
 function readStoredRailCollapsed() {
   try {
-    return window.localStorage.getItem('workbench.serviceRailCollapsed') === '1';
+    const stored = window.localStorage.getItem('workbench.serviceRailCollapsed');
+    if (stored === '0' || stored === '1') return stored === '1';
+    return true;
   } catch (err) {
-    return false;
+    return true;
   }
 }
 

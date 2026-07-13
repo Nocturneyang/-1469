@@ -2,18 +2,19 @@
   <aside class="inspector-pane customer-profile-pane">
     <template v-if="group">
       <header class="inspector-work-header">
-        <div><span>会话处理</span><small>仅保留当前处理所需信息</small></div>
+        <div><span>会话处理</span><small>状态、备注与协作动态</small></div>
         <span class="inspector-platform" :class="platformClass(group.platform)">{{ platformShort(group.platform) }}</span>
       </header>
 
       <section class="inspector-section status-section">
-        <div class="section-title">会话状态</div>
+        <div class="section-title">状态</div>
         <el-select v-model="profileDraft.status" :disabled="!canManage" @change="saveField({ status: $event })">
           <el-option label="待处理" value="pending" />
           <el-option label="跟进中" value="in_progress" />
           <el-option label="已解决" value="resolved" />
           <el-option label="暂停" value="paused" />
         </el-select>
+        <div class="conversation-health"><i></i>{{ isOnline ? '会话活跃' : '渠道暂未在线' }}</div>
       </section>
 
       <section class="inspector-section notes-section">
