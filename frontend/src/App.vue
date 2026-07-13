@@ -193,9 +193,11 @@ const customerProfileOpen = ref(readStoredCustomerProfileOpen());
 const currentView = ref(resolveCurrentView());
 const workbenchBootstrapped = ref(false);
 
-const AUTO_REFRESH_MS = 5000;
-const PENDING_REFRESH_MS = 1500;
+const AUTO_REFRESH_MS = 1500;
+const PENDING_REFRESH_MS = 450;
 const PENDING_REFRESH_MAX_MS = 45000;
+const GROUP_LIVE_REFRESH_MS = 4000;
+const WORKSPACE_LIVE_REFRESH_MS = 8000;
 const READ_PROGRESS_DEBOUNCE_MS = 350;
 const FILTER_DEBOUNCE_MS = 80;
 const CHANNEL_REFRESH_MS = 700;
@@ -234,6 +236,8 @@ let channelRefreshTimer = null;
 let channelRefreshInFlight = false;
 let pendingRefreshStartedAt = 0;
 let refreshingActive = false;
+let lastGroupLiveRefreshAt = 0;
+let lastWorkspaceLiveRefreshAt = 0;
 let readProgressTimer = null;
 let pendingReadProgress = null;
 let readProgressInFlight = false;
@@ -278,6 +282,8 @@ function goWorkbench() {
 onMounted(async () => {
   window.addEventListener('popstate', syncRouteFromLocation);
   window.addEventListener('keydown', handleGlobalShortcut);
+  window.addEventListener('focus', handleForegroundRefresh);
+  document.addEventListener('visibilitychange', handleVisibilityRefresh);
 
   const authUser = await hydrateWorkbenchAuth();
   if (!authUser && isAuthRedirecting()) return;
@@ -289,6 +295,8 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   window.removeEventListener('popstate', syncRouteFromLocation);
   window.removeEventListener('keydown', handleGlobalShortcut);
+  window.removeEventListener('focus', handleForegroundRefresh);
+  document.removeEventListener('visibilitychange', handleVisibilityRefresh);
   clearTimeout(searchTimer);
   clearTimeout(readProgressTimer);
   clearTimeout(typingPresenceTimer);
@@ -760,36 +768,93 @@ function mergeMessages(...sets) {
 
 async function handleSend(message) {
   if (!selectedGroup.value) return;
+  const group = { ...selectedGroup.value };
   const payload = typeof message === 'string' ? { text: message, attachments: [] } : (message || {});
   const text = String(payload.text || '').trim();
   const attachments = Array.isArray(payload.attachments) ? payload.attachments : [];
   if (!text && !attachments.length) return;
+  const clientMsgId = createClientMsgId();
+  const quoteMsgId = payload.quote_msg_id || (quoteMessage.value && (
+    quoteMessage.value.remote_msg_id || quoteMessage.value.message_id || quoteMessage.value.raw_id || quoteMessage.value.outbound_id
+  ));
+  const optimistic = createOptimisticOutbound({
+    group,
+    clientMsgId,
+    text,
+    attachments,
+    quoteMsgId,
+  });
+  messages.value = mergeMessages(messages.value, [optimistic]);
+  writeMessageCache(messageCacheKey(group), messages.value, messagePaging.value);
+  stickToBottom.value = true;
+  quoteMessage.value = null;
+  startPendingRefresh();
   sending.value = true;
   try {
     const reply = await createReply({
-      client_msg_id: createClientMsgId(),
-      platform: selectedGroup.value.platform,
-      account: selectedGroup.value.account,
-      group_id: selectedGroup.value.group_id,
+      client_msg_id: clientMsgId,
+      platform: group.platform,
+      account: group.account,
+      group_id: group.group_id,
       text,
       attachments,
-      quote_msg_id: payload.quote_msg_id || (quoteMessage.value && (
-        quoteMessage.value.remote_msg_id || quoteMessage.value.message_id || quoteMessage.value.raw_id || quoteMessage.value.outbound_id
-      )),
+      quote_msg_id: quoteMsgId,
     });
-    stickToBottom.value = true;
-    quoteMessage.value = null;
-    // 外发任务已经写入工作台账本后立即恢复输入，消息/列表刷新放到后台并行执行。
+    patchOptimisticOutbound(clientMsgId, {
+      id: `outbound-${reply.outbound_id}`,
+      outbound_id: reply.outbound_id,
+      status: reply.status,
+    });
+    // 外发任务已进入账本；输入框立即恢复，状态刷新在后台继续。
     sending.value = false;
-    await Promise.all([
+    Promise.all([
       loadMessages(),
       loadGroups({ silent: true }),
-    ]);
+    ]).catch(() => {});
     if (LIVE_OUTBOUND_STATUSES.has(reply.status)) startPendingRefresh();
   } catch (err) {
+    patchOptimisticOutbound(clientMsgId, {
+      status: 'failed',
+      error_display: '发送任务创建失败，请重新发送',
+    });
+    updatePendingRefreshState();
     ElMessage.error('发送任务创建失败');
   } finally {
     sending.value = false;
+  }
+}
+
+function createOptimisticOutbound({ group, clientMsgId, text, attachments, quoteMsgId }) {
+  const now = Date.now() / 1000;
+  return {
+    id: `optimistic-${clientMsgId}`,
+    client_msg_id: clientMsgId,
+    platform: group.platform,
+    account: group.account,
+    group_id: group.group_id,
+    direction: 'outbound',
+    sender_name: group.account_display_name || group.account,
+    text,
+    display_text: text,
+    quote_msg_id: quoteMsgId || null,
+    attachments: attachments.map((attachment) => ({ ...attachment })),
+    status: 'pending',
+    timestamp: now,
+    sort_time: now,
+    created_at: new Date().toISOString(),
+    source: 'workbench',
+    optimistic: true,
+  };
+}
+
+function patchOptimisticOutbound(clientMsgId, patch) {
+  const index = messages.value.findIndex((message) => message.client_msg_id === clientMsgId);
+  if (index < 0) return;
+  const nextMessages = [...messages.value];
+  nextMessages[index] = { ...nextMessages[index], ...patch, optimistic: false };
+  messages.value = nextMessages;
+  if (selectedGroup.value) {
+    writeMessageCache(messageCacheKey(selectedGroup.value), nextMessages, messagePaging.value);
   }
 }
 
@@ -1199,6 +1264,15 @@ function startAutoRefresh() {
   }, AUTO_REFRESH_MS);
 }
 
+function handleForegroundRefresh() {
+  if (document.hidden) return;
+  refreshActiveConversation({ keepStickToBottom: true, forceAncillary: true }).catch(() => {});
+}
+
+function handleVisibilityRefresh() {
+  if (!document.hidden) handleForegroundRefresh();
+}
+
 function stopAutoRefresh() {
   if (autoRefreshTimer) clearInterval(autoRefreshTimer);
   autoRefreshTimer = null;
@@ -1218,17 +1292,24 @@ function stopPendingRefresh() {
   pendingRefreshStartedAt = 0;
 }
 
-async function refreshActiveConversation({ keepStickToBottom = false } = {}) {
-  if (refreshingActive) return;
+async function refreshActiveConversation({ keepStickToBottom = false, forceAncillary = false } = {}) {
+  if (refreshingActive || document.hidden) return;
   refreshingActive = true;
   const previousStickToBottom = stickToBottom.value;
   try {
     if (keepStickToBottom && previousStickToBottom) stickToBottom.value = true;
-    await loadGroups({ silent: true });
-    if (selectedGroup.value) {
-      await loadMessages();
-      await loadWorkspace({ silent: true });
+    const now = Date.now();
+    const refreshes = [];
+    if (forceAncillary || now - lastGroupLiveRefreshAt >= GROUP_LIVE_REFRESH_MS) {
+      lastGroupLiveRefreshAt = now;
+      refreshes.push(loadGroups({ silent: true }));
     }
+    if (selectedGroup.value) refreshes.push(loadMessages());
+    if (selectedGroup.value && (forceAncillary || now - lastWorkspaceLiveRefreshAt >= WORKSPACE_LIVE_REFRESH_MS)) {
+      lastWorkspaceLiveRefreshAt = now;
+      refreshes.push(loadWorkspace({ silent: true }));
+    }
+    await Promise.all(refreshes);
     updatePendingRefreshState();
   } finally {
     if (!keepStickToBottom) stickToBottom.value = previousStickToBottom;

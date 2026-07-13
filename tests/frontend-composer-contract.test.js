@@ -7,6 +7,7 @@ const path = require('path');
 const root = path.resolve(__dirname, '..');
 const composer = fs.readFileSync(path.join(root, 'frontend/src/components/Composer.vue'), 'utf8');
 const thread = fs.readFileSync(path.join(root, 'frontend/src/components/MessageThread.vue'), 'utf8');
+const app = fs.readFileSync(path.join(root, 'frontend/src/App.vue'), 'utf8');
 const styles = fs.readFileSync(path.join(root, 'frontend/src/styles.css'), 'utf8');
 
 for (const label of ['插入表情', '发送表情包', '发送图片', '发送文件']) {
@@ -22,5 +23,9 @@ assert.match(styles, /\.message-scroll\s*\{[^}]*background:\s*linear-gradient\(1
 assert.ok(thread.includes('class="message-footer"'), 'message status and actions must sit outside the bubble');
 assert.match(styles, /\.outbound \.bubble\s*\{[^}]*background:\s*#95ec69;/s, 'outbound bubble must use the WeChat-style green');
 assert.match(styles, /\.outbound \.bubble::after\s*\{[^}]*border-left:\s*8px solid #95ec69;/s, 'outbound bubble must expose the WeChat-style tail');
+assert.match(app, /const AUTO_REFRESH_MS = 1500;/, 'active conversations must refresh near real time');
+assert.match(app, /const PENDING_REFRESH_MS = 450;/, 'pending outbound status must refresh quickly');
+assert.match(app, /function createOptimisticOutbound\(/, 'outbound messages must render optimistically');
+assert.match(app, /visibilitychange.*handleVisibilityRefresh/, 'foreground conversations must refresh immediately');
 
 console.log('[frontend] composer media controls and WeChat-style outbound bubbles verified');

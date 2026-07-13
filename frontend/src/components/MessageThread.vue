@@ -80,7 +80,7 @@
             <span v-if="statusText(message.status)" class="status" :class="`status-${message.status}`">{{ statusText(message.status) }}</span>
             <button type="button" class="message-action-button" @click="$emit('quote', message)">引用</button>
             <button v-if="['pending', 'paused'].includes(message.status) && canSend(group)" type="button" class="message-action-button" @click="$emit('cancel', message)">取消</button>
-            <button v-if="['failed', 'dead', 'paused', 'canceled'].includes(message.status) && canSend(group)" type="button" class="message-action-button danger" @click="$emit('retry', message)">重试</button>
+            <button v-if="message.outbound_id && ['failed', 'dead', 'paused', 'canceled'].includes(message.status) && canSend(group)" type="button" class="message-action-button danger" @click="$emit('retry', message)">重试</button>
           </footer>
         </div>
       </div>

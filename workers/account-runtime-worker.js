@@ -14,6 +14,11 @@ const {
 } = require('../db/account-db');
 const { createOutboundConsumer, markDeliveredByRemoteId } = require('../lib/outbound-consumer');
 const {
+  clearResolvedOutboundDoorbells,
+  createOutboundDoorbellWatcher,
+  outboundDoorbellDir,
+} = require('../lib/outbound-doorbell');
+const {
   readAndClearChannelSyncRequests,
   replaceChannelSnapshot,
 } = require('../lib/channel-sync-store');
@@ -45,7 +50,7 @@ const OUTBOX_DIR = path.resolve(process.env.WORKBENCH_OUTBOX_DIR || path.join(DA
 const DISABLE_CHANNEL = process.env.WORKBENCH_ACCOUNT_RUNTIME_DISABLE_CHANNEL === '1';
 const SEND_ENABLED = process.env.WORKBENCH_SEND_ENABLED === '1';
 const CHAT_SYNC_ENABLED = process.env.WORKBENCH_CHAT_SYNC_ENABLED !== '0';
-const SEND_POLL_MS = boundedNumber(process.env.WORKBENCH_ACCOUNT_WORKER_SEND_POLL_MS, 2000, 500, 60000);
+const SEND_POLL_MS = boundedNumber(process.env.WORKBENCH_ACCOUNT_WORKER_SEND_POLL_MS, 500, 250, 60000);
 const HEARTBEAT_MS = boundedNumber(process.env.WORKBENCH_ACCOUNT_WORKER_HEARTBEAT_MS, 10000, 1000, 120000);
 const LEASE_TTL_MS = boundedNumber(process.env.WORKBENCH_WORKER_LEASE_TTL_MS, 45000, 15000, 300000);
 const CHAT_SYNC_MS = boundedNumber(process.env.WORKBENCH_ACCOUNT_WORKER_CHAT_SYNC_MS, 10 * 60 * 1000, 30000, 60 * 60 * 1000);
@@ -56,6 +61,8 @@ const STARTED_AT = new Date().toISOString();
 fs.mkdirSync(SESSION_DIR, { recursive: true });
 fs.mkdirSync(OUTBOX_DIR, { recursive: true });
 fs.mkdirSync(MEDIA_DIR, { recursive: true });
+const OUTBOUND_DOORBELL_DIR = outboundDoorbellDir(OUTBOX_DIR, PLATFORM, ACCOUNT);
+fs.mkdirSync(OUTBOUND_DOORBELL_DIR, { recursive: true });
 
 const rawDb = ensureRawDb(RAW_DB_PATH);
 const runtimeDb = openRuntimeDb(RUNTIME_DB_PATH);
@@ -68,6 +75,9 @@ let channelReady = false;
 let lastMessageAt = null;
 let lastSyncAt = 0;
 let syncInFlight = false;
+let outboundDrainInFlight = false;
+let outboundDrainRequested = false;
+let outboundDrainTimer = null;
 
 const outboundConsumer = createOutboundConsumer({
   db: workbenchDb,
@@ -76,6 +86,11 @@ const outboundConsumer = createOutboundConsumer({
   sendMessage: sendMessageViaChannel,
   minIntervalMs: tightenedSendMinInterval(),
   perMinuteLimit: tightenedSendPerMinute(),
+});
+const outboundDoorbellWatcher = createOutboundDoorbellWatcher({
+  directory: OUTBOUND_DOORBELL_DIR,
+  onWake: () => scheduleOutboundDrain(15),
+  onError: (err) => reportError('outbound_doorbell_watch_failed', err, { fatal: false }),
 });
 
 log(`started, account=${PLATFORM}:${ACCOUNT}, raw=${RAW_DB_PATH}, runtime=${RUNTIME_DB_PATH}, send=${SEND_ENABLED ? 'enabled' : 'disabled'}`);
@@ -88,7 +103,7 @@ const heartbeatTimer = setInterval(() => {
   tick().catch((err) => reportError('tick_failed', err, { fatal: false }));
 }, HEARTBEAT_MS);
 const sendTimer = setInterval(() => {
-  drainOutbound().catch((err) => reportError('send_loop_failed', err, { fatal: false }));
+  scheduleOutboundDrain(0);
 }, SEND_POLL_MS);
 
 process.on('SIGTERM', shutdown);
@@ -120,11 +135,42 @@ async function tick() {
 }
 
 async function drainOutbound() {
-  if (stopping || !SEND_ENABLED || !channelReady || !accountSendEnabled()) return;
-  const result = await outboundConsumer.runOnce();
-  if (result.status !== 'idle') {
-    log(`outbound result ${JSON.stringify(result)}`);
+  if (outboundDrainInFlight) {
+    outboundDrainRequested = true;
+    return;
   }
+  if (stopping || !SEND_ENABLED || !channelReady || !accountSendEnabled()) return;
+  outboundDrainInFlight = true;
+  let drainAgain = false;
+  try {
+    const result = await outboundConsumer.runOnce();
+    clearResolvedOutboundDoorbells({ directory: OUTBOUND_DOORBELL_DIR, db: workbenchDb });
+    if (result.status !== 'idle') log(`outbound result ${JSON.stringify(result)}`);
+    drainAgain = !['idle', 'paused', 'rate_limited'].includes(result.status);
+  } finally {
+    outboundDrainInFlight = false;
+    const requested = outboundDrainRequested;
+    outboundDrainRequested = false;
+    if (drainAgain || requested) scheduleOutboundDrain(0);
+  }
+}
+
+function scheduleOutboundDrain(delayMs = 0) {
+  if (stopping) return;
+  const delay = Math.max(0, Number(delayMs) || 0);
+  if (outboundDrainInFlight) {
+    outboundDrainRequested = true;
+    return;
+  }
+  if (outboundDrainTimer) {
+    if (delay > 0) return;
+    clearTimeout(outboundDrainTimer);
+  }
+  outboundDrainTimer = setTimeout(() => {
+    outboundDrainTimer = null;
+    drainOutbound().catch((err) => reportError('send_loop_failed', err, { fatal: false }));
+  }, delay);
+  outboundDrainTimer.unref?.();
 }
 
 function accountSendEnabled() {
@@ -202,6 +248,7 @@ async function startWhatsAppRuntime() {
     upsertProfile('ready', displayName);
     reportHeartbeat('ready', 'monitoring', `WA runtime 已接管：${displayName}`);
     recordRuntimeEvent('account_ready', 'info', `WA 账号已接管：${displayName}`);
+    scheduleOutboundDrain(0);
     await syncChannelSnapshot('ready').catch((err) => reportError('wa_sync_failed', err, { fatal: false }));
   });
 
@@ -291,6 +338,7 @@ async function startTelegramBotRuntime(credential) {
     upsertProfile('ready', displayName || credential.display_name || ACCOUNT);
     reportHeartbeat('ready', 'monitoring', `TG Bot runtime 已接管：${displayName || ACCOUNT}`);
     recordRuntimeEvent('account_ready', 'info', `TG Bot 已接管：${displayName || ACCOUNT}`);
+    scheduleOutboundDrain(0);
   } catch (err) {
     reportError('tg_bot_ready_failed', err);
   }
@@ -344,6 +392,7 @@ async function startTelegramUserRuntime(credential) {
     upsertProfile('ready', displayName);
     reportHeartbeat('ready', 'monitoring', `TG 用户 runtime 已接管：${displayName}`);
     recordRuntimeEvent('account_ready', 'info', `TG 用户账号已接管：${displayName}`);
+    scheduleOutboundDrain(0);
     client.addEventHandler((event) => {
       handleTgUserEvent(event).catch((err) => reportError('tg_user_message_failed', err, { fatal: false }));
     }, new NewMessage({}));
@@ -1055,6 +1104,8 @@ async function shutdown() {
   log('stopping');
   clearInterval(heartbeatTimer);
   clearInterval(sendTimer);
+  clearTimeout(outboundDrainTimer);
+  outboundDoorbellWatcher.close();
   try {
     if (PLATFORM === 'wa' && channelClient && typeof channelClient.destroy === 'function') {
       await channelClient.destroy();
