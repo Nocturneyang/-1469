@@ -7,18 +7,80 @@
       multiple
       @change="handleFileChange"
     >
+    <input
+      ref="imageInputRef"
+      class="file-input"
+      type="file"
+      accept="image/*"
+      multiple
+      @change="handleImageChange"
+    >
+    <input
+      ref="stickerInputRef"
+      class="file-input"
+      type="file"
+      accept="image/png,image/jpeg,image/webp,image/gif"
+      multiple
+      @change="handleStickerChange"
+    >
     <div class="composer-box">
       <div class="composer-toolbar">
         <button
           class="icon-button"
           type="button"
-          title="添加附件"
-          aria-label="添加附件"
+          title="插入表情"
+          aria-label="插入表情"
+          :aria-expanded="emojiOpen"
+          :disabled="disabled"
+          @click="emojiOpen = !emojiOpen"
+        >
+          <el-icon><ChatDotRound /></el-icon>
+          <span>表情</span>
+        </button>
+        <button
+          class="icon-button"
+          type="button"
+          title="发送表情包"
+          aria-label="发送表情包"
+          :disabled="disabled"
+          @click="openStickerPicker"
+        >
+          <el-icon><Postcard /></el-icon>
+          <span>表情包</span>
+        </button>
+        <button
+          class="icon-button"
+          type="button"
+          title="发送图片"
+          aria-label="发送图片"
+          :disabled="disabled"
+          @click="openImagePicker"
+        >
+          <el-icon><Picture /></el-icon>
+          <span>图片</span>
+        </button>
+        <button
+          class="icon-button"
+          type="button"
+          title="发送文件"
+          aria-label="发送文件"
           :disabled="disabled"
           @click="openFilePicker"
         >
           <el-icon><Paperclip /></el-icon>
-          <span>添加附件</span>
+          <span>文件</span>
+        </button>
+      </div>
+      <div v-if="emojiOpen" class="emoji-panel" role="listbox" aria-label="选择表情">
+        <button
+          v-for="emoji in quickEmojis"
+          :key="emoji"
+          type="button"
+          class="emoji-button"
+          :aria-label="`插入 ${emoji}`"
+          @click="insertEmoji(emoji)"
+        >
+          {{ emoji }}
         </button>
       </div>
       <div v-if="quoteMessage" class="quote-preview">
@@ -84,18 +146,28 @@
 </template>
 
 <script setup>
-import { computed, onBeforeUnmount, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
 import ElMessage from 'element-plus/es/components/message/index.mjs';
 import {
+  ChatDotRound,
   Close,
   Document,
   Paperclip,
+  Picture,
   Position,
+  Postcard,
 } from '@element-plus/icons-vue';
 
 const MAX_ATTACHMENTS = 4;
 const MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024;
 const MAX_TOTAL_ATTACHMENT_BYTES = 12 * 1024 * 1024;
+const quickEmojis = [
+  '😀', '😃', '😄', '😁', '😅', '😂', '😊', '🙂',
+  '😉', '😍', '😘', '😎', '🤔', '😐', '😮', '😭',
+  '😤', '🥳', '👍', '👎', '👌', '✌️', '🤝', '🙏',
+  '👏', '💪', '👀', '✅', '❌', '⚠️', '📌', '📎',
+  '🔥', '🎉', '✨', '💯', '❤️', '💙', '💚', '🚀',
+];
 const props = defineProps({
   group: {
     type: Object,
@@ -114,7 +186,10 @@ const props = defineProps({
 const emit = defineEmits(['send', 'clear-quote', 'typing-state']);
 const draft = ref('');
 const attachments = ref([]);
+const emojiOpen = ref(false);
 const fileInputRef = ref(null);
+const imageInputRef = ref(null);
+const stickerInputRef = ref(null);
 const textareaRef = ref(null);
 let typingTimer = null;
 const sendAllowed = computed(() => (
@@ -156,6 +231,7 @@ watch(
   () => {
     draft.value = '';
     attachments.value = [];
+    emojiOpen.value = false;
     emit('clear-quote');
     emitTyping(false);
   },
@@ -178,11 +254,32 @@ function handleEnter(event) {
 }
 
 function openFilePicker() {
+  emojiOpen.value = false;
   fileInputRef.value && fileInputRef.value.click();
+}
+
+function openImagePicker() {
+  emojiOpen.value = false;
+  imageInputRef.value && imageInputRef.value.click();
+}
+
+function openStickerPicker() {
+  emojiOpen.value = false;
+  stickerInputRef.value && stickerInputRef.value.click();
 }
 
 async function handleFileChange(event) {
   await addFiles(Array.from(event.target.files || []), 'file');
+  event.target.value = '';
+}
+
+async function handleImageChange(event) {
+  await addFiles(Array.from(event.target.files || []), 'image');
+  event.target.value = '';
+}
+
+async function handleStickerChange(event) {
+  await addFiles(Array.from(event.target.files || []), 'sticker');
   event.target.value = '';
 }
 
@@ -231,7 +328,7 @@ function fileToAttachment(file, defaultKind) {
         name: file.name || (defaultKind === 'sticker' ? 'sticker' : 'attachment'),
         type: file.type || 'application/octet-stream',
         size: file.size,
-        kind: defaultKind === 'sticker' ? 'sticker' : inferKind(file),
+        kind: defaultKind === 'sticker' ? 'sticker' : defaultKind === 'image' ? 'image' : inferKind(file),
         data_url: String(reader.result || ''),
       });
     };
@@ -261,6 +358,18 @@ function removeAttachment(id) {
   attachments.value = attachments.value.filter((attachment) => attachment.id !== id);
 }
 
+function insertEmoji(emoji) {
+  const input = textareaRef.value;
+  const start = input?.selectionStart ?? draft.value.length;
+  const end = input?.selectionEnd ?? start;
+  draft.value = `${draft.value.slice(0, start)}${emoji}${draft.value.slice(end)}`;
+  emojiOpen.value = false;
+  nextTick(() => {
+    input?.focus();
+    input?.setSelectionRange(start + emoji.length, start + emoji.length);
+  });
+}
+
 function formatSize(size) {
   const bytes = Number(size || 0);
   if (bytes >= 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
@@ -284,6 +393,7 @@ function submit() {
   });
   draft.value = '';
   attachments.value = [];
+  emojiOpen.value = false;
   emitTyping(false);
 }
 
