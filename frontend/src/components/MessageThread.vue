@@ -66,22 +66,22 @@
           <article class="bubble" :class="{ failed: message.status === 'failed' || message.status === 'dead' }">
             <blockquote v-if="message.quote_msg_id">引用消息 {{ message.quote_msg_id }}</blockquote>
             <p>{{ message.display_text || message.text || (message.has_media ? '[媒体消息]' : '') }}</p>
-          <div v-if="message.attachments && message.attachments.length" class="attachment-stack">
-            <div v-for="attachment in message.attachments" :key="attachment.id || attachment.name" class="attachment-row">
-              <img v-if="attachmentPreview(attachment)" :src="attachmentPreview(attachment)" alt="">
-              <el-icon v-else><Document /></el-icon>
-              <a v-if="attachment.media_url" class="attachment-name" :href="attachment.media_url" :download="attachment.kind === 'image' ? null : (attachment.name || '附件')" target="_blank" rel="noopener">{{ attachment.name || '附件' }}</a>
-              <span v-else class="attachment-name" :title="attachment.name || '附件'">{{ attachment.name || '附件' }}</span>
+            <div v-if="message.attachments && message.attachments.length" class="attachment-stack">
+              <div v-for="attachment in message.attachments" :key="attachment.id || attachment.name" class="attachment-row">
+                <img v-if="attachmentPreview(attachment)" :src="attachmentPreview(attachment)" alt="">
+                <el-icon v-else><Document /></el-icon>
+                <a v-if="attachment.media_url" class="attachment-name" :href="attachment.media_url" :download="attachment.kind === 'image' ? null : (attachment.name || '附件')" target="_blank" rel="noopener">{{ attachment.name || '附件' }}</a>
+                <span v-else class="attachment-name" :title="attachment.name || '附件'">{{ attachment.name || '附件' }}</span>
+              </div>
             </div>
-          </div>
-          <div v-if="message.error_display || message.error_message" class="status-detail">{{ message.error_display || message.error_message }}</div>
-            <footer>
+            <div v-if="message.error_display || message.error_message" class="status-detail">{{ message.error_display || message.error_message }}</div>
+          </article>
+          <footer class="message-footer">
             <span v-if="statusText(message.status)" class="status" :class="`status-${message.status}`">{{ statusText(message.status) }}</span>
             <button type="button" class="message-action-button" @click="$emit('quote', message)">引用</button>
             <button v-if="['pending', 'paused'].includes(message.status) && canSend(group)" type="button" class="message-action-button" @click="$emit('cancel', message)">取消</button>
             <button v-if="['failed', 'dead', 'paused', 'canceled'].includes(message.status) && canSend(group)" type="button" class="message-action-button danger" @click="$emit('retry', message)">重试</button>
-            </footer>
-          </article>
+          </footer>
         </div>
       </div>
     </div>
