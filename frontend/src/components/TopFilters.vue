@@ -1,7 +1,7 @@
 <template>
   <header class="topbar">
     <div class="toolbar-title">
-      <strong>社媒客服工作台</strong>
+      <strong>社媒服务工作台</strong>
       <span>{{ toolbarSubtitle }}</span>
     </div>
 

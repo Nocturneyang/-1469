@@ -6,6 +6,10 @@ const path = require('path');
 
 const root = path.resolve(__dirname, '..');
 const mainSource = fs.readFileSync(path.join(root, 'frontend/src/main.js'), 'utf8');
+const indexSource = fs.readFileSync(path.join(root, 'frontend/index.html'), 'utf8');
+const railSource = fs.readFileSync(path.join(root, 'frontend/src/components/ServiceAccountRail.vue'), 'utf8');
+const topFiltersSource = fs.readFileSync(path.join(root, 'frontend/src/components/TopFilters.vue'), 'utf8');
+const stylesSource = fs.readFileSync(path.join(root, 'frontend/src/styles.css'), 'utf8');
 const componentDir = path.join(root, 'frontend/src/components');
 const componentSources = fs.readdirSync(componentDir)
   .filter((name) => name.endsWith('.vue'))
@@ -25,4 +29,11 @@ for (const [tagName, registrationName] of Object.entries(requiredRegistrations))
   );
 }
 
-console.log('[frontend] global Element Plus component registrations verified');
+for (const source of [indexSource, railSource, topFiltersSource]) {
+  assert.ok(source.includes('社媒服务工作台'), 'product name must be 社媒服务工作台');
+}
+assert.ok(railSource.includes('<ChatLineSquare />'), 'brand must use the service conversation mark');
+assert.match(stylesSource, /\.brand-presence-dot\s*\{/, 'brand must expose the online service status motif');
+assert.ok(indexSource.includes('href="/favicon.svg"'), 'site must expose the branded favicon');
+
+console.log('[frontend] component registrations and brand contract verified');

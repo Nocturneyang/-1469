@@ -4120,19 +4120,40 @@ button {
 .brand-mark {
   width: 40px;
   height: 40px;
+  position: relative;
+  border: 1px solid rgba(255, 255, 255, .28);
+  border-radius: 12px;
+  color: #fff;
+  background: linear-gradient(145deg, #2f6bdf 0%, #1747c7 55%, #0c329d 100%);
+  box-shadow: 0 7px 16px rgba(23, 71, 199, .22), inset 0 1px 0 rgba(255, 255, 255, .22);
+  font-size: 22px;
+}
+.brand-mark::before {
+  content: "";
+  position: absolute;
+  inset: 5px;
+  border-radius: 8px;
+  background: linear-gradient(135deg, rgba(255, 255, 255, .14), transparent 62%);
+  pointer-events: none;
+}
+.brand-mark .el-icon { position: relative; z-index: 1; }
+.brand-presence-dot {
+  position: absolute;
+  z-index: 2;
+  right: -2px;
+  bottom: -2px;
+  width: 11px;
+  height: 11px;
+  border: 2px solid #fff;
   border-radius: 50%;
-  color: var(--accent-strong);
-  background: #e8edff;
-  box-shadow: none;
-  font-family: "Hanken Grotesk", sans-serif;
-  font-size: 13px;
-  letter-spacing: -0.03em;
+  background: #35c978;
+  box-shadow: 0 1px 4px rgba(16, 105, 58, .28);
 }
 .brand-copy strong,
 .toolbar-title strong,
 .thread-title h1,
 .inspector-work-header span { font-family: "Hanken Grotesk", "PingFang SC", sans-serif; }
-.brand-copy strong { color: var(--accent-strong); font-size: 15px; }
+.brand-copy strong { color: var(--accent-strong); font-size: 15px; letter-spacing: -.02em; }
 .rail-collapse-button,
 .rail-all-button,
 .rail-account,

@@ -1,10 +1,13 @@
 <template>
   <aside class="service-rail" :class="{ collapsed }">
     <div class="rail-brand">
-      <div class="brand-mark">SW</div>
+      <div class="brand-mark" aria-hidden="true">
+        <el-icon><ChatLineSquare /></el-icon>
+        <span class="brand-presence-dot"></span>
+      </div>
       <div class="brand-copy">
-        <strong>社媒工作台</strong>
-        <span>IM Operations</span>
+        <strong>社媒服务工作台</strong>
+        <span>Social Service Desk</span>
       </div>
       <button
         type="button"
@@ -110,6 +113,7 @@
 <script setup>
 import { computed } from 'vue';
 import {
+  ChatLineSquare,
   ChatDotRound,
   Collection,
   Connection,
