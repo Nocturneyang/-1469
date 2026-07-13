@@ -33,10 +33,7 @@
             <time>{{ formatTime(group.last_message_time) }}</time>
           </div>
           <div class="workflow-line">
-            <span v-if="group.starred" class="workflow-pill starred">星标</span>
             <span class="workflow-pill">{{ statusText(group.conversation_status || group.status) }}</span>
-            <span v-if="group.priority && group.priority !== 'normal'" class="workflow-pill priority">{{ priorityText(group.priority) }}</span>
-            <span v-if="group.follow_up_at" class="workflow-pill follow">提醒 {{ formatTime(group.follow_up_at) }}</span>
           </div>
           <div class="label-line">
             <el-icon><Folder /></el-icon>
@@ -48,7 +45,6 @@
           </div>
           <div class="row-foot">
             <em>{{ accountDisplayName(group) }}</em>
-            <span>{{ assignmentText(group) }} · {{ presenceText(group) }}</span>
           </div>
         </div>
 
@@ -103,19 +99,6 @@ function accountDisplayName(group) {
   return group.account_display_name || group.account || '';
 }
 
-function assignmentText(group) {
-  if (!group.assignment) return '未认领';
-  return group.assignment.assigned_to_name || group.assignment.assigned_to || '已认领';
-}
-
-function presenceText(group) {
-  const rows = Array.isArray(group.presence) ? group.presence : [];
-  const active = rows.filter((row) => row.operator_id && row.mode);
-  if (!active.length) return '无协作占用';
-  const typing = active.find((row) => row.mode === 'typing');
-  if (typing) return `${typing.actor_name || typing.operator_id} 正在输入`;
-  return `${active[0].actor_name || active[0].operator_id} 正在查看`;
-}
 
 function statusText(status) {
   const map = {
@@ -125,15 +108,6 @@ function statusText(status) {
     paused: '暂停',
   };
   return map[status] || '待处理';
-}
-
-function priorityText(priority) {
-  const map = {
-    low: '低',
-    high: '高',
-    urgent: '紧急',
-  };
-  return map[priority] || priority;
 }
 
 function labelText(label) {

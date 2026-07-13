@@ -8,7 +8,7 @@
 - 群列表和消息线程只读现有 `database.sqlite.messages`。
 - 外发回复写入 `outbound_messages`，支持 `created_by + client_msg_id` 幂等，并写文件门铃。
 - 新增已读、认领/移交、取消、重试等作业接口。
-- 新增 Vue 3 + Element Plus 两栏 IM 工作台界面。
+- 初版曾采用双栏 IM 界面；2026-07-10 起已迁移为会话、消息、客户资料三列结构。
 - 新增 `npm run seed:demo -- <path>`，用于生成脱敏示例采集库做 UI 验收。
 - 新增 `npm run seed:demo-workbench -- <path>`，用于生成示例渠道标签和群映射。
 - 新增 `lib/outbound-consumer.js`，作为后续 worker 接入真实发送的可选消费核心。

@@ -30,8 +30,7 @@ function assertNotMonitorDbPath(filePath, label = 'sqlite database') {
   const looksLikeMonitorDb = normalized.includes(`${path.sep}社媒监控系统${path.sep}social-monitor${path.sep}`) ||
     normalized.includes(`${path.sep}social-monitor${path.sep}db${path.sep}database.sqlite`) ||
     normalized.includes(`${path.sep}social-monitor${path.sep}db${path.sep}analytics.sqlite`);
-  const allow = ['1', 'true', 'yes', 'on'].includes(String(process.env.ALLOW_MONITOR_DB_REFERENCE || '').toLowerCase());
-  if (looksLikeMonitorDb && !allow) {
+  if (looksLikeMonitorDb) {
     throw new Error(`[workbench] ${label} must not point to social-monitor data: ${normalized}`);
   }
 }

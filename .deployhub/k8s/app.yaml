@@ -17,6 +17,19 @@ spec:
     requests:
       storage: 10Gi
 ---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: social-workbench-backup-pvc
+  namespace: g1469
+spec:
+  accessModes:
+    - ReadWriteMany
+  storageClassName: nas
+  resources:
+    requests:
+      storage: 20Gi
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -87,6 +100,12 @@ spec:
             - name: WORKBENCH_ACCOUNT_DATA_DIR
               value: /data/accounts
             - name: WORKBENCH_ACCOUNT_WORKER_MAX_WORKERS
+              value: "5"
+            - name: WORKBENCH_ACCOUNT_WORKER_MAX_WA
+              value: "1"
+            - name: WORKBENCH_ACCOUNT_WORKER_MAX_TG
+              value: "4"
+            - name: WORKBENCH_CHANNEL_RUNTIME_REQUIRED
               value: "1"
             - name: WORKBENCH_CHROME_STATE_DIR
               value: /tmp/workbench-chrome
@@ -99,7 +118,7 @@ spec:
             - name: WORKBENCH_LABEL_SYNC_ENABLED
               value: "1"
             - name: WORKBENCH_SEND_ENABLED
-              value: "1"
+              value: "0"
             - name: SSO_ENABLED
               value: "true"
             - name: SSO_LOGIN_URL
@@ -129,6 +148,8 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /data
+            - name: backups
+              mountPath: /backups
           resources:
             requests:
               cpu: 500m
@@ -140,6 +161,9 @@ spec:
         - name: data
           persistentVolumeClaim:
             claimName: social-workbench-sqlite-pvc
+        - name: backups
+          persistentVolumeClaim:
+            claimName: social-workbench-backup-pvc
 ---
 apiVersion: v1
 kind: Service
@@ -154,3 +178,89 @@ spec:
       targetPort: 3000
   selector:
     app.kubernetes.io/name: social-workbench
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: social-workbench-backup-daily
+  namespace: g1469
+spec:
+  schedule: "15 2 * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: backup
+              image: __IMAGE__
+              command: ["node", "scripts/sqlite-backup.js", "daily"]
+              env:
+                - name: NODE_ENV
+                  value: production
+                - name: DATA_DIR
+                  value: /data
+                - name: WORKBENCH_DB_DIR
+                  value: /data/db
+                - name: WORKBENCH_ACCOUNT_DATA_DIR
+                  value: /data/accounts
+                - name: WORKBENCH_BACKUP_DIR
+                  value: /backups
+              volumeMounts:
+                - name: data
+                  mountPath: /data
+                - name: backups
+                  mountPath: /backups
+          volumes:
+            - name: data
+              persistentVolumeClaim:
+                claimName: social-workbench-sqlite-pvc
+            - name: backups
+              persistentVolumeClaim:
+                claimName: social-workbench-backup-pvc
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: social-workbench-backup-weekly
+  namespace: g1469
+spec:
+  schedule: "45 2 * * 0"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: backup
+              image: __IMAGE__
+              command: ["node", "scripts/sqlite-backup.js", "weekly"]
+              env:
+                - name: NODE_ENV
+                  value: production
+                - name: DATA_DIR
+                  value: /data
+                - name: WORKBENCH_DB_DIR
+                  value: /data/db
+                - name: WORKBENCH_ACCOUNT_DATA_DIR
+                  value: /data/accounts
+                - name: WORKBENCH_BACKUP_DIR
+                  value: /backups
+              volumeMounts:
+                - name: data
+                  mountPath: /data
+                - name: backups
+                  mountPath: /backups
+          volumes:
+            - name: data
+              persistentVolumeClaim:
+                claimName: social-workbench-sqlite-pvc
+            - name: backups
+              persistentVolumeClaim:
+                claimName: social-workbench-backup-pvc

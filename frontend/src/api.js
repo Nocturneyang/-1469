@@ -1,7 +1,5 @@
 import axios from 'axios';
 
-const SSO_HYDRATE_TTL_MS = 60 * 1000;
-
 let runtimeConfigPromise = null;
 let ssoHydratePromise = null;
 let authRedirecting = false;
@@ -9,6 +7,7 @@ let authRedirecting = false;
 const api = axios.create({
   baseURL: '/api/workbench',
   timeout: 15000,
+  withCredentials: true,
 });
 
 function boolValue(value) {
@@ -43,31 +42,8 @@ function isSsoEnabledFromConfig(config) {
   return boolValue(config.ssoEnabled);
 }
 
-function getSsoTokenFromUrl() {
-  const params = new URLSearchParams(window.location.search);
-  const token = params.get('token') || params.get('satoken') || params.get('access_token');
-  if (token) {
-    window.localStorage.removeItem('sso_logged_out');
-    window.localStorage.setItem('sso_token', token);
-    params.delete('token');
-    params.delete('satoken');
-    params.delete('access_token');
-    const query = params.toString();
-    const nextUrl = `${window.location.pathname}${query ? `?${query}` : ''}${window.location.hash}`;
-    window.history.replaceState({}, document.title, nextUrl);
-  }
-  return token || window.localStorage.getItem('sso_token') || '';
-}
-
-function readStoredAuthUser() {
-  try {
-    return JSON.parse(window.localStorage.getItem('auth_user') || 'null');
-  } catch (err) {
-    return null;
-  }
-}
-
 function clearAuthStorage() {
+  // Remove tokens produced by releases before server-side HttpOnly sessions.
   window.localStorage.removeItem('auth_token');
   window.localStorage.removeItem('auth_user');
   window.localStorage.removeItem('sso_token');
@@ -110,27 +86,12 @@ export function isAuthRedirecting() {
 
 export async function hydrateWorkbenchAuth(options = {}) {
   const redirectOnFailure = options.redirectOnFailure !== false;
-  const params = new URLSearchParams(window.location.search);
-  const hasTokenInUrl = params.has('token') || params.has('satoken') || params.has('access_token');
-  const hydratedAt = Number(window.localStorage.getItem('sso_hydrated_at') || 0);
-  const storedUser = readStoredAuthUser();
-  const storedToken = window.localStorage.getItem('auth_token') || window.localStorage.getItem('sso_token') || '';
-  if (!hasTokenInUrl && storedUser && storedToken && Date.now() - hydratedAt < SSO_HYDRATE_TTL_MS) {
-    return storedUser;
-  }
   if (ssoHydratePromise) return ssoHydratePromise;
-
-  const token = getSsoTokenFromUrl();
-  const headers = {};
-  if (token) {
-    headers.Authorization = `Bearer ${token}`;
-    headers.satoken = token;
-  }
+  clearAuthStorage();
 
   ssoHydratePromise = fetch('/token/userinfo', {
     method: 'GET',
     credentials: 'include',
-    headers,
   })
     .then(async (response) => {
       if (!response.ok) {
@@ -147,11 +108,6 @@ export async function hydrateWorkbenchAuth(options = {}) {
         return null;
       }
 
-      const authToken = token || '__sso__';
-      const nextHydratedAt = Date.now();
-      window.localStorage.setItem('auth_token', authToken);
-      window.localStorage.setItem('auth_user', JSON.stringify(user));
-      window.localStorage.setItem('sso_hydrated_at', String(nextHydratedAt));
       window.localStorage.removeItem('sso_logged_out');
       return user;
     })
@@ -167,13 +123,21 @@ export async function hydrateWorkbenchAuth(options = {}) {
 }
 
 api.interceptors.request.use((config) => {
-  const token = window.localStorage.getItem('auth_token') || '';
-  const ssoToken = window.localStorage.getItem('sso_token') || '';
-  const bearer = token && token !== '__sso__' ? token : ssoToken;
   config.headers = config.headers || {};
-  if (bearer) config.headers.Authorization = `Bearer ${bearer}`;
+  const csrfToken = readCookie('workbench_csrf');
+  if (csrfToken && !['get', 'head', 'options'].includes(String(config.method || 'get').toLowerCase())) {
+    config.headers['X-CSRF-Token'] = csrfToken;
+  }
   return config;
 });
+
+function readCookie(name) {
+  for (const part of String(document.cookie || '').split(';')) {
+    const [key, ...value] = part.trim().split('=');
+    if (key === name) return decodeURIComponent(value.join('='));
+  }
+  return '';
+}
 
 api.interceptors.response.use(
   (response) => response,
@@ -204,6 +168,37 @@ export async function fetchMe() {
 export async function fetchAccounts() {
   const { data } = await api.get('/accounts');
   return data.accounts || [];
+}
+
+export async function fetchCustomerTypes(platform, account, { admin = false } = {}) {
+  const prefix = admin ? '/admin/accounts' : '/accounts';
+  const { data } = await api.get(`${prefix}/${encodeURIComponent(platform)}/${encodeURIComponent(account)}/customer-types`);
+  return data.options || [];
+}
+
+export async function updateServiceAccountSettings(platform, account, payload) {
+  const { data } = await api.patch(`/admin/accounts/${encodeURIComponent(platform)}/${encodeURIComponent(account)}/settings`, payload);
+  return data.settings;
+}
+
+export async function releaseServiceAccountBreaker(platform, account) {
+  const { data } = await api.post(`/admin/accounts/${encodeURIComponent(platform)}/${encodeURIComponent(account)}/send-breaker/release`);
+  return data;
+}
+
+export async function createCustomerType(platform, account, payload) {
+  const { data } = await api.post(`/admin/accounts/${encodeURIComponent(platform)}/${encodeURIComponent(account)}/customer-types`, payload);
+  return data.option;
+}
+
+export async function updateCustomerType(platform, account, id, payload) {
+  const { data } = await api.patch(`/admin/accounts/${encodeURIComponent(platform)}/${encodeURIComponent(account)}/customer-types/${encodeURIComponent(id)}`, payload);
+  return data.option;
+}
+
+export async function disableCustomerType(platform, account, id) {
+  const { data } = await api.delete(`/admin/accounts/${encodeURIComponent(platform)}/${encodeURIComponent(account)}/customer-types/${encodeURIComponent(id)}`);
+  return data.option;
 }
 
 export async function fetchLabels(params = {}) {
@@ -282,7 +277,23 @@ export async function fetchGroupWorkspace(group) {
     notes: data.notes || [],
     timeline: data.timeline || [],
     presence: data.presence || [],
+    notes_paging: data.notes_paging || { has_more: false, before_id: null },
+    timeline_paging: data.timeline_paging || { has_more: false, before_id: null },
   };
+}
+
+export async function fetchGroupNotes(group, params = {}) {
+  const { data } = await api.get(`/groups/${encodeURIComponent(group.group_id)}/notes`, {
+    params: { platform: group.platform, account: group.account, ...params },
+  });
+  return { notes: data.notes || [], paging: data.paging || { has_more: false, before_id: null } };
+}
+
+export async function fetchGroupTimeline(group, params = {}) {
+  const { data } = await api.get(`/groups/${encodeURIComponent(group.group_id)}/timeline`, {
+    params: { platform: group.platform, account: group.account, ...params },
+  });
+  return { timeline: data.timeline || [], paging: data.paging || { has_more: false, before_id: null } };
 }
 
 export async function saveGroupWorkspace(group, payload = {}) {

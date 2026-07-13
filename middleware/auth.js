@@ -1,10 +1,16 @@
 const crypto = require('crypto');
-const { listSsoAdmins } = require('../db/auth-db');
+const {
+  listSsoAdmins,
+  resolveAuthSession,
+  validateSessionCsrf,
+} = require('../db/auth-db');
 
 const TOKEN_PREFIX = 'wb1';
 const DEFAULT_SUPER_ADMIN_IDENTITIES = ['1469'];
 const SSO_USER_CACHE_TTL_MS = positiveNumber('SSO_USER_CACHE_TTL_MS', 30 * 60 * 1000);
 const ssoUserCache = new Map();
+const WORKBENCH_SESSION_COOKIE = 'workbench_session';
+const WORKBENCH_CSRF_COOKIE = 'workbench_csrf';
 
 function positiveNumber(name, fallback) {
   const value = Number(process.env[name]);
@@ -91,6 +97,10 @@ function readCookie(req, name) {
 function getBearerToken(req) {
   const authHeader = String(req.headers.authorization || '');
   return authHeader.startsWith('Bearer ') ? authHeader.slice(7).trim() : '';
+}
+
+function getWorkbenchSessionToken(req) {
+  return readCookie(req, WORKBENCH_SESSION_COOKIE);
 }
 
 function getSsoToken(req) {
@@ -270,6 +280,11 @@ function normalizeRole(role) {
 
 function createAuthMiddleware({ authDb } = {}) {
   async function resolveAuthenticatedUser(req) {
+    const authSession = resolveAuthSession(authDb, getWorkbenchSessionToken(req));
+    if (authSession?.user) {
+      req.authSession = authSession;
+      return { user: applyDbAdminPolicy(authDb, authSession.user), source: 'workbench-session' };
+    }
     const localTokenUser = verifyToken(getBearerToken(req));
     if (localTokenUser) return { user: applyDbAdminPolicy(authDb, localTokenUser), source: 'local-token' };
 
@@ -299,14 +314,38 @@ function createAuthMiddleware({ authDb } = {}) {
     next();
   }
 
+  async function resolveSsoCallbackUser(req) {
+    const headerUser = getSsoUserFromHeaders(req);
+    if (headerUser) return applyDbAdminPolicy(authDb, headerUser);
+    const queryToken = String(req.query?.token || req.query?.satoken || req.query?.access_token || '').trim();
+    const token = queryToken || getSsoToken(req);
+    const remoteUser = await getSsoUserFromRemote(token);
+    return remoteUser ? applyDbAdminPolicy(authDb, remoteUser) : null;
+  }
+
+  function requireCsrf(req, res, next) {
+    if (['GET', 'HEAD', 'OPTIONS'].includes(String(req.method || '').toUpperCase())) return next();
+    if (req.authSource !== 'workbench-session') return next();
+    const headerToken = String(req.headers['x-csrf-token'] || '').trim();
+    const cookieToken = readCookie(req, WORKBENCH_CSRF_COOKIE);
+    if (!headerToken || headerToken !== cookieToken || !validateSessionCsrf(req.authSession, headerToken)) {
+      return res.status(403).json({ success: false, ok: false, error: 'Invalid CSRF token' });
+    }
+    return next();
+  }
+
   return {
     authenticateToken,
+    requireCsrf,
     resolveAuthenticatedUser,
+    resolveSsoCallbackUser,
   };
 }
 
 module.exports = {
   createAuthMiddleware,
+  WORKBENCH_CSRF_COOKIE,
+  WORKBENCH_SESSION_COOKIE,
   getSsoUserInfoUrl,
   isLocalDevAuthBypass,
   isSsoEnabled,

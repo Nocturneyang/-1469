@@ -41,9 +41,106 @@ function openAuthDb(dbPath = DEFAULT_AUTH_DB_PATH) {
       ip TEXT,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
+
+    CREATE TABLE IF NOT EXISTS auth_sessions (
+      token_hash TEXT PRIMARY KEY,
+      csrf_hash TEXT NOT NULL,
+      operator_id TEXT NOT NULL,
+      user_json TEXT NOT NULL,
+      auth_source TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      revoked_at TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      last_seen_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_auth_sessions_operator_expiry
+      ON auth_sessions(operator_id, expires_at);
   `);
   seedBootstrap(db);
   return db;
+}
+
+function createAuthSession(db, user, { source = 'local', ttlSeconds = Number(process.env.AUTH_SESSION_TTL_SECONDS || 8 * 60 * 60) } = {}) {
+  if (!db || !user) throw new Error('auth database and user are required');
+  const token = crypto.randomBytes(48).toString('base64url');
+  const csrfToken = crypto.randomBytes(32).toString('base64url');
+  const operatorId = String(user.id || user.username || '').trim();
+  if (!operatorId) throw new Error('session operator id is required');
+  const expiresAt = new Date(Date.now() + Math.max(300, Number(ttlSeconds) || 0) * 1000).toISOString();
+  db.prepare(`
+    INSERT INTO auth_sessions (
+      token_hash, csrf_hash, operator_id, user_json, auth_source, expires_at
+    ) VALUES (?, ?, ?, ?, ?, ?)
+  `).run(
+    hashSessionSecret(token),
+    hashSessionSecret(csrfToken),
+    operatorId,
+    JSON.stringify(user),
+    String(source || 'local'),
+    expiresAt,
+  );
+  purgeExpiredAuthSessions(db);
+  return { token, csrfToken, expiresAt };
+}
+
+function resolveAuthSession(db, token) {
+  const secret = String(token || '').trim();
+  if (!db || !secret) return null;
+  const row = db.prepare(`
+    SELECT * FROM auth_sessions
+    WHERE token_hash = ?
+      AND revoked_at IS NULL
+      AND datetime(expires_at) > datetime('now')
+  `).get(hashSessionSecret(secret));
+  if (!row) return null;
+  let user;
+  try {
+    user = JSON.parse(row.user_json);
+  } catch (_) {
+    return null;
+  }
+  db.prepare('UPDATE auth_sessions SET last_seen_at = CURRENT_TIMESTAMP WHERE token_hash = ?').run(row.token_hash);
+  return {
+    user,
+    operatorId: row.operator_id,
+    authSource: row.auth_source,
+    csrfHash: row.csrf_hash,
+    expiresAt: row.expires_at,
+  };
+}
+
+function revokeAuthSession(db, token) {
+  const secret = String(token || '').trim();
+  if (!db || !secret) return 0;
+  return db.prepare(`
+    UPDATE auth_sessions SET revoked_at = CURRENT_TIMESTAMP
+    WHERE token_hash = ? AND revoked_at IS NULL
+  `).run(hashSessionSecret(secret)).changes;
+}
+
+function validateSessionCsrf(session, csrfToken) {
+  if (!session || !session.csrfHash || !csrfToken) return false;
+  return safeHashEqual(session.csrfHash, hashSessionSecret(csrfToken));
+}
+
+function purgeExpiredAuthSessions(db) {
+  if (!db) return 0;
+  return db.prepare(`
+    DELETE FROM auth_sessions
+    WHERE datetime(expires_at) <= datetime('now')
+       OR (revoked_at IS NOT NULL AND datetime(revoked_at) <= datetime('now', '-7 days'))
+  `).run().changes;
+}
+
+function hashSessionSecret(value) {
+  return crypto.createHash('sha256').update(String(value || '')).digest('hex');
+}
+
+function safeHashEqual(left, right) {
+  const a = Buffer.from(String(left || ''));
+  const b = Buffer.from(String(right || ''));
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
 }
 
 function seedBootstrap(db) {
@@ -233,6 +330,7 @@ function splitList(value) {
 
 module.exports = {
   DEFAULT_AUTH_DB_PATH,
+  createAuthSession,
   createLocalUser,
   findUserByUsername,
   getLocalUserById,
@@ -240,7 +338,11 @@ module.exports = {
   listSsoAdmins,
   mapAuthUser,
   openAuthDb,
+  purgeExpiredAuthSessions,
+  resolveAuthSession,
+  revokeAuthSession,
   setLocalUserPassword,
   updateLocalUser,
+  validateSessionCsrf,
   verifyLocalUser,
 };

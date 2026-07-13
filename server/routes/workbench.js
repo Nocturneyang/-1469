@@ -2,6 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const express = require('express');
+const { setServiceAccountSendEnabled } = require('../../db/raw-db');
 const { writeChannelSyncRequest } = require('../../lib/channel-sync-store');
 const {
   DEFAULT_RAW_DB_PATH,
@@ -22,9 +23,12 @@ const {
   UNGROUPED_GROUP,
   allowedAccountScope,
   capabilitySummary,
+  conversationHasCapability,
   filterGroupsByCapability,
   loadPortalAccess,
   requireAdminPortalAccess,
+  requireActiveWorkbenchOperator,
+  requireWorkbenchPortalAccess,
   requireConversationCapability,
   resolveWorkbenchOperator,
   serviceGroupVisible,
@@ -38,6 +42,8 @@ const {
 } = require('../../lib/access-control');
 const { createAccountDataAccess } = require('../../lib/account-data-access');
 const { writeLoginVerificationDoorbell } = require('../../lib/service-account-login-store');
+const { resolveAccountPaths } = require('../../db/account-db');
+const { resolveDataDir } = require('../../db/paths');
 
 const ALLOWED_PLATFORMS = new Set(WORKBENCH_PLATFORMS);
 const OUTBOUND_STATUSES = new Set(['pending', 'sending', 'sent', 'delivered', 'failed', 'dead', 'paused', 'canceled']);
@@ -48,6 +54,7 @@ const CONNECTED_ACCOUNT_STATUSES = new Set(['online', 'authenticated', 'ready', 
 const MAX_ATTACHMENTS = 4;
 const MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024;
 const MAX_TOTAL_ATTACHMENT_BYTES = 12 * 1024 * 1024;
+const MAX_INBOUND_MEDIA_BYTES = Math.max(1024, Math.min(Number(process.env.WORKBENCH_INBOUND_MEDIA_MAX_BYTES) || 20 * 1024 * 1024, 100 * 1024 * 1024));
 const ALLOWED_ATTACHMENT_KINDS = new Set(['file', 'image', 'sticker']);
 
 function createWorkbenchRouter({ workbenchDb, runtimeDb, rawDbPath = DEFAULT_RAW_DB_PATH, outboxDir, accountDataDir, accountDbMode } = {}) {
@@ -64,6 +71,9 @@ function createWorkbenchRouter({ workbenchDb, runtimeDb, rawDbPath = DEFAULT_RAW
   });
   const getAccountScope = () => accountData.resolveAccountScope();
   const requireAdmin = requireAdminPortalAccess(workbenchDb);
+
+  router.use(requireActiveWorkbenchOperator(workbenchDb));
+  router.use(requireWorkbenchPortalAccess(workbenchDb));
 
   router.get('/health', (req, res) => {
     const rawDb = openRawDb(rawDbPath);
@@ -170,6 +180,90 @@ function createWorkbenchRouter({ workbenchDb, runtimeDb, rawDbPath = DEFAULT_RAW
       mapServiceAccount(account, accountData, workbenchDb)
     ));
     res.json({ ok: true, accounts, account_scope: mapAccountScope(visibleAccountScope) });
+  });
+
+  router.get('/accounts/:platform/:account/customer-types', (req, res) => {
+    const accountScope = getAccountScope();
+    const operator = currentOperatorContext(workbenchDb, req);
+    const visibleAccountScope = allowedAccountScope(workbenchDb, operator, accountScope, 'can_view');
+    const platform = requirePlatform(req.params.platform);
+    const account = requireText(req.params.account, 'account');
+    requireVisibleAccount(visibleAccountScope, platform, account);
+    const options = accountData.withWorkbenchDb(platform, account, { create: true }, (accountDb) => (
+      listCustomerTypeOptions(accountDb, platform, account, false)
+    ));
+    res.json({ ok: true, options });
+  });
+
+  router.patch('/admin/accounts/:platform/:account/settings', requireAdmin, (req, res) => {
+    const operator = currentOperatorContext(workbenchDb, req);
+    const platform = requirePlatform(req.params.platform);
+    const account = requireText(req.params.account, 'account');
+    if (!hasPatchValue(req.body || {}, 'send_enabled')) throw createHttpError(400, 'send_enabled is required');
+    if (!accountData.findAccountProfile(platform, account, getAccountScope())) throw createHttpError(404, 'service account not found');
+    const settings = setServiceAccountSendEnabled({
+      dbPath: accountData.rawDbPathFor(platform, account),
+      platform,
+      account,
+      sendEnabled: req.body.send_enabled ? 1 : 0,
+    });
+    if (!settings) throw createHttpError(404, 'service account not found');
+    writeAction(workbenchDb, operator.id, 'service_account.send_setting', platform, account, null, account, {
+      send_enabled: Number(settings.send_enabled),
+    });
+    res.json({ ok: true, settings });
+  });
+
+  router.post('/admin/accounts/:platform/:account/send-breaker/release', requireAdmin, (req, res) => {
+    const operator = currentOperatorContext(workbenchDb, req);
+    const platform = requirePlatform(req.params.platform);
+    const account = requireText(req.params.account, 'account');
+    const released = accountData.withWorkbenchDb(platform, account, {}, (accountDb) => accountDb.prepare(`
+      UPDATE send_circuit_breaker
+      SET status = 'open', cooldown_until = NULL, reason = 'manually released by administrator', updated_at = CURRENT_TIMESTAMP
+      WHERE platform = ? AND account = ? AND status = 'cooldown'
+    `).run(platform, account).changes);
+    writeAction(workbenchDb, operator.id, 'service_account.breaker.release', platform, account, null, account, { released });
+    res.json({ ok: true, released });
+  });
+
+  router.get('/admin/accounts/:platform/:account/customer-types', requireAdmin, (req, res) => {
+    const platform = requirePlatform(req.params.platform);
+    const account = requireText(req.params.account, 'account');
+    const options = accountData.withWorkbenchDb(platform, account, { create: true }, (accountDb) => (
+      listCustomerTypeOptions(accountDb, platform, account, true)
+    ));
+    res.json({ ok: true, options });
+  });
+
+  router.post('/admin/accounts/:platform/:account/customer-types', requireAdmin, (req, res) => {
+    const operator = currentOperatorContext(workbenchDb, req);
+    const platform = requirePlatform(req.params.platform);
+    const account = requireText(req.params.account, 'account');
+    const option = accountData.withWorkbenchDb(platform, account, { create: true }, (accountDb) => (
+      createCustomerTypeOption(accountDb, platform, account, req.body || {}, operator.id)
+    ));
+    res.status(201).json({ ok: true, option });
+  });
+
+  router.patch('/admin/accounts/:platform/:account/customer-types/:id', requireAdmin, (req, res) => {
+    const operator = currentOperatorContext(workbenchDb, req);
+    const platform = requirePlatform(req.params.platform);
+    const account = requireText(req.params.account, 'account');
+    const option = accountData.withWorkbenchDb(platform, account, { create: true }, (accountDb) => (
+      updateCustomerTypeOption(accountDb, platform, account, req.params.id, req.body || {}, operator.id)
+    ));
+    res.json({ ok: true, option });
+  });
+
+  router.delete('/admin/accounts/:platform/:account/customer-types/:id', requireAdmin, (req, res) => {
+    const operator = currentOperatorContext(workbenchDb, req);
+    const platform = requirePlatform(req.params.platform);
+    const account = requireText(req.params.account, 'account');
+    const option = accountData.withWorkbenchDb(platform, account, { create: true }, (accountDb) => (
+      updateCustomerTypeOption(accountDb, platform, account, req.params.id, { status: 'disabled' }, operator.id)
+    ));
+    res.json({ ok: true, option });
   });
 
   router.get('/service-account-logins', requireAdmin, (req, res) => {
@@ -520,7 +614,12 @@ function createWorkbenchRouter({ workbenchDb, runtimeDb, rawDbPath = DEFAULT_RAW
       return;
     }
     const scope = String(req.query.scope || 'all');
+    if (scope === 'mine') {
+      res.setHeader('Deprecation', 'true');
+      res.setHeader('Link', '</docs/product/2026-07-10-three-column-customer-profile.md>; rel="deprecation"');
+    }
     const labelId = req.query.label_id ? String(req.query.label_id) : '';
+    const customerTypeId = req.query.customer_type_id ? String(req.query.customer_type_id).trim() : '';
     const labelIds = labelId ? new Set(expandServiceGroupFilterIdsAcross(accountData, labelId, selectedAccountScope)) : new Set();
     const rawGroups = accountData.listGroups({
       platforms,
@@ -554,7 +653,8 @@ function createWorkbenchRouter({ workbenchDb, runtimeDb, rawDbPath = DEFAULT_RAW
           labelIds.has(String(label.native_group_id)) ||
           labelIds.has(String(label.id))
         ));
-      });
+      })
+      .filter((group) => !customerTypeId || String(group.customer_type_id || '') === customerTypeId);
     res.json({ ok: true, groups: enriched, account_scope: mapAccountScope(visibleAccountScope) });
   });
 
@@ -635,6 +735,46 @@ function createWorkbenchRouter({ workbenchDb, runtimeDb, rawDbPath = DEFAULT_RAW
     });
   });
 
+  router.get('/groups/:groupId/media/:messageId', (req, res) => {
+    const accountScope = getAccountScope();
+    const operator = currentOperatorContext(workbenchDb, req);
+    const visibleAccountScope = allowedAccountScope(workbenchDb, operator, accountScope, 'can_view');
+    const platform = requirePlatform(req.query.platform);
+    const account = requireText(req.query.account, 'account');
+    requireVisibleAccount(visibleAccountScope, platform, account);
+    const groupId = req.params.groupId;
+    requireConversationCapability(workbenchDb, operator, platform, account, groupId, 'can_view');
+    const rawDb = accountData.openAccountRawDb(platform, account);
+    let row;
+    try {
+      row = rawDb.prepare(`
+        SELECT * FROM messages
+        WHERE id = @id AND platform = @platform AND group_id = @groupId
+      `).get({ id: Number(req.params.messageId), platform, groupId });
+    } finally {
+      rawDb.close();
+    }
+    if (!row?.media_path) throw createHttpError(404, 'media not found');
+    const baseDir = accountData.isolated
+      ? resolveAccountPaths(platform, account, { accountDataDir }).accountDir
+      : resolveDataDir();
+    const mediaPath = path.resolve(baseDir, row.media_path);
+    const relative = path.relative(path.resolve(baseDir), mediaPath);
+    if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) throw createHttpError(403, 'invalid media path');
+    if (!fs.existsSync(mediaPath)) throw createHttpError(404, 'media file missing');
+    const mediaStat = fs.statSync(mediaPath);
+    if (!mediaStat.isFile()) throw createHttpError(404, 'media file missing');
+    if (mediaStat.size > MAX_INBOUND_MEDIA_BYTES) throw createHttpError(413, 'media file exceeds download limit');
+    const mime = String(row.media_mime || 'application/octet-stream');
+    const safeInline = /^image\/(?:png|jpeg|webp|gif)$/i.test(mime) && req.query.download !== '1';
+    const filename = String(row.media_name || path.basename(mediaPath)).replace(/[\r\n"\\/]/g, '_');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Content-Type', mime);
+    res.setHeader('Content-Length', String(mediaStat.size));
+    res.setHeader('Content-Disposition', `${safeInline ? 'inline' : 'attachment'}; filename="${filename}"`);
+    fs.createReadStream(mediaPath).on('error', (err) => res.destroy(err)).pipe(res);
+  });
+
   router.get('/groups/:groupId/workspace', (req, res) => {
     const accountScope = getAccountScope();
     const operator = currentOperatorContext(workbenchDb, req);
@@ -645,7 +785,7 @@ function createWorkbenchRouter({ workbenchDb, runtimeDb, rawDbPath = DEFAULT_RAW
     const groupId = req.params.groupId;
     requireConversationCapability(workbenchDb, operator, platform, account, groupId, 'can_view');
     const workspace = accountData.withWorkbenchDb(platform, account, { create: true }, (accountDb) => (
-      buildConversationWorkspace(accountDb, workbenchDb, platform, account, groupId)
+      buildConversationWorkspace(accountDb, workbenchDb, platform, account, groupId, { notesLimit: 3, timelineLimit: 3 })
     ));
     res.json({ ok: true, ...workspace });
   });
@@ -683,6 +823,8 @@ function createWorkbenchRouter({ workbenchDb, runtimeDb, rawDbPath = DEFAULT_RAW
     const accountScope = getAccountScope();
     const operator = currentOperatorContext(workbenchDb, req);
     const visibleAccountScope = allowedAccountScope(workbenchDb, operator, accountScope, 'can_view');
+    const replyAccountScope = allowedAccountScope(workbenchDb, operator, accountScope, 'can_reply');
+    const manageAccountScope = allowedAccountScope(workbenchDb, operator, accountScope, 'can_manage');
     const operatorId = operator.id;
     const body = req.body || {};
     const platform = requirePlatform(body.platform || req.query.platform);
@@ -690,6 +832,14 @@ function createWorkbenchRouter({ workbenchDb, runtimeDb, rawDbPath = DEFAULT_RAW
     requireVisibleAccount(visibleAccountScope, platform, account);
     const groupId = req.params.groupId;
     requireConversationCapability(workbenchDb, operator, platform, account, groupId, 'can_view');
+    const mayWriteNote = (
+      accountScopeContains(replyAccountScope, platform, account) &&
+      conversationHasCapability(workbenchDb, operator, platform, account, groupId, 'can_reply')
+    ) || (
+      accountScopeContains(manageAccountScope, platform, account) &&
+      conversationHasCapability(workbenchDb, operator, platform, account, groupId, 'can_manage')
+    );
+    if (!mayWriteNote) throw createHttpError(403, 'operator cannot add notes to this conversation');
     const note = accountData.withWorkbenchDb(platform, account, { create: true }, (accountDb) => {
       const row = createConversationNote(accountDb, platform, account, groupId, body.body || body.note, operatorId);
       writeAction(accountDb, operatorId, 'conversation.note.create', platform, account, groupId, row.id, {
@@ -698,6 +848,23 @@ function createWorkbenchRouter({ workbenchDb, runtimeDb, rawDbPath = DEFAULT_RAW
       return attachActorName(row, loadOperatorNameMap(workbenchDb), 'created_by');
     });
     res.status(201).json({ ok: true, note });
+  });
+
+  router.get('/groups/:groupId/notes', (req, res) => {
+    const accountScope = getAccountScope();
+    const operator = currentOperatorContext(workbenchDb, req);
+    const visibleAccountScope = allowedAccountScope(workbenchDb, operator, accountScope, 'can_view');
+    const platform = requirePlatform(req.query.platform);
+    const account = requireText(req.query.account, 'account');
+    requireVisibleAccount(visibleAccountScope, platform, account);
+    const groupId = req.params.groupId;
+    requireConversationCapability(workbenchDb, operator, platform, account, groupId, 'can_view');
+    const limit = boundedNumber(req.query.limit, 20, 1, 50);
+    const beforeId = Math.max(0, Number(req.query.before_id) || 0);
+    const result = accountData.withWorkbenchDb(platform, account, {}, (accountDb) => (
+      loadConversationNotesPage(accountDb, workbenchDb, platform, account, groupId, { limit, beforeId })
+    ));
+    res.json({ ok: true, ...result });
   });
 
   router.post('/groups/:groupId/presence', (req, res) => {
@@ -727,9 +894,12 @@ function createWorkbenchRouter({ workbenchDb, runtimeDb, rawDbPath = DEFAULT_RAW
     const groupId = req.params.groupId;
     requireConversationCapability(workbenchDb, operator, platform, account, groupId, 'can_view');
     const timeline = accountData.withWorkbenchDb(platform, account, {}, (accountDb) => (
-      loadConversationTimeline(accountDb, workbenchDb, platform, account, groupId, req.query.limit)
+      loadConversationTimelinePage(accountDb, workbenchDb, platform, account, groupId, {
+        limit: req.query.limit,
+        beforeId: req.query.before_id,
+      })
     ));
-    res.json({ ok: true, timeline });
+    res.json({ ok: true, ...timeline });
   });
 
   router.put('/groups/:groupId/manual-groups', (req, res) => {
@@ -1124,6 +1294,7 @@ function enrichGroupsWithAccountData(accountData, workbenchDb, rawDbPath, groups
   const labels = mergeLabelMaps(accountData.mapWorkbenchDbs({ accountScope }, loadLabelMap));
   const profiles = mergeMaps(accountData.mapWorkbenchDbs({ accountScope }, loadConversationProfileMap));
   const notesCounts = mergeMaps(accountData.mapWorkbenchDbs({ accountScope }, loadConversationNotesCountMap));
+  const breakers = mergeMaps(accountData.mapWorkbenchDbs({ accountScope }, loadActiveBreakerMap));
   const presence = mergePresenceMaps(accountData.mapWorkbenchDbs({ accountScope }, (db) => loadPresenceMap(db, workbenchDb)));
   const unreadCounts = accountData.countUnreadForGroups({
     accountScope,
@@ -1142,7 +1313,7 @@ function enrichGroupsWithAccountData(accountData, workbenchDb, rawDbPath, groups
     accountKey(profile.platform, profile.account),
     profile,
   ]));
-  return mapEnrichedGroups(groups, accountProfiles, assignments, labels, unreadCounts, profiles, notesCounts, presence);
+  return mapEnrichedGroups(groups, accountProfiles, assignments, labels, unreadCounts, profiles, notesCounts, presence, breakers);
 }
 
 function enrichGroups(workbenchDb, rawDbPath, groups, operatorId, accountScope) {
@@ -1151,6 +1322,7 @@ function enrichGroups(workbenchDb, rawDbPath, groups, operatorId, accountScope) 
   const labels = loadLabelMap(workbenchDb);
   const profiles = loadConversationProfileMap(workbenchDb);
   const notesCounts = loadConversationNotesCountMap(workbenchDb);
+  const breakers = loadActiveBreakerMap(workbenchDb);
   const presence = loadPresenceMap(workbenchDb, workbenchDb);
   const unreadCounts = countUnreadForGroups({
     rawDbPath,
@@ -1170,10 +1342,10 @@ function enrichGroups(workbenchDb, rawDbPath, groups, operatorId, accountScope) 
     accountKey(profile.platform, profile.account),
     profile,
   ]));
-  return mapEnrichedGroups(groups, accountProfiles, assignments, labels, unreadCounts, profiles, notesCounts, presence);
+  return mapEnrichedGroups(groups, accountProfiles, assignments, labels, unreadCounts, profiles, notesCounts, presence, breakers);
 }
 
-function mapEnrichedGroups(groups, accountProfiles, assignments, labels, unreadCounts, conversationProfiles = new Map(), notesCounts = new Map(), presence = new Map()) {
+function mapEnrichedGroups(groups, accountProfiles, assignments, labels, unreadCounts, conversationProfiles = new Map(), notesCounts = new Map(), presence = new Map(), breakers = new Map()) {
   return groups.map((group) => {
     const key = groupKey(group.platform, group.account, group.group_id);
     const profile = accountProfiles.get(accountKey(group.platform, group.account));
@@ -1186,7 +1358,9 @@ function mapEnrichedGroups(groups, accountProfiles, assignments, labels, unreadC
       account_display_name: profile && profile.display_name ? profile.display_name : group.account,
       account_role: profile && profile.account_role ? profile.account_role : 'service',
       account_status: profile && profile.status ? profile.status : null,
-      send_enabled: profile ? Boolean(profile.send_enabled) : true,
+      send_enabled: profile ? Boolean(profile.send_enabled) : false,
+      global_send_enabled: process.env.WORKBENCH_SEND_ENABLED === '1',
+      send_breaker_active: breakers.has(accountKey(group.platform, group.account)),
       sync_groups_enabled: profile ? Boolean(profile.sync_groups_enabled) : false,
       risk_level: profile && profile.risk_level ? profile.risk_level : 'low',
       group_id: group.group_id,
@@ -1205,6 +1379,7 @@ function mapEnrichedGroups(groups, accountProfiles, assignments, labels, unreadC
       starred: Boolean(Number(conversationProfile.starred)),
       follow_up_at: conversationProfile.follow_up_at,
       internal_display_name: conversationProfile.internal_display_name,
+      customer_type_id: conversationProfile.customer_type_id,
       customer_type: conversationProfile.customer_type,
       owner_note: conversationProfile.owner_note,
       notes_count: Number(notesCounts.get(key) || 0),
@@ -1213,6 +1388,18 @@ function mapEnrichedGroups(groups, accountProfiles, assignments, labels, unreadC
       labels: labels.get(key) || [],
     };
   });
+}
+
+function loadActiveBreakerMap(db) {
+  const map = new Map();
+  const rows = db.prepare(`
+    SELECT platform, account, reason, cooldown_until
+    FROM send_circuit_breaker
+    WHERE status = 'cooldown'
+      AND (cooldown_until IS NULL OR datetime(cooldown_until) > datetime('now'))
+  `).all();
+  rows.forEach((row) => map.set(accountKey(row.platform, row.account), row));
+  return map;
 }
 
 function mergeMaps(maps) {
@@ -1443,6 +1630,7 @@ function defaultConversationProfile(platform, account, groupId) {
     starred: 0,
     follow_up_at: null,
     internal_display_name: '',
+    customer_type_id: '',
     customer_type: '',
     owner_note: '',
     updated_by: null,
@@ -1463,7 +1651,8 @@ function serializeConversationProfile(row) {
     starred: Boolean(Number(profile.starred || 0)),
     follow_up_at: profile.follow_up_at || null,
     internal_display_name: profile.internal_display_name || '',
-    customer_type: profile.customer_type || '',
+    customer_type_id: profile.customer_type_id || '',
+    customer_type: profile.customer_type_option_name || profile.customer_type || '',
     owner_note: profile.owner_note || '',
     updated_by: profile.updated_by || null,
     created_at: profile.created_at || null,
@@ -1478,11 +1667,12 @@ function loadConversationProfile(db, platform, account, groupId) {
     groupId: String(groupId || '').trim(),
   };
   const row = db.prepare(`
-    SELECT *
-    FROM conversation_profiles
-    WHERE platform = @platform
-      AND account = @account
-      AND group_id = @groupId
+    SELECT p.*, o.name AS customer_type_option_name
+    FROM conversation_profiles p
+    LEFT JOIN customer_type_options o ON o.id = p.customer_type_id
+    WHERE p.platform = @platform
+      AND p.account = @account
+      AND p.group_id = @groupId
   `).get(normalized);
   return serializeConversationProfile(row || defaultConversationProfile(normalized.platform, normalized.account, normalized.groupId));
 }
@@ -1490,13 +1680,120 @@ function loadConversationProfile(db, platform, account, groupId) {
 function loadConversationProfileMap(db) {
   const map = new Map();
   const rows = db.prepare(`
-    SELECT *
-    FROM conversation_profiles
+    SELECT p.*, o.name AS customer_type_option_name
+    FROM conversation_profiles p
+    LEFT JOIN customer_type_options o ON o.id = p.customer_type_id
   `).all();
   rows.forEach((row) => {
     map.set(groupKey(row.platform, row.account, row.group_id), serializeConversationProfile(row));
   });
   return map;
+}
+
+function listCustomerTypeOptions(db, platform, account, includeDisabled = false) {
+  return db.prepare(`
+    SELECT * FROM customer_type_options
+    WHERE platform = @platform
+      AND service_account = @account
+      ${includeDisabled ? '' : "AND status = 'active'"}
+    ORDER BY sort_order ASC, name ASC, id ASC
+  `).all({
+    platform: normalizePlatform(platform),
+    account: String(account || '').trim(),
+  });
+}
+
+function resolveCustomerTypeSelection(db, platform, account, value) {
+  const id = String(value || '').trim();
+  if (!id) return null;
+  const option = db.prepare(`
+    SELECT * FROM customer_type_options
+    WHERE id = @id AND platform = @platform AND service_account = @account
+  `).get({ id, platform: normalizePlatform(platform), account: String(account || '').trim() });
+  if (!option || option.status !== 'active') throw createHttpError(400, 'customer type is not available for this account');
+  return option;
+}
+
+function findCustomerTypeByName(db, platform, account, name) {
+  return db.prepare(`
+    SELECT * FROM customer_type_options
+    WHERE platform = @platform AND service_account = @account AND name = @name
+  `).get({
+    platform: normalizePlatform(platform),
+    account: String(account || '').trim(),
+    name: String(name || '').trim(),
+  }) || null;
+}
+
+function createCustomerTypeOption(db, platform, account, input, operatorId) {
+  const row = {
+    id: `ctype-${crypto.randomBytes(10).toString('hex')}`,
+    platform: normalizePlatform(platform),
+    account: String(account || '').trim(),
+    name: sanitizeShortText(input.name, 60),
+    color: normalizeColor(input.color) || '#64748b',
+    sortOrder: Math.max(0, Math.min(Number(input.sort_order) || 0, 9999)),
+    operatorId,
+  };
+  if (!row.name) throw createHttpError(400, 'customer type name is required');
+  try {
+    db.prepare(`
+      INSERT INTO customer_type_options (
+        id, platform, service_account, name, color, sort_order, status, created_by, updated_by
+      ) VALUES (@id, @platform, @account, @name, @color, @sortOrder, 'active', @operatorId, @operatorId)
+    `).run(row);
+  } catch (err) {
+    if (/UNIQUE/i.test(String(err.message))) throw createHttpError(409, 'customer type name already exists for this account');
+    throw err;
+  }
+  writeAction(db, operatorId, 'customer_type.create', row.platform, row.account, null, row.id, { name: row.name });
+  return db.prepare('SELECT * FROM customer_type_options WHERE id = ?').get(row.id);
+}
+
+function updateCustomerTypeOption(db, platform, account, optionId, input, operatorId) {
+  const params = {
+    id: String(optionId || '').trim(),
+    platform: normalizePlatform(platform),
+    account: String(account || '').trim(),
+  };
+  const current = db.prepare(`
+    SELECT * FROM customer_type_options
+    WHERE id = @id AND platform = @platform AND service_account = @account
+  `).get(params);
+  if (!current) throw createHttpError(404, 'customer type not found');
+  const next = {
+    ...params,
+    name: hasPatchValue(input, 'name') ? sanitizeShortText(input.name, 60) : current.name,
+    color: hasPatchValue(input, 'color') ? (normalizeColor(input.color) || '#64748b') : current.color,
+    sortOrder: hasPatchValue(input, 'sort_order') ? Math.max(0, Math.min(Number(input.sort_order) || 0, 9999)) : current.sort_order,
+    status: hasPatchValue(input, 'status') && String(input.status) === 'disabled' ? 'disabled' : 'active',
+    operatorId,
+  };
+  if (!next.name) throw createHttpError(400, 'customer type name is required');
+  const save = db.transaction(() => {
+    try {
+      db.prepare(`
+        UPDATE customer_type_options
+        SET name = @name, color = @color, sort_order = @sortOrder, status = @status,
+            updated_by = @operatorId, updated_at = CURRENT_TIMESTAMP
+        WHERE id = @id AND platform = @platform AND service_account = @account
+      `).run(next);
+    } catch (err) {
+      if (/UNIQUE/i.test(String(err.message))) throw createHttpError(409, 'customer type name already exists for this account');
+      throw err;
+    }
+    db.prepare(`
+      UPDATE conversation_profiles
+      SET customer_type = @name, updated_at = CURRENT_TIMESTAMP
+      WHERE customer_type_id = @id AND platform = @platform AND account = @account
+    `).run(next);
+    writeAction(db, operatorId, 'customer_type.update', next.platform, next.account, null, next.id, {
+      before: { name: current.name, status: current.status },
+      after: { name: next.name, status: next.status },
+    });
+  });
+  save();
+  return db.prepare('SELECT * FROM customer_type_options WHERE id = ?').get(next.id);
 }
 
 function loadConversationNotesCountMap(db) {
@@ -1512,7 +1809,7 @@ function loadConversationNotesCountMap(db) {
   return map;
 }
 
-function loadConversationNotes(db, centralDb, platform, account, groupId, limit = 20) {
+function loadConversationNotes(db, centralDb, platform, account, groupId, limit = 20, beforeId = 0) {
   const actorNames = loadOperatorNameMap(centralDb);
   return db.prepare(`
     SELECT *
@@ -1520,14 +1817,30 @@ function loadConversationNotes(db, centralDb, platform, account, groupId, limit 
     WHERE platform = @platform
       AND account = @account
       AND group_id = @groupId
+      AND (@beforeId = 0 OR id < @beforeId)
     ORDER BY created_at DESC, id DESC
     LIMIT @limit
   `).all({
     platform,
     account,
     groupId,
+    beforeId: Math.max(0, Number(beforeId) || 0),
     limit: Math.max(1, Math.min(Number(limit) || 20, 50)),
   }).map((row) => attachActorName(row, actorNames, 'created_by'));
+}
+
+function loadConversationNotesPage(db, centralDb, platform, account, groupId, { limit = 20, beforeId = 0 } = {}) {
+  const bounded = Math.max(1, Math.min(Number(limit) || 20, 50));
+  const rows = loadConversationNotes(db, centralDb, platform, account, groupId, bounded + 1, beforeId);
+  const hasMore = rows.length > bounded;
+  const notes = rows.slice(0, bounded);
+  return {
+    notes,
+    paging: {
+      has_more: hasMore,
+      before_id: hasMore && notes.length ? notes[notes.length - 1].id : null,
+    },
+  };
 }
 
 function createConversationNote(db, platform, account, groupId, body, operatorId) {
@@ -1572,8 +1885,28 @@ function upsertConversationProfile(db, platform, account, groupId, patch = {}, o
   if (hasPatchValue(patch, 'internal_display_name') || hasPatchValue(patch, 'internalDisplayName')) {
     next.internal_display_name = sanitizeShortText(patch.internal_display_name ?? patch.internalDisplayName, 120);
   }
+  if (hasPatchValue(patch, 'customer_type_id') || hasPatchValue(patch, 'customerTypeId')) {
+    const selection = resolveCustomerTypeSelection(
+      db,
+      platform,
+      account,
+      patch.customer_type_id ?? patch.customerTypeId,
+    );
+    next.customer_type_id = selection ? selection.id : '';
+    next.customer_type = selection ? selection.name : '';
+  }
   if (hasPatchValue(patch, 'customer_type') || hasPatchValue(patch, 'customerType')) {
-    next.customer_type = sanitizeShortText(patch.customer_type ?? patch.customerType, 80);
+    // Legacy clients may clear the field, but cannot create unmanaged values.
+    const legacyName = sanitizeShortText(patch.customer_type ?? patch.customerType, 80);
+    if (!legacyName) {
+      next.customer_type_id = '';
+      next.customer_type = '';
+    } else if (!hasPatchValue(patch, 'customer_type_id') && !hasPatchValue(patch, 'customerTypeId')) {
+      const selection = findCustomerTypeByName(db, platform, account, legacyName);
+      if (!selection || selection.status !== 'active') throw createHttpError(400, 'customer type is not available for this account');
+      next.customer_type_id = selection.id;
+      next.customer_type = selection.name;
+    }
   }
   if (hasPatchValue(patch, 'owner_note') || hasPatchValue(patch, 'ownerNote')) {
     next.owner_note = sanitizeLongText(patch.owner_note ?? patch.ownerNote, 1000);
@@ -1582,11 +1915,11 @@ function upsertConversationProfile(db, platform, account, groupId, patch = {}, o
   db.prepare(`
     INSERT INTO conversation_profiles (
       platform, account, group_id, status, priority, starred, follow_up_at,
-      internal_display_name, customer_type, owner_note, updated_by, updated_at
+      internal_display_name, customer_type_id, customer_type, owner_note, updated_by, updated_at
     )
     VALUES (
       @platform, @account, @group_id, @status, @priority, @starred, @follow_up_at,
-      @internal_display_name, @customer_type, @owner_note, @updated_by, CURRENT_TIMESTAMP
+      @internal_display_name, @customer_type_id, @customer_type, @owner_note, @updated_by, CURRENT_TIMESTAMP
     )
     ON CONFLICT(platform, account, group_id) DO UPDATE SET
       status = excluded.status,
@@ -1594,6 +1927,7 @@ function upsertConversationProfile(db, platform, account, groupId, patch = {}, o
       starred = excluded.starred,
       follow_up_at = excluded.follow_up_at,
       internal_display_name = excluded.internal_display_name,
+      customer_type_id = excluded.customer_type_id,
       customer_type = excluded.customer_type,
       owner_note = excluded.owner_note,
       updated_by = excluded.updated_by,
@@ -1624,16 +1958,21 @@ function changedProfileFields(before, after) {
     'starred',
     'follow_up_at',
     'internal_display_name',
+    'customer_type_id',
     'customer_type',
     'owner_note',
   ].filter((field) => String(before[field] ?? '') !== String(after[field] ?? ''));
 }
 
-function buildConversationWorkspace(db, centralDb, platform, account, groupId) {
+function buildConversationWorkspace(db, centralDb, platform, account, groupId, { notesLimit = 3, timelineLimit = 3 } = {}) {
+  const notesPage = loadConversationNotesPage(db, centralDb, platform, account, groupId, { limit: notesLimit });
+  const timelinePage = loadConversationTimelinePage(db, centralDb, platform, account, groupId, { limit: timelineLimit });
   return {
     profile: loadConversationProfile(db, platform, account, groupId),
-    notes: loadConversationNotes(db, centralDb, platform, account, groupId),
-    timeline: loadConversationTimeline(db, centralDb, platform, account, groupId),
+    notes: notesPage.notes,
+    notes_paging: notesPage.paging,
+    timeline: timelinePage.timeline,
+    timeline_paging: timelinePage.paging,
     presence: loadConversationPresence(db, centralDb, platform, account, groupId),
   };
 }
@@ -1705,6 +2044,38 @@ function loadConversationTimeline(db, centralDb, platform, account, groupId, lim
     ...attachActorName(row, actorNames, 'actor_id'),
     payload: parseJson(row.payload_json, {}),
   }));
+}
+
+function loadConversationTimelinePage(db, centralDb, platform, account, groupId, { limit = 20, beforeId = 0 } = {}) {
+  const actorNames = loadOperatorNameMap(centralDb);
+  const bounded = Math.max(1, Math.min(Number(limit) || 20, 100));
+  const rows = db.prepare(`
+    SELECT * FROM conversation_timeline
+    WHERE platform = @platform
+      AND account = @account
+      AND group_id = @groupId
+      AND (@beforeId = 0 OR id < @beforeId)
+    ORDER BY created_at DESC, id DESC
+    LIMIT @rowLimit
+  `).all({
+    platform,
+    account,
+    groupId,
+    beforeId: Math.max(0, Number(beforeId) || 0),
+    rowLimit: bounded + 1,
+  }).map((row) => ({
+    ...attachActorName(row, actorNames, 'actor_id'),
+    payload: parseJson(row.payload_json, {}),
+  }));
+  const hasMore = rows.length > bounded;
+  const timeline = rows.slice(0, bounded);
+  return {
+    timeline,
+    paging: {
+      has_more: hasMore,
+      before_id: hasMore && timeline.length ? timeline[timeline.length - 1].id : null,
+    },
+  };
 }
 
 function writeConversationTimeline(db, actorId, actionType, platform, account, groupId, payload) {
@@ -1807,9 +2178,12 @@ function mapRawMessage(row) {
     media_path: row.media_path,
     attachments: row.has_media || row.media_path ? [{
       id: `raw-media-${row.id}`,
-      name: row.media_path ? path.basename(String(row.media_path)) : '媒体消息',
-      kind: 'file',
+      name: row.media_name || (row.media_path ? path.basename(String(row.media_path)) : '媒体消息'),
+      type: row.media_mime || 'application/octet-stream',
+      size: row.media_size || null,
+      kind: String(row.media_mime || '').startsWith('image/') ? 'image' : 'file',
       media_path: row.media_path || null,
+      media_url: row.media_path ? `/api/workbench/groups/${encodeURIComponent(row.group_id)}/media/${row.id}?platform=${encodeURIComponent(row.platform)}&account=${encodeURIComponent(row.account)}` : null,
     }] : [],
     status: direction === 'outbound' ? 'sent' : 'received',
     created_at: row.created_at,
@@ -2147,6 +2521,10 @@ function hasProfileManageFields(body = {}) {
     'internalDisplayName',
     'customer_type',
     'customerType',
+    'customer_type_id',
+    'customerTypeId',
+    'status',
+    'conversation_status',
     'owner_note',
     'ownerNote',
   ].some((key) => hasPatchValue(body, key));
@@ -2385,22 +2763,29 @@ function queryWorkbenchDbs(accountData, { platforms, accountScope, sql, params =
 }
 
 function accountChannelStats(accountData, workbenchDb, platform, account) {
-  return accountData.withWorkbenchDb(platform, account, {}, (accountDb) => ({
-    label_count: countLabels(accountDb, platform, account),
-    synced_group_count: countSyncedGroups(accountDb, platform, account),
-    last_channel_sync_at: lastChannelSyncAt(accountDb, platform, account),
-  }));
+  return accountData.withWorkbenchDb(platform, account, {}, (accountDb) => {
+    const breaker = activeBreaker(accountDb, platform, account);
+    return {
+      label_count: countLabels(accountDb, platform, account),
+      synced_group_count: countSyncedGroups(accountDb, platform, account),
+      last_channel_sync_at: lastChannelSyncAt(accountDb, platform, account),
+      send_breaker_active: Boolean(breaker),
+      send_breaker_reason: breaker?.reason || '',
+    };
+  });
 }
 
 function mapServiceAccount(account, accountData, workbenchDb) {
   const status = String(account.account_status || '').toLowerCase();
   const isConnected = CONNECTED_ACCOUNT_STATUSES.has(status);
   const sendEnabled = Number(account.send_enabled) !== 0;
+  const globalSendEnabled = process.env.WORKBENCH_SEND_ENABLED === '1';
   return {
     ...account,
     ...accountChannelStats(accountData, workbenchDb, account.platform, account.account),
     is_connected: isConnected,
-    can_send: isConnected && sendEnabled,
+    global_send_enabled: globalSendEnabled,
+    can_send: isConnected && sendEnabled && globalSendEnabled,
   };
 }
 

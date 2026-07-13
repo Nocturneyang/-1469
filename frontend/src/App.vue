@@ -5,6 +5,7 @@
     :user="currentUser"
     :portal-access="portalAccess"
     :account-scope="accountScope"
+    :can-manage="Boolean(portalAccess.can_admin)"
     :accounts="connectedAccounts"
     @back="goWorkbench"
   />
@@ -13,9 +14,11 @@
     v-else-if="currentView === 'serviceAccounts'"
     :accounts="accounts"
     :account-scope="accountScope"
+    :can-manage="Boolean(portalAccess.can_admin)"
     @back="goWorkbench"
     @open-login="openServiceLogin"
     @delete-account="handleDeleteServiceAccount"
+    @settings-change="handleServiceAccountSettingsChange"
   />
 
   <ServiceAccountLogin v-else-if="currentView === 'serviceLogin'" @back="goWorkbench" />
@@ -42,14 +45,17 @@
       <TopFilters
         v-model="filters"
         :labels="labels"
+        :customer-types="customerTypes"
         :accounts="connectedAccounts"
         :available-platforms="availablePlatforms"
         :account-scope="accountScope"
         :syncing="syncingChannels"
+        :profile-open="customerProfileOpen"
         @sync-channels="handleChannelSync"
+        @toggle-customer-profile="toggleCustomerProfile"
       />
 
-      <main class="workbench-grid">
+      <main class="workbench-grid" :class="{ 'profile-collapsed': !customerProfileOpen }">
         <ConversationList
           :groups="groups"
           :loading="loadingGroups"
@@ -95,9 +101,23 @@
           :messages="messages"
           :workspace-detail="workspaceDetail"
           :loading-workspace="loadingWorkspace"
+          :customer-types="customerTypes"
+          :manual-groups="manualGroups"
+          :saving-manual-groups="savingManualGroups"
           @workspace-save="handleWorkspaceSave"
           @note-create="handleNoteCreate"
+          @manual-groups-change="handleManualGroupsChange"
+          @load-more-notes="handleLoadMoreNotes"
+          @load-more-timeline="handleLoadMoreTimeline"
+          @open-native="handleOpenNative"
         />
+        <button
+          v-if="customerProfileOpen"
+          type="button"
+          class="customer-profile-backdrop"
+          aria-label="关闭客户资料"
+          @click="toggleCustomerProfile"
+        ></button>
       </main>
     </div>
 
@@ -107,20 +127,21 @@
 </template>
 
 <script setup>
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
-import { ElMessage, ElMessageBox } from 'element-plus';
-import AccountSettings from './components/AccountSettings.vue';
-import PermissionConfig from './components/PermissionConfig.vue';
-import ServiceAccountAccess from './components/ServiceAccountAccess.vue';
-import ServiceAccountLogin from './components/ServiceAccountLogin.vue';
+import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import ElMessage from 'element-plus/es/components/message/index.mjs';
+import ElMessageBox from 'element-plus/es/components/message-box/index.mjs';
 import ServiceAccountRail from './components/ServiceAccountRail.vue';
 import TopFilters from './components/TopFilters.vue';
 import ConversationList from './components/ConversationList.vue';
 import MessageThread from './components/MessageThread.vue';
 import Composer from './components/Composer.vue';
 import ConversationInspector from './components/ConversationInspector.vue';
+
+const AccountSettings = defineAsyncComponent(() => import('./components/AccountSettings.vue'));
+const PermissionConfig = defineAsyncComponent(() => import('./components/PermissionConfig.vue'));
+const ServiceAccountAccess = defineAsyncComponent(() => import('./components/ServiceAccountAccess.vue'));
+const ServiceAccountLogin = defineAsyncComponent(() => import('./components/ServiceAccountLogin.vue'));
 import {
-  assignGroup,
   cancelOutbound,
   createClientMsgId,
   createGroupNote,
@@ -128,7 +149,10 @@ import {
   createReply,
   deleteServiceAccount,
   fetchAccounts,
+  fetchCustomerTypes,
   fetchGroupWorkspace,
+  fetchGroupNotes,
+  fetchGroupTimeline,
   fetchGroups,
   fetchHealth,
   fetchLabels,
@@ -139,7 +163,6 @@ import {
   isAuthRedirecting,
   markRead,
   requestChannelSync,
-  releaseGroup,
   retryOutbound,
   saveGroupWorkspace,
   saveGroupManualGroups,
@@ -151,9 +174,11 @@ const filters = ref({
   accountKeys: [],
   scope: 'all',
   labelId: '',
+  customerTypeId: '',
   search: '',
 });
 const labels = ref([]);
+const customerTypes = ref([]);
 const manualGroups = ref([]);
 const accounts = ref([]);
 const groups = ref([]);
@@ -164,7 +189,7 @@ const portalAccess = ref({ can_monitor: false, can_workbench: true, can_admin: f
 const currentOperator = ref(null);
 const currentUser = ref(null);
 const selectedGroup = ref(null);
-const workspaceDetail = ref({ profile: null, notes: [], timeline: [], presence: [] });
+const workspaceDetail = ref({ profile: null, notes: [], timeline: [], presence: [], notes_paging: {}, timeline_paging: {} });
 const loadingWorkspace = ref(false);
 const quoteMessage = ref(null);
 const messageFilters = ref({
@@ -183,6 +208,7 @@ const savingManualGroups = ref(false);
 const error = ref('');
 const noServiceAccount = ref(false);
 const serviceRailCollapsed = ref(readStoredRailCollapsed());
+const customerProfileOpen = ref(readStoredCustomerProfileOpen());
 const currentView = ref(resolveCurrentView());
 const workbenchBootstrapped = ref(false);
 
@@ -204,7 +230,6 @@ const currentOperatorId = computed(() => (
 ));
 
 const scopeLabel = computed(() => {
-  if (filters.value.scope === 'mine') return '我的会话';
   if (filters.value.scope === 'unread') return '未读';
   return '全部';
 });
@@ -269,6 +294,7 @@ function navigateTo(path) {
 }
 
 function goWorkbench() {
+  workbenchBootstrapped.value = false;
   navigateTo('/');
 }
 
@@ -337,6 +363,7 @@ async function bootstrapWorkbench() {
   await Promise.all([
     loadLabels(),
     loadManualGroups(),
+    loadCustomerTypes(),
     loadGroups({ useRetry: true }),
   ]);
   scheduleWorkbenchCacheWrite();
@@ -382,7 +409,7 @@ watch(
     else {
       messages.value = [];
       messagePaging.value = { has_more: false, before_id: null };
-      workspaceDetail.value = { profile: null, notes: [], timeline: [], presence: [] };
+      workspaceDetail.value = { profile: null, notes: [], timeline: [], presence: [], notes_paging: {}, timeline_paging: {} };
       stopPresenceHeartbeat();
     }
   },
@@ -399,6 +426,7 @@ async function loadGroups({ silent = false, clearSelectionOnMissing = false, use
       accounts: selectedAccountParam.value,
       scope: filters.value.scope,
       label_id: filters.value.labelId || undefined,
+      customer_type_id: filters.value.customerTypeId || undefined,
       search: filters.value.search || undefined,
     });
     const { groups: nextGroups, account_scope } = useRetry
@@ -444,6 +472,25 @@ async function loadLabels() {
   scheduleWorkbenchCacheWrite();
   if (filters.value.labelId && !hasLabel(nextLabels, filters.value.labelId)) {
     filters.value = { ...filters.value, labelId: '' };
+  }
+}
+
+async function loadCustomerTypes() {
+  const rows = await Promise.all(connectedAccounts.value.map(async (account) => {
+    try {
+      const options = await fetchCustomerTypes(account.platform, account.account);
+      return options.map((option) => ({
+        ...option,
+        account: account.account,
+        account_display_name: account.account_display_name || account.account,
+      }));
+    } catch (_) {
+      return [];
+    }
+  }));
+  customerTypes.value = rows.flat();
+  if (filters.value.customerTypeId && !customerTypes.value.some((option) => option.id === filters.value.customerTypeId)) {
+    filters.value = { ...filters.value, customerTypeId: '' };
   }
 }
 
@@ -515,6 +562,7 @@ function groupFilterCacheKey() {
     accountKeys: filters.value.accountKeys,
     scope: filters.value.scope,
     labelId: filters.value.labelId,
+    customerTypeId: filters.value.customerTypeId,
     search: filters.value.search,
   });
 }
@@ -552,7 +600,7 @@ function hasLabel(nextLabels, labelId) {
 function syncPlatformFilterWithScope({ preferMessageAccounts = false } = {}) {
   const platforms = availablePlatforms.value;
   if (!platforms.length) {
-    filters.value = { ...filters.value, platforms: [], accountKeys: [], labelId: '' };
+    filters.value = { ...filters.value, platforms: [], accountKeys: [], labelId: '', customerTypeId: '' };
     return;
   }
   const current = filters.value.platforms.filter((platform) => platforms.includes(platform));
@@ -567,7 +615,7 @@ function syncPlatformFilterWithScope({ preferMessageAccounts = false } = {}) {
     next.some((platform, index) => platform !== filters.value.platforms[index]) ||
     accountKeys.length !== filters.value.accountKeys.length
   ) {
-    filters.value = { ...filters.value, platforms: next, accountKeys, labelId: accountKeys.length ? filters.value.labelId : '' };
+    filters.value = { ...filters.value, platforms: next, accountKeys, labelId: accountKeys.length ? filters.value.labelId : '', customerTypeId: '' };
   }
 }
 
@@ -596,6 +644,7 @@ function selectServiceAccount(account) {
     platforms: [account.platform],
     accountKeys: [`${account.platform}:${account.account}`],
     labelId: '',
+    customerTypeId: '',
   };
 }
 
@@ -604,6 +653,7 @@ function clearServiceAccount() {
     ...filters.value,
     accountKeys: [],
     labelId: '',
+    customerTypeId: '',
   };
 }
 
@@ -627,6 +677,10 @@ async function handleDeleteServiceAccount(account) {
   }
 }
 
+function handleServiceAccountSettingsChange(account) {
+  accounts.value = accounts.value.map((item) => accountKey(item) === accountKey(account) ? { ...item, ...account } : item);
+}
+
 function toggleServiceRail() {
   serviceRailCollapsed.value = !serviceRailCollapsed.value;
   try {
@@ -642,6 +696,21 @@ function readStoredRailCollapsed() {
   } catch (err) {
     return false;
   }
+}
+
+function readStoredCustomerProfileOpen() {
+  try {
+    const stored = window.localStorage.getItem('workbench.customerProfileOpen');
+    if (stored === '0' || stored === '1') return stored === '1';
+  } catch (_) {}
+  return window.innerWidth >= 1180;
+}
+
+function toggleCustomerProfile() {
+  customerProfileOpen.value = !customerProfileOpen.value;
+  try {
+    window.localStorage.setItem('workbench.customerProfileOpen', customerProfileOpen.value ? '1' : '0');
+  } catch (_) {}
 }
 
 async function loadMessages(params = {}) {
@@ -712,7 +781,7 @@ async function loadWorkspace({ silent = false } = {}) {
     patchSelectedGroup(profileToGroupPatch(detail.profile, detail));
   } catch (err) {
     if (requestSeq === workspaceRequestSeq) {
-      workspaceDetail.value = { profile: null, notes: [], timeline: [], presence: [] };
+      workspaceDetail.value = { profile: null, notes: [], timeline: [], presence: [], notes_paging: {}, timeline_paging: {} };
     }
   } finally {
     if (requestSeq === workspaceRequestSeq && !silent) loadingWorkspace.value = false;
@@ -755,7 +824,9 @@ async function handleSend(message) {
       group_id: selectedGroup.value.group_id,
       text,
       attachments,
-      quote_msg_id: payload.quote_msg_id || (quoteMessage.value && (quoteMessage.value.message_id || quoteMessage.value.raw_id || quoteMessage.value.outbound_id)),
+      quote_msg_id: payload.quote_msg_id || (quoteMessage.value && (
+        quoteMessage.value.remote_msg_id || quoteMessage.value.message_id || quoteMessage.value.raw_id || quoteMessage.value.outbound_id
+      )),
     });
     stickToBottom.value = true;
     quoteMessage.value = null;
@@ -871,8 +942,10 @@ async function persistManualGroups(manualGroupIds) {
 
 async function handleWorkspaceSave(payload) {
   if (!selectedGroup.value) return;
+  const groupId = selectedGroup.value.id;
   try {
     const profile = await saveGroupWorkspace(selectedGroup.value, payload);
+    if (!selectedGroup.value || selectedGroup.value.id !== groupId) return;
     workspaceDetail.value = {
       ...workspaceDetail.value,
       profile,
@@ -880,10 +953,41 @@ async function handleWorkspaceSave(payload) {
     patchSelectedGroup(profileToGroupPatch(profile, workspaceDetail.value));
     await loadWorkspace({ silent: true });
     await loadGroups({ silent: true, clearSelectionOnMissing: true });
-    ElMessage.success('会话资料已保存');
   } catch (err) {
+    if (!selectedGroup.value || selectedGroup.value.id !== groupId) return;
+    await loadWorkspace({ silent: true });
     ElMessage.error('会话资料保存失败');
   }
+}
+
+async function handleLoadMoreNotes() {
+  if (!selectedGroup.value) return;
+  const groupId = selectedGroup.value.id;
+  const result = await fetchGroupNotes(selectedGroup.value, {
+    limit: 20,
+    before_id: workspaceDetail.value.notes_paging?.before_id || undefined,
+  });
+  if (!selectedGroup.value || selectedGroup.value.id !== groupId) return;
+  workspaceDetail.value = {
+    ...workspaceDetail.value,
+    notes: [...(workspaceDetail.value.notes || []), ...result.notes],
+    notes_paging: result.paging,
+  };
+}
+
+async function handleLoadMoreTimeline() {
+  if (!selectedGroup.value) return;
+  const groupId = selectedGroup.value.id;
+  const result = await fetchGroupTimeline(selectedGroup.value, {
+    limit: 50,
+    before_id: workspaceDetail.value.timeline_paging?.before_id || undefined,
+  });
+  if (!selectedGroup.value || selectedGroup.value.id !== groupId) return;
+  workspaceDetail.value = {
+    ...workspaceDetail.value,
+    timeline: [...(workspaceDetail.value.timeline || []), ...result.timeline],
+    timeline_paging: result.paging,
+  };
 }
 
 async function handleNoteCreate(body) {
@@ -911,6 +1015,7 @@ function profileToGroupPatch(profile, detail = {}) {
     starred: Boolean(profile.starred),
     follow_up_at: profile.follow_up_at,
     internal_display_name: profile.internal_display_name,
+    customer_type_id: profile.customer_type_id,
     customer_type: profile.customer_type,
     owner_note: profile.owner_note,
     notes_count: (detail.notes || workspaceDetail.value.notes || []).length,
@@ -996,23 +1101,13 @@ async function handleMarkRead() {
   await loadWorkspace({ silent: true });
 }
 
-async function handleAssign() {
-  if (!selectedGroup.value) return;
-  if (selectedGroup.value.assignment && selectedGroup.value.assignment.assigned_to === currentOperatorId.value) {
-    await releaseGroup(selectedGroup.value);
-    patchSelectedGroup({ assignment: null });
-    await loadWorkspace({ silent: true });
-    ElMessage.success('已释放当前会话');
-  } else {
-    const result = await assignGroup(selectedGroup.value, currentOperatorId.value);
-    patchSelectedGroup({ assignment: result.assignment || null });
-    await loadWorkspace({ silent: true });
-    ElMessage.success('已认领当前会话');
+function handleOpenNative(group = selectedGroup.value) {
+  const url = String(group?.native_url || '').trim();
+  if (url) {
+    window.open(url, '_blank', 'noopener,noreferrer');
+    return;
   }
-}
-
-function handleOpenNative() {
-  ElMessage.info('原生群入口将在 worker 同步阶段接入');
+  ElMessage.info('当前渠道未返回可打开的原生会话链接');
 }
 
 function openWorkbenchPermissions() {
@@ -1128,9 +1223,6 @@ function selectedManualGroupIds(group) {
 }
 
 function groupMatchesActiveScope(group) {
-  if (filters.value.scope === 'mine') {
-    return Boolean(group.assignment && group.assignment.assigned_to === currentOperatorId.value);
-  }
   if (filters.value.scope === 'unread') return Number(group.unread_count || 0) > 0;
   return true;
 }
@@ -1157,9 +1249,6 @@ function handleGlobalShortcut(event) {
     event.preventDefault();
   } else if (event.key === 'm' || event.key === 'M') {
     handleMarkRead().catch(() => {});
-    event.preventDefault();
-  } else if (event.key === 'a' || event.key === 'A') {
-    handleAssign().catch(() => {});
     event.preventDefault();
   }
 }

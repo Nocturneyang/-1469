@@ -22,6 +22,10 @@ function ensureRawDb(dbPath = DEFAULT_RAW_DB_PATH) {
       content TEXT,
       has_media INTEGER NOT NULL DEFAULT 0,
       media_path TEXT,
+      media_name TEXT,
+      media_mime TEXT,
+      media_size INTEGER,
+      media_sha256 TEXT,
       timestamp INTEGER,
       raw_data TEXT,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -61,7 +65,7 @@ function ensureRawDb(dbPath = DEFAULT_RAW_DB_PATH) {
       account_role TEXT NOT NULL DEFAULT 'service',
       workbench_visible INTEGER NOT NULL DEFAULT 1,
       collect_enabled INTEGER NOT NULL DEFAULT 1,
-      send_enabled INTEGER NOT NULL DEFAULT 1,
+      send_enabled INTEGER NOT NULL DEFAULT 0,
       sync_groups_enabled INTEGER NOT NULL DEFAULT 0,
       risk_level TEXT NOT NULL DEFAULT 'low',
       owner_team TEXT,
@@ -88,11 +92,15 @@ function migrateRawDbSchema(db) {
   ensureColumn(db, 'accounts', 'health_status', 'TEXT');
   ensureColumn(db, 'accounts', 'session_status', 'TEXT');
   ensureColumn(db, 'accounts', 'updated_at', 'TEXT');
+  ensureColumn(db, 'messages', 'media_name', 'TEXT');
+  ensureColumn(db, 'messages', 'media_mime', 'TEXT');
+  ensureColumn(db, 'messages', 'media_size', 'INTEGER');
+  ensureColumn(db, 'messages', 'media_sha256', 'TEXT');
   ensureColumn(db, 'channel_account_registry', 'login_type', "TEXT NOT NULL DEFAULT 'unknown'");
   ensureColumn(db, 'channel_account_registry', 'account_role', "TEXT NOT NULL DEFAULT 'service'");
   ensureColumn(db, 'channel_account_registry', 'workbench_visible', 'INTEGER NOT NULL DEFAULT 1');
   ensureColumn(db, 'channel_account_registry', 'collect_enabled', 'INTEGER NOT NULL DEFAULT 1');
-  ensureColumn(db, 'channel_account_registry', 'send_enabled', 'INTEGER NOT NULL DEFAULT 1');
+  ensureColumn(db, 'channel_account_registry', 'send_enabled', 'INTEGER NOT NULL DEFAULT 0');
   ensureColumn(db, 'channel_account_registry', 'sync_groups_enabled', 'INTEGER NOT NULL DEFAULT 0');
   ensureColumn(db, 'channel_account_registry', 'risk_level', "TEXT NOT NULL DEFAULT 'low'");
   ensureColumn(db, 'channel_account_registry', 'status', 'TEXT');
@@ -113,7 +121,7 @@ function upsertServiceAccountProfile({
   loginType = 'workbench_login',
   status = 'login_requested',
   accountRole = 'service',
-  sendEnabled = 1,
+  sendEnabled = 0,
 } = {}) {
   const normalizedPlatform = normalizePlatform(platform);
   const normalizedAccount = String(account || '').trim();
@@ -165,6 +173,28 @@ function upsertServiceAccountProfile({
       status,
       now,
     });
+  } finally {
+    db.close();
+  }
+}
+
+function setServiceAccountSendEnabled({ dbPath = DEFAULT_RAW_DB_PATH, platform, account, sendEnabled } = {}) {
+  const normalizedPlatform = normalizePlatform(platform);
+  const normalizedAccount = String(account || '').trim();
+  if (!['wa', 'tg'].includes(normalizedPlatform)) throw new Error('platform must be one of wa, tg');
+  if (!normalizedAccount) throw new Error('account is required');
+  const db = ensureRawDb(dbPath);
+  try {
+    const result = db.prepare(`
+      UPDATE channel_account_registry
+      SET send_enabled = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE platform = ? AND account = ?
+    `).run(Number(sendEnabled) === 1 ? 1 : 0, normalizedPlatform, normalizedAccount);
+    if (!result.changes) return null;
+    return db.prepare(`
+      SELECT platform, account, send_enabled, status, updated_at
+      FROM channel_account_registry WHERE platform = ? AND account = ?
+    `).get(normalizedPlatform, normalizedAccount);
   } finally {
     db.close();
   }
@@ -235,6 +265,10 @@ function upsertRawMessage({
   content = '',
   hasMedia = 0,
   mediaPath = null,
+  mediaName = null,
+  mediaMime = null,
+  mediaSize = null,
+  mediaSha256 = null,
   timestamp,
   rawData = null,
   nativeChatId,
@@ -261,6 +295,10 @@ function upsertRawMessage({
     content: String(content || ''),
     hasMedia: hasMedia ? 1 : 0,
     mediaPath: mediaPath || null,
+    mediaName: mediaName ? String(mediaName).slice(0, 180) : null,
+    mediaMime: mediaMime ? String(mediaMime).slice(0, 120) : null,
+    mediaSize: Number(mediaSize) || null,
+    mediaSha256: mediaSha256 ? String(mediaSha256).slice(0, 64) : null,
     timestamp: normalizeMessageTimestamp(timestamp),
     rawJson: safeJson(rawData),
     nativeChatId: String(nativeChatId || groupId || '').trim() || null,
@@ -273,11 +311,13 @@ function upsertRawMessage({
       rawDb.prepare(`
         INSERT INTO messages (
           platform, receiver_account, message_id, group_id, group_name,
-          sender_id, sender_name, content, has_media, media_path, timestamp, raw_data
+          sender_id, sender_name, content, has_media, media_path,
+          media_name, media_mime, media_size, media_sha256, timestamp, raw_data
         )
         VALUES (
           @platform, @account, @messageId, @groupId, @groupName,
-          @senderId, @senderName, @content, @hasMedia, @mediaPath, @timestamp, @rawJson
+          @senderId, @senderName, @content, @hasMedia, @mediaPath,
+          @mediaName, @mediaMime, @mediaSize, @mediaSha256, @timestamp, @rawJson
         )
         ON CONFLICT(platform, message_id) DO UPDATE SET
           receiver_account = excluded.receiver_account,
@@ -288,6 +328,10 @@ function upsertRawMessage({
           content = excluded.content,
           has_media = excluded.has_media,
           media_path = COALESCE(excluded.media_path, messages.media_path),
+          media_name = COALESCE(excluded.media_name, messages.media_name),
+          media_mime = COALESCE(excluded.media_mime, messages.media_mime),
+          media_size = COALESCE(excluded.media_size, messages.media_size),
+          media_sha256 = COALESCE(excluded.media_sha256, messages.media_sha256),
           timestamp = COALESCE(excluded.timestamp, messages.timestamp),
           raw_data = COALESCE(excluded.raw_data, messages.raw_data)
       `).run(row);
@@ -356,4 +400,5 @@ module.exports = {
   ensureRawDb,
   upsertRawMessage,
   upsertServiceAccountProfile,
+  setServiceAccountSendEnabled,
 };

@@ -119,7 +119,7 @@
 
 <script setup>
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
-import { ElMessage } from 'element-plus';
+import ElMessage from 'element-plus/es/components/message/index.mjs';
 import {
   ChatDotRound,
   Close,
@@ -350,6 +350,7 @@ function submit() {
     text,
     attachments: attachments.value.filter(Boolean).map((attachment) => ({ ...attachment })),
     quote_msg_id: props.quoteMessage && (
+      props.quoteMessage.remote_msg_id ||
       props.quoteMessage.message_id ||
       props.quoteMessage.raw_id ||
       props.quoteMessage.outbound_id ||

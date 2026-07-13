@@ -75,10 +75,20 @@ process.on('SIGTERM', shutdown);
 process.on('SIGINT', shutdown);
 
 async function tick() {
+  if (!ACCOUNT_SCOPED) reportProcessHeartbeat('running');
   if (ACCOUNT_SCOPED && !renewAccountLease()) return;
   expireRequests();
   await processDoorbells();
   resumeWaitingWaRequests();
+}
+
+function reportProcessHeartbeat(status) {
+  runtimeDb.prepare(`
+    INSERT INTO process_heartbeats (process_role, holder_id, status, pid, updated_at)
+    VALUES ('login-worker', ?, ?, ?, CURRENT_TIMESTAMP)
+    ON CONFLICT(process_role) DO UPDATE SET holder_id = excluded.holder_id,
+      status = excluded.status, pid = excluded.pid, updated_at = CURRENT_TIMESTAMP
+  `).run(WORKER_HOLDER_ID, status, process.pid);
 }
 
 async function processDoorbells() {
@@ -1169,6 +1179,7 @@ function log(message) {
 function shutdown() {
   log('stopping');
   clearInterval(pollTimer);
+  if (!ACCOUNT_SCOPED) reportProcessHeartbeat('stopped');
   for (const requestId of [...activeWaByRequest.keys()]) stopWaRequest(requestId);
   releaseAccountLease();
   runtimeDb.close();

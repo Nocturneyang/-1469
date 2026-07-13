@@ -12,19 +12,25 @@ const {
   sanitizeAccountSegment,
 } = require('../db/account-db');
 const { resolveDataDir } = require('../db/paths');
+const { DEFAULT_RUNTIME_DB_PATH, openRuntimeDb } = require('../db/runtime-db');
 const { assertChromeMemoryAvailable } = require('../lib/chrome-launch');
 
 const DATA_DIR = resolveDataDir();
 const OUTBOX_DIR = path.resolve(process.env.WORKBENCH_OUTBOX_DIR || path.join(DATA_DIR, 'outbox'));
 const DISCOVERY_MS = boundedNumber(process.env.WORKBENCH_ACCOUNT_SUPERVISOR_DISCOVERY_MS, 10000, 2000, 300000);
 const RESTART_DELAY_MS = boundedNumber(process.env.WORKBENCH_ACCOUNT_WORKER_RESTART_DELAY_MS, 10000, 1000, 300000);
-const MAX_WORKERS = boundedNumber(process.env.WORKBENCH_ACCOUNT_WORKER_MAX_WORKERS, 1, 1, 100);
+const MAX_WORKERS = boundedNumber(process.env.WORKBENCH_ACCOUNT_WORKER_MAX_WORKERS, 5, 1, 100);
+const MAX_WA_WORKERS = boundedNumber(process.env.WORKBENCH_ACCOUNT_WORKER_MAX_WA, 1, 0, 100);
+const MAX_TG_WORKERS = boundedNumber(process.env.WORKBENCH_ACCOUNT_WORKER_MAX_TG, 4, 0, 100);
 const START_ALL = process.env.WORKBENCH_ACCOUNT_WORKER_START_ALL === '1';
 const EXPLICIT_WORKERS = parseExplicitWorkers(process.env.WORKBENCH_ACCOUNT_WORKERS || '');
 const RUNNABLE_STATUSES = new Set(['authenticated', 'ready', 'monitoring', 'warmup', 'connected']);
 
 const workerScript = path.join(__dirname, 'account-runtime-worker.js');
 const workers = new Map();
+const controlRuntimeDb = require.main === module
+  ? openRuntimeDb(process.env.WORKBENCH_RUNTIME_DB_PATH || DEFAULT_RUNTIME_DB_PATH)
+  : null;
 let stopping = false;
 
 if (require.main === module) {
@@ -40,12 +46,15 @@ if (require.main === module) {
 
 async function discover() {
   if (stopping) return;
-  const desired = desiredAccountWorkers({
+  reportProcessHeartbeat('running');
+  const selection = selectAccountWorkers({
     refs: listAccountRefs(),
     explicitWorkers: EXPLICIT_WORKERS,
     startAll: START_ALL,
     maxWorkers: MAX_WORKERS,
   });
+  const desired = selection.desired;
+  updateCapacityStatuses(selection);
   const desiredKeys = new Set(desired.map((ref) => accountKey(ref.platform, ref.account)));
 
   for (const key of [...workers.keys()]) {
@@ -61,25 +70,84 @@ async function discover() {
   }
 }
 
+function reportProcessHeartbeat(status) {
+  if (!controlRuntimeDb) return;
+  controlRuntimeDb.prepare(`
+    INSERT INTO process_heartbeats (process_role, holder_id, status, pid, updated_at)
+    VALUES ('account-supervisor', ?, ?, ?, CURRENT_TIMESTAMP)
+    ON CONFLICT(process_role) DO UPDATE SET holder_id = excluded.holder_id,
+      status = excluded.status, pid = excluded.pid, updated_at = CURRENT_TIMESTAMP
+  `).run(process.env.HOSTNAME || String(process.pid), status, process.pid);
+}
+
 function desiredAccountWorkers({
   refs = listAccountRefs(),
   explicitWorkers = EXPLICIT_WORKERS,
   startAll = START_ALL,
   maxWorkers = MAX_WORKERS,
+  maxWaWorkers = MAX_WA_WORKERS,
+  maxTgWorkers = MAX_TG_WORKERS,
+} = {}) {
+  return selectAccountWorkers({ refs, explicitWorkers, startAll, maxWorkers, maxWaWorkers, maxTgWorkers }).desired;
+}
+
+function selectAccountWorkers({
+  refs = listAccountRefs(),
+  explicitWorkers = EXPLICIT_WORKERS,
+  startAll = START_ALL,
+  maxWorkers = MAX_WORKERS,
+  maxWaWorkers = MAX_WA_WORKERS,
+  maxTgWorkers = MAX_TG_WORKERS,
 } = {}) {
   const explicit = normalizeExplicitWorkers(explicitWorkers);
-  const desired = [];
+  const eligible = [];
   refs.forEach((ref) => {
     if (explicit.size && !explicit.has(accountKey(ref.platform, ref.account))) return;
     const control = readAccountControl(ref);
     if (!shouldRunAccountWorker(control, { force: startAll || explicit.has(accountKey(ref.platform, ref.account)) })) return;
-    desired.push(ref);
+    eligible.push(ref);
   });
-  return desired
+  const platformCounts = { wa: 0, tg: 0 };
+  const ordered = eligible
     .sort((a, b) => workerSortScore(readAccountControl(b)) - workerSortScore(readAccountControl(a)) ||
       a.platform.localeCompare(b.platform) ||
-      a.account.localeCompare(b.account))
-    .slice(0, maxWorkers);
+      a.account.localeCompare(b.account));
+  const desired = [];
+  const waiting = [];
+  ordered.forEach((ref) => {
+      const limit = ref.platform === 'wa' ? maxWaWorkers : maxTgWorkers;
+      if (platformCounts[ref.platform] >= limit || desired.length >= maxWorkers) {
+        waiting.push(ref);
+        return;
+      }
+      platformCounts[ref.platform] += 1;
+      desired.push(ref);
+    });
+  return { desired, waiting, eligible, refs };
+}
+
+function updateCapacityStatuses({ desired, waiting, refs }) {
+  const desiredKeys = new Set(desired.map((ref) => accountKey(ref.platform, ref.account)));
+  const waitingKeys = new Set(waiting.map((ref) => accountKey(ref.platform, ref.account)));
+  refs.forEach((ref) => {
+    if (!fs.existsSync(ref.paths.runtimeDbPath)) return;
+    const key = accountKey(ref.platform, ref.account);
+    const status = waitingKeys.has(key) ? 'capacity_waiting' : (desiredKeys.has(key) ? 'scheduled' : 'inactive');
+    const reason = waitingKeys.has(key) ? 'platform_or_global_worker_capacity' : null;
+    const db = openRuntimeDb(ref.paths.runtimeDbPath);
+    try {
+      db.prepare(`
+        INSERT INTO account_worker_status (platform, account, status, reason, updated_at)
+        VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT(platform, account) DO UPDATE SET
+          status = excluded.status,
+          reason = excluded.reason,
+          updated_at = CURRENT_TIMESTAMP
+      `).run(ref.platform, ref.account, status, reason);
+    } finally {
+      db.close();
+    }
+  });
 }
 
 function startWorker(ref) {
@@ -238,6 +306,8 @@ function shutdown(timer) {
   if (stopping) return;
   stopping = true;
   clearInterval(timer);
+  reportProcessHeartbeat('stopped');
+  if (controlRuntimeDb) controlRuntimeDb.close();
   log('stopping');
   for (const key of [...workers.keys()]) stopWorker(key, 'supervisor shutdown');
   setTimeout(() => process.exit(0), 500).unref();
@@ -246,6 +316,7 @@ function shutdown(timer) {
 module.exports = {
   accountKey,
   desiredAccountWorkers,
+  selectAccountWorkers,
   parseExplicitWorkers,
   readAccountControl,
   shouldRunAccountWorker,

@@ -34,8 +34,17 @@ async function main() {
     assert.strictEqual(accounts.accounts[0].account, 'nanya_wa');
     assert.strictEqual(accounts.accounts[0].account_display_name, 'Nanya Support');
     assert.strictEqual(accounts.accounts[0].is_connected, true);
-    assert.strictEqual(accounts.accounts[0].can_send, true);
+    assert.strictEqual(accounts.accounts[0].global_send_enabled, false);
+    assert.strictEqual(accounts.accounts[0].can_send, false);
     assert.strictEqual(accounts.accounts.some((account) => account.platform === 'teams'), false);
+
+    const disabledSendSetting = await requestJson(`${baseUrl}/admin/accounts/wa/nanya_wa/settings`, {
+      method: 'PATCH', body: { send_enabled: 0 },
+    });
+    assert.strictEqual(Number(disabledSendSetting.settings.send_enabled), 0);
+    await requestJson(`${baseUrl}/admin/accounts/wa/nanya_wa/settings`, {
+      method: 'PATCH', body: { send_enabled: 1 },
+    });
 
     const adminAccess = await requestJson(`${baseUrl}/admin/access`);
     assert.strictEqual(adminAccess.ok, true);
@@ -106,6 +115,42 @@ async function main() {
     assert.strictEqual(groups.groups[0].account_display_name, 'Nanya Support');
     assert.strictEqual(groups.groups[0].unread_count, 2);
     assert.strictEqual(groups.groups.some((group) => group.platform === 'teams'), false);
+
+    const disabledOperator = await createScopedOperator(baseUrl, 'disabled-now', {
+      status: 'disabled',
+      portal: { can_workbench: true, can_admin: false },
+      scope: { can_view: true, can_reply: true, can_manage: true },
+    });
+    assert.strictEqual((await requestRaw(`${baseUrl}/groups`, { headers: { 'x-operator-id': disabledOperator.id } })).status, 403);
+
+    const deniedOperator = await createScopedOperator(baseUrl, 'portal-denied', {
+      portal: { can_workbench: false, can_admin: false },
+      scope: { can_view: true, can_reply: true, can_manage: true },
+    });
+    assert.strictEqual((await requestRaw(`${baseUrl}/groups`, { headers: { 'x-operator-id': deniedOperator.id } })).status, 403);
+
+    const readOnlyOperator = await createScopedOperator(baseUrl, 'read-only-note', {
+      portal: { can_workbench: true, can_admin: false },
+      scope: { can_view: true, can_reply: false, can_manage: false },
+    });
+    assert.strictEqual((await requestRaw(`${baseUrl}/groups/group-1/workspace?platform=wa&account=nanya_wa`, {
+      headers: { 'x-operator-id': readOnlyOperator.id },
+    })).status, 200);
+    assert.strictEqual((await requestRaw(`${baseUrl}/groups/group-1/notes`, {
+      method: 'POST',
+      headers: { 'x-operator-id': readOnlyOperator.id },
+      body: { platform: 'wa', account: 'nanya_wa', body: '不应写入' },
+    })).status, 403);
+
+    const revokedOperator = await createScopedOperator(baseUrl, 'scope-revoked', {
+      portal: { can_workbench: true, can_admin: false },
+      scope: { can_view: true, can_reply: true, can_manage: false },
+    });
+    const visibleBeforeRevoke = await requestJson(`${baseUrl}/groups`, { headers: { 'x-operator-id': revokedOperator.id } });
+    assert.strictEqual(visibleBeforeRevoke.groups.length, 1);
+    await requestJson(`${baseUrl}/admin/users/${revokedOperator.id}/scopes`, { method: 'PUT', body: { scopes: [] } });
+    const visibleAfterRevoke = await requestJson(`${baseUrl}/groups`, { headers: { 'x-operator-id': revokedOperator.id } });
+    assert.strictEqual(visibleAfterRevoke.groups.length, 0);
 
     const teamsGroups = await requestJson(`${baseUrl}/groups?scope=all&platforms=teams`);
     assert.strictEqual(teamsGroups.ok, true);
@@ -391,6 +436,12 @@ async function main() {
     assert.strictEqual(saveManualGroups.labels[0].name, 'VIP 客户');
     assert.strictEqual(saveManualGroups.labels[0].parent_name, '售后支持');
 
+    const customerType = await requestJson(`${baseUrl}/admin/accounts/wa/nanya_wa/customer-types`, {
+      method: 'POST',
+      body: { name: 'VIP', color: '#0f766e' },
+    });
+    assert.strictEqual(customerType.option.name, 'VIP');
+
     const savedWorkspace = await requestJson(`${baseUrl}/groups/group-1/workspace`, {
       method: 'PATCH',
       body: {
@@ -401,7 +452,7 @@ async function main() {
         starred: true,
         follow_up_at: '2026-07-09T10:30:00.000Z',
         internal_display_name: '重点 VIP 群',
-        customer_type: 'VIP',
+        customer_type_id: customerType.option.id,
         owner_note: '交由白班继续跟进',
       },
     });
@@ -437,7 +488,17 @@ async function main() {
 
     const workspace = await requestJson(`${baseUrl}/groups/group-1/workspace?platform=wa&account=nanya_wa`);
     assert.strictEqual(workspace.profile.customer_type, 'VIP');
+    assert.strictEqual(workspace.profile.customer_type_id, customerType.option.id);
     assert.strictEqual(workspace.notes.length, 1);
+
+    const customerTypeFiltered = await requestJson(`${baseUrl}/groups?scope=all&customer_type_id=${encodeURIComponent(customerType.option.id)}`);
+    assert.strictEqual(customerTypeFiltered.groups.length, 1);
+    assert.strictEqual(customerTypeFiltered.groups[0].group_id, 'group-1');
+    await requestJson(`${baseUrl}/admin/accounts/wa/nanya_wa/customer-types/${customerType.option.id}`, { method: 'DELETE' });
+    const activeCustomerTypes = await requestJson(`${baseUrl}/accounts/wa/nanya_wa/customer-types`);
+    assert.strictEqual(activeCustomerTypes.options.some((option) => option.id === customerType.option.id), false);
+    const workspaceWithDisabledType = await requestJson(`${baseUrl}/groups/group-1/workspace?platform=wa&account=nanya_wa`);
+    assert.strictEqual(workspaceWithDisabledType.profile.customer_type, 'VIP');
     assert.strictEqual(workspace.timeline.some((event) => event.action_type === 'conversation.note.create'), true);
 
     const bulkStatus = await requestJson(`${baseUrl}/groups/bulk`, {
@@ -1100,6 +1161,43 @@ async function requestRaw(url, options = {}) {
   });
   const payload = await response.json();
   return { response, status: response.status, payload };
+}
+
+async function createScopedOperator(baseUrl, username, { status = 'active', portal = {}, scope = {} } = {}) {
+  const created = await requestJson(`${baseUrl}/admin/users`, {
+    method: 'POST',
+    body: {
+      username,
+      display_name: username,
+      password: `Test-${username}-123!`,
+      status,
+      roles: ['agent'],
+    },
+  });
+  await requestJson(`${baseUrl}/admin/users/${created.user.id}/portal-access`, {
+    method: 'PUT',
+    body: {
+      can_monitor: false,
+      can_workbench: Boolean(portal.can_workbench),
+      can_admin: Boolean(portal.can_admin),
+      default_entry: 'workbench',
+    },
+  });
+  await requestJson(`${baseUrl}/admin/users/${created.user.id}/scopes`, {
+    method: 'PUT',
+    body: {
+      scopes: [{
+        platform: 'wa',
+        service_account: 'nanya_wa',
+        native_group_id: '*',
+        can_view: Boolean(scope.can_view),
+        can_reply: Boolean(scope.can_reply),
+        can_assign: false,
+        can_manage: Boolean(scope.can_manage),
+      }],
+    },
+  });
+  return created.user;
 }
 
 main().catch((err) => {

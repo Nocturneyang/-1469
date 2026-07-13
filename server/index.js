@@ -1,18 +1,24 @@
 const path = require('path');
+const fs = require('fs');
+const Database = require('better-sqlite3');
 const express = require('express');
 const cors = require('cors');
 const { DEFAULT_RAW_DB_PATH } = require('../db/raw-messages');
 const { DEFAULT_AUTH_DB_PATH, openAuthDb } = require('../db/auth-db');
+const { createAuthSession, revokeAuthSession } = require('../db/auth-db');
 const { ensureRawDb } = require('../db/raw-db');
 const { DEFAULT_RUNTIME_DB_PATH, openRuntimeDb } = require('../db/runtime-db');
 const { DEFAULT_WORKBENCH_DB_PATH, openWorkbenchDb } = require('../db/workbench-db');
 const createAuthRouter = require('../routes/auth');
+const { clearAuthCookies, setAuthCookies } = require('../routes/auth');
 const {
   createAuthMiddleware,
   isLocalDevAuthBypass,
   isSsoEnabled,
 } = require('../middleware/auth');
 const { createWorkbenchRouter } = require('./routes/workbench');
+const { listAccountRefs } = require('../db/account-db');
+const { recoverStartupState } = require('../lib/startup-recovery');
 
 function createApp(options = {}) {
   const app = express();
@@ -23,13 +29,18 @@ function createApp(options = {}) {
   const workbenchDb = options.workbenchDb || openWorkbenchDb(options.workbenchDbPath || DEFAULT_WORKBENCH_DB_PATH);
   const runtimeDb = options.runtimeDb || openRuntimeDb(options.runtimeDbPath || DEFAULT_RUNTIME_DB_PATH);
   const outboxDir = options.outboxDir || process.env.WORKBENCH_OUTBOX_DIR || path.join(__dirname, '..', 'outbox');
-  const { authenticateToken, resolveAuthenticatedUser } = createAuthMiddleware({ authDb });
+  const { authenticateToken, requireCsrf, resolveAuthenticatedUser, resolveSsoCallbackUser } = createAuthMiddleware({ authDb });
+  const recovery = recoverStartupState({ runtimeDb, workbenchDb, outboxDir });
+  if (Object.values(recovery).some((value) => Number(value) > 0)) {
+    console.log(`[workbench] startup recovery ${JSON.stringify(recovery)}`);
+  }
 
   app.locals.authDb = authDb;
   app.locals.rawDb = rawDb;
   app.locals.workbenchDb = workbenchDb;
   app.locals.runtimeDb = runtimeDb;
-  app.use(cors({ origin: true, credentials: true }));
+  app.use(securityHeaders);
+  app.use(cors({ origin: corsOriginPolicy(), credentials: true }));
   app.use(express.json({ limit: '18mb' }));
 
   app.get('/healthz', (req, res) => {
@@ -48,16 +59,30 @@ function createApp(options = {}) {
 
   app.get('/runtime-config.js', (req, res) => sendRuntimeConfig(req, res));
   app.get('/auth/sso/start', (req, res) => startSso(req, res));
-  app.get('/auth/sso/logout', (req, res) => logoutSso(req, res));
+  app.get('/auth/sso/callback', async (req, res) => {
+    const user = await resolveSsoCallbackUser(req);
+    if (!user) return res.status(401).json({ success: false, error: 'SSO callback validation failed' });
+    const session = createAuthSession(authDb, user, { source: 'sso' });
+    setAuthCookies(res, session);
+    res.redirect(302, safeReturnUrl(req, req.query.redirect || '/'));
+  });
+  app.get('/auth/sso/logout', (req, res) => {
+    revokeAuthSession(authDb, readCookie(req, 'workbench_session'));
+    clearAuthCookies(res);
+    logoutSso(req, res);
+  });
   app.get(['/token/userinfo', '/api/token/userinfo'], async (req, res) => {
     const result = await resolveAuthenticatedUser(req);
     if (!result.user) {
       return res.status(401).json({ success: false, code: 401, error: 'Unauthorized' });
     }
+    if (result.source && result.source.startsWith('sso-')) {
+      setAuthCookies(res, createAuthSession(authDb, result.user, { source: 'sso' }));
+    }
     res.json({ success: true, code: 0, data: result.user, user: result.user, source: result.source });
   });
   app.use('/api/auth', createAuthRouter({ authDb, authenticateToken }));
-  app.use('/api/workbench', authenticateToken, createWorkbenchRouter({
+  app.use('/api/workbench', authenticateToken, requireTrustedOrigin, requireCsrf, createWriteRateLimiter(), createWorkbenchRouter({
     authDb,
     workbenchDb,
     runtimeDb,
@@ -66,6 +91,20 @@ function createApp(options = {}) {
     accountDataDir: options.accountDataDir,
     accountDbMode: options.accountDbMode,
   }));
+
+  app.use((req, res, next) => {
+    if (req.method !== 'GET' || req.path === '/auth/sso/callback' || req.path.startsWith('/api/')) return next();
+    const token = String(req.query?.token || req.query?.satoken || req.query?.access_token || '').trim();
+    if (!token) return next();
+    const clean = new URL(req.originalUrl, requestOrigin(req));
+    clean.searchParams.delete('token');
+    clean.searchParams.delete('satoken');
+    clean.searchParams.delete('access_token');
+    const callback = new URL('/auth/sso/callback', requestOrigin(req));
+    callback.searchParams.set('token', token);
+    callback.searchParams.set('redirect', clean.toString());
+    return res.redirect(302, callback.toString());
+  });
 
   const distDir = path.join(__dirname, '..', 'frontend', 'dist');
   app.use(express.static(distDir));
@@ -89,6 +128,9 @@ function buildReadyReport({ authDb, rawDb, workbenchDb, runtimeDb, rawDbPath, st
       ok: true,
       path: rawDbPath,
     },
+    channelRuntime: checkChannelRuntime(),
+    controlWorkers: checkControlWorkers(runtimeDb),
+    outboundQueues: checkOutboundQueues(workbenchDb),
   };
   const ok = Object.values(checks).every((check) => check.ok);
   return {
@@ -98,6 +140,91 @@ function buildReadyReport({ authDb, rawDb, workbenchDb, runtimeDb, rawDbPath, st
     startedAt: startedAt.toISOString(),
     uptimeSeconds: Math.round(process.uptime()),
     checks,
+  };
+}
+
+function checkControlWorkers(runtimeDb) {
+  const required = ['1', 'true', 'yes', 'on'].includes(String(process.env.WORKBENCH_CHANNEL_RUNTIME_REQUIRED || '').toLowerCase());
+  if (!required) return { ok: true, required: false, workers: [] };
+  const maxAgeSeconds = Math.max(10, Number(process.env.WORKBENCH_CONTROL_HEARTBEAT_MAX_AGE_SECONDS || 30));
+  const roles = ['login-worker', 'account-supervisor'];
+  const workers = roles.map((role) => {
+    const row = runtimeDb.prepare(`
+      SELECT process_role, holder_id, status, updated_at
+      FROM process_heartbeats
+      WHERE process_role = ? AND status = 'running'
+        AND datetime(updated_at) > datetime('now', ?)
+    `).get(role, `-${maxAgeSeconds} seconds`);
+    return { role, ok: Boolean(row), updated_at: row?.updated_at || null };
+  });
+  return { ok: workers.every((worker) => worker.ok), required: true, workers };
+}
+
+function checkOutboundQueues(globalWorkbenchDb) {
+  const maxPending = Math.max(1, Number(process.env.WORKBENCH_READINESS_MAX_PENDING || 1000));
+  const staleMinutes = Math.max(1, Number(process.env.WORKBENCH_READINESS_STALE_SENDING_MINUTES || 5));
+  const queues = [];
+  const inspect = (db, scope) => {
+    const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='outbound_messages'").get();
+    if (!tables) return;
+    const row = db.prepare(`
+      SELECT
+        SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) AS pending,
+        SUM(CASE WHEN status = 'sending' AND datetime(updated_at) <= datetime('now', @stale) THEN 1 ELSE 0 END) AS stale_sending
+      FROM outbound_messages
+    `).get({ stale: `-${staleMinutes} minutes` }) || {};
+    queues.push({ ...scope, pending: Number(row.pending || 0), stale_sending: Number(row.stale_sending || 0) });
+  };
+  inspect(globalWorkbenchDb, { scope: 'global' });
+  for (const ref of listAccountRefs()) {
+    if (!fs.existsSync(ref.paths.workbenchDbPath)) continue;
+    const db = new Database(ref.paths.workbenchDbPath, { readonly: true, fileMustExist: true });
+    try {
+      inspect(db, { scope: 'account', platform: ref.platform, account: ref.account });
+    } finally {
+      db.close();
+    }
+  }
+  const pending = queues.reduce((sum, queue) => sum + queue.pending, 0);
+  const staleSending = queues.reduce((sum, queue) => sum + queue.stale_sending, 0);
+  return { ok: pending <= maxPending && staleSending === 0, pending, stale_sending: staleSending, max_pending: maxPending, queues };
+}
+
+function checkChannelRuntime() {
+  const required = ['1', 'true', 'yes', 'on'].includes(String(process.env.WORKBENCH_CHANNEL_RUNTIME_REQUIRED || '').toLowerCase());
+  if (!required) return { ok: true, required: false, accounts: [] };
+  const accounts = [];
+  for (const ref of listAccountRefs()) {
+    if (!fs.existsSync(ref.paths.rawDbPath) || !fs.existsSync(ref.paths.runtimeDbPath)) continue;
+    let raw;
+    let runtime;
+    try {
+      raw = new Database(ref.paths.rawDbPath, { readonly: true, fileMustExist: true });
+      const control = raw.prepare(`
+        SELECT collect_enabled, workbench_visible, status
+        FROM channel_account_registry WHERE account = ?
+      `).get(ref.account) || {};
+      const enabled = Number(control.collect_enabled ?? 1) === 1 && Number(control.workbench_visible ?? 1) === 1;
+      if (!enabled) continue;
+      runtime = new Database(ref.paths.runtimeDbPath, { readonly: true, fileMustExist: true });
+      const lease = runtime.prepare(`
+        SELECT expires_at, renewed_at, holder_id
+        FROM account_worker_leases
+        WHERE platform = ? AND account = ? AND lease_name = 'account-runtime'
+          AND datetime(expires_at) > datetime('now')
+      `).get(ref.platform, ref.account);
+      accounts.push({ platform: ref.platform, account: ref.account, ok: Boolean(lease), renewed_at: lease?.renewed_at || null });
+    } catch (err) {
+      accounts.push({ platform: ref.platform, account: ref.account, ok: false, error: err.message });
+    } finally {
+      if (raw) raw.close();
+      if (runtime) runtime.close();
+    }
+  }
+  return {
+    ok: accounts.every((account) => account.ok),
+    required: true,
+    accounts,
   };
 }
 
@@ -136,10 +263,76 @@ function startSso(req, res) {
     return res.status(500).json({ success: false, error: 'SSO_LOGIN_URL is not configured' });
   }
   const redirectParam = process.env.SSO_REDIRECT_PARAM || 'redirect';
-  const redirectTo = safeReturnUrl(req, req.query.redirect || '/');
+  const finalRedirect = safeReturnUrl(req, req.query.redirect || '/');
+  const callback = new URL('/auth/sso/callback', requestOrigin(req));
+  callback.searchParams.set('redirect', finalRedirect);
   const url = new URL(loginUrl);
-  url.searchParams.set(redirectParam, redirectTo);
+  url.searchParams.set(redirectParam, callback.toString());
   res.redirect(302, url.toString());
+}
+
+function securityHeaders(req, res, next) {
+  res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; font-src 'self' data:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'");
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Referrer-Policy', 'no-referrer');
+  res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+  if (process.env.NODE_ENV === 'production') {
+    res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+  }
+  next();
+}
+
+function corsOriginPolicy() {
+  const allowed = configuredOrigins();
+  return (origin, callback) => {
+    if (!origin) return callback(null, true);
+    return callback(null, allowed.has(origin));
+  };
+}
+
+function configuredOrigins() {
+  const values = [process.env.WORKBENCH_PUBLIC_ORIGIN, ...(process.env.WORKBENCH_ALLOWED_ORIGINS || '').split(',')]
+    .map((value) => String(value || '').trim()).filter(Boolean);
+  if (process.env.NODE_ENV !== 'production') {
+    values.push('http://localhost:3310', 'http://127.0.0.1:3310');
+  }
+  return new Set(values);
+}
+
+function requireTrustedOrigin(req, res, next) {
+  if (['GET', 'HEAD', 'OPTIONS'].includes(String(req.method || '').toUpperCase())) return next();
+  const origin = String(req.headers.origin || '').trim();
+  if (!origin) return next();
+  const sameOrigin = origin === requestOrigin(req);
+  if (sameOrigin || configuredOrigins().has(origin)) return next();
+  return res.status(403).json({ success: false, ok: false, error: 'Untrusted request origin' });
+}
+
+function createWriteRateLimiter({ windowMs = 60 * 1000, max = 60 } = {}) {
+  const buckets = new Map();
+  return (req, res, next) => {
+    if (['GET', 'HEAD', 'OPTIONS'].includes(String(req.method || '').toUpperCase())) return next();
+    const key = String(req.user?.id || req.user?.username || req.ip || 'unknown');
+    const now = Date.now();
+    let bucket = buckets.get(key);
+    if (!bucket || bucket.resetAt <= now) bucket = { count: 0, resetAt: now + windowMs };
+    bucket.count += 1;
+    buckets.set(key, bucket);
+    if (bucket.count > max) {
+      res.setHeader('Retry-After', String(Math.max(1, Math.ceil((bucket.resetAt - now) / 1000))));
+      return res.status(429).json({ success: false, ok: false, error: 'Too many write requests' });
+    }
+    return next();
+  };
+}
+
+function readCookie(req, name) {
+  for (const part of String(req.headers.cookie || '').split(';')) {
+    const [key, ...value] = part.trim().split('=');
+    if (key === name) return decodeURIComponent(value.join('='));
+  }
+  return '';
 }
 
 function logoutSso(req, res) {

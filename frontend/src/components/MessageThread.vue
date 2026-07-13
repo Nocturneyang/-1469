@@ -18,87 +18,8 @@
               {{ group.sync_groups_enabled ? '同步渠道分组' : '工作台标签' }}
             </em>
             <em class="status-neutral">{{ accountRoleText(group.account_role) }}</em>
-            <span
-              v-for="label in workbenchTags"
-              :key="`workbench:${label.id || label.native_group_id || label.native_label_id}`"
-              class="group-tag workbench-tag thread-header-tag"
-              :title="labelTitle(label)"
-            >
-              {{ labelDisplayName(label) }}
-            </span>
-            <span
-              v-for="label in channelGroupTags"
-              :key="`channel:${label.id || label.native_group_id || label.native_label_id}`"
-              class="group-tag channel-tag thread-header-tag"
-              :title="channelGroupTitle(label)"
-            >
-              {{ labelDisplayName(label) }}
-            </span>
           </div>
         </div>
-      </div>
-      <div class="thread-actions">
-        <el-popover placement="bottom-end" :width="360" trigger="click">
-          <template #reference>
-            <el-button class="thread-tag-button">工作台标签</el-button>
-          </template>
-          <div class="thread-tag-popover">
-            <div class="section-title">工作台标签</div>
-            <div class="tag-stack">
-              <span
-                v-for="label in workbenchTags"
-                :key="label.id || label.native_group_id || label.native_label_id"
-                class="group-tag workbench-tag"
-                :title="labelTitle(label)"
-              >
-                {{ labelDisplayName(label) }}
-              </span>
-              <span v-if="!workbenchTags.length" class="group-tag muted">暂无标签</span>
-            </div>
-            <el-select
-              class="manual-group-select"
-              :model-value="selectedManualGroupIds"
-              multiple
-              clearable
-              collapse-tags
-              collapse-tags-tooltip
-              placeholder="选择或移除工作台标签"
-              :disabled="!canManageManualGroups || savingManualGroups"
-              @change="emit('manual-groups-change', $event)"
-            >
-              <el-option
-                v-for="option in manualGroupOptions"
-                :key="option.value"
-                :label="option.label"
-                :value="option.value"
-              >
-                <div class="manual-group-option" :class="{ child: option.level === 2 }">
-                  <span>{{ option.name }}</span>
-                  <small>{{ option.subtitle }}</small>
-                </div>
-              </el-option>
-            </el-select>
-            <div class="manual-create-row">
-              <el-input
-                v-model="manualDraft.name"
-                size="small"
-                clearable
-                placeholder="新标签名称"
-                :disabled="!canManageManualGroups || savingManualGroups"
-              />
-              <el-button
-                size="small"
-                type="primary"
-                :loading="savingManualGroups"
-                :disabled="!canSubmitManualGroup"
-                @click="submitManualGroup"
-              >
-                新建并打标
-              </el-button>
-            </div>
-            <div class="manual-tag-helper">{{ manualHelperText }}</div>
-          </div>
-        </el-popover>
       </div>
     </header>
 
@@ -160,7 +81,15 @@
                 alt=""
               >
               <el-icon v-else><Document /></el-icon>
-              <span class="attachment-name" :title="attachment.name || '附件'">
+              <a
+                v-if="attachment.media_url"
+                class="attachment-name"
+                :href="attachment.media_url"
+                :download="attachment.kind === 'image' ? null : (attachment.name || '附件')"
+                target="_blank"
+                rel="noopener"
+              >{{ attachment.name || '附件' }}</a>
+              <span v-else class="attachment-name" :title="attachment.name || '附件'">
                 {{ attachment.name || '附件' }}
               </span>
             </div>
@@ -423,7 +352,7 @@ function channelGroupTitle(label) {
 
 function attachmentPreview(attachment) {
   if (!attachment) return '';
-  const dataUrl = attachment.preview_url || attachment.data_url;
+  const dataUrl = attachment.preview_url || attachment.data_url || attachment.media_url;
   if (!dataUrl || typeof dataUrl !== 'string') return '';
   const type = attachment.type || '';
   if (attachment.kind === 'image' || attachment.kind === 'sticker' || type.startsWith('image/')) return dataUrl;

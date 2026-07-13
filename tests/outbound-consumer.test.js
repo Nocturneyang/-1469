@@ -6,6 +6,7 @@ const { openWorkbenchDb } = require('../db/workbench-db');
 const {
   activeBreaker,
   createOutboundConsumer,
+  markDeliveredByRemoteId,
   toSqlTimestamp,
 } = require('../lib/outbound-consumer');
 
@@ -21,6 +22,8 @@ async function main() {
       db,
       platform: 'wa',
       account: 'nanya_wa',
+      minIntervalMs: 0,
+      perMinuteLimit: 100,
       sendMessage: async (task) => {
         sentTasks.push(task);
         return { remote_msg_id: `remote-${task.id}` };
@@ -32,6 +35,11 @@ async function main() {
     let row = db.prepare('SELECT * FROM outbound_messages WHERE client_msg_id = ?').get('ok-1');
     assert.strictEqual(row.status, 'sent');
     assert.strictEqual(row.remote_msg_id, `remote-${row.id}`);
+    assert.strictEqual(markDeliveredByRemoteId(db, {
+      platform: 'wa', account: 'nanya_wa', remoteMsgId: row.remote_msg_id,
+    }), 1);
+    row = db.prepare('SELECT * FROM outbound_messages WHERE client_msg_id = ?').get('ok-1');
+    assert.strictEqual(row.status, 'delivered');
 
     insertOutbound(db, {
       clientMsgId: 'stale-1',
@@ -62,6 +70,8 @@ async function main() {
       db,
       platform: 'tg',
       account: 'jason_tg',
+      minIntervalMs: 0,
+      perMinuteLimit: 100,
       sendMessage: async () => {
         const err = new Error('temporary channel failure');
         err.code = 'TEMP_FAIL';
@@ -84,6 +94,43 @@ async function main() {
     assert.strictEqual(row.status, 'paused');
     assert.strictEqual(row.error_code, 'CIRCUIT_BREAKER');
     failingConsumer.close();
+
+    insertOutbound(db, { platform: 'tg', account: 'tg-flood', clientMsgId: 'flood-1' });
+    const floodConsumer = createOutboundConsumer({
+      db,
+      platform: 'tg',
+      account: 'tg-flood',
+      minIntervalMs: 0,
+      perMinuteLimit: 100,
+      sendMessage: async () => {
+        const err = new Error('FLOOD_WAIT_90');
+        err.code = 'FLOOD_WAIT_90';
+        throw err;
+      },
+    });
+    assert.strictEqual((await floodConsumer.runOnce()).status, 'paused');
+    const floodBreaker = activeBreaker(db, 'tg', 'tg-flood');
+    assert.ok(floodBreaker);
+    assert.ok(Date.parse(`${floodBreaker.cooldown_until}Z`) >= Date.now() + 85 * 1000);
+    floodConsumer.close();
+
+    insertOutbound(db, { platform: 'tg', account: 'tg-dead', clientMsgId: 'dead-1', retryCount: 2 });
+    const deadConsumer = createOutboundConsumer({
+      db,
+      platform: 'tg',
+      account: 'tg-dead',
+      minIntervalMs: 0,
+      perMinuteLimit: 100,
+      sendMessage: async () => {
+        const err = new Error('third failure');
+        err.code = 'TEMP_FAIL';
+        throw err;
+      },
+    });
+    assert.strictEqual((await deadConsumer.runOnce()).status, 'dead');
+    row = db.prepare('SELECT * FROM outbound_messages WHERE client_msg_id = ?').get('dead-1');
+    assert.strictEqual(row.status, 'dead');
+    deadConsumer.close();
   } finally {
     db.close();
     fs.rmSync(tmpDir, { recursive: true, force: true });
@@ -99,17 +146,18 @@ function insertOutbound(db, {
   attachmentJson = null,
   status = 'pending',
   sendingStartedAt = null,
+  retryCount = 0,
 } = {}) {
   db.prepare(`
     INSERT INTO outbound_messages (
       client_msg_id, platform, account, group_id, chat_id, text, attachment_json,
-      status, created_by, sending_started_at
+      status, created_by, sending_started_at, retry_count
     )
     VALUES (
       @clientMsgId, @platform, @account, @groupId, @groupId, @text, @attachmentJson,
-      @status, 'demo-operator', @sendingStartedAt
+      @status, 'demo-operator', @sendingStartedAt, @retryCount
     )
-  `).run({ clientMsgId, platform, account, groupId, text, attachmentJson, status, sendingStartedAt });
+  `).run({ clientMsgId, platform, account, groupId, text, attachmentJson, status, sendingStartedAt, retryCount });
 }
 
 main().catch((err) => {

@@ -99,6 +99,23 @@ function openRuntimeDb(dbPath = DEFAULT_RUNTIME_DB_PATH) {
       PRIMARY KEY (platform, account, lease_name)
     );
 
+    CREATE TABLE IF NOT EXISTS account_worker_status (
+      platform TEXT NOT NULL,
+      account TEXT NOT NULL,
+      status TEXT NOT NULL,
+      reason TEXT,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (platform, account)
+    );
+
+    CREATE TABLE IF NOT EXISTS process_heartbeats (
+      process_role TEXT PRIMARY KEY,
+      holder_id TEXT NOT NULL,
+      status TEXT NOT NULL,
+      pid INTEGER,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
     CREATE INDEX IF NOT EXISTS idx_runtime_events_account_time
       ON runtime_events(account_id, created_at);
     CREATE INDEX IF NOT EXISTS idx_channel_sync_tasks_status

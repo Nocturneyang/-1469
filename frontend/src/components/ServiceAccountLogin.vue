@@ -414,7 +414,8 @@
 
 <script setup>
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
-import { ElMessage, ElMessageBox } from 'element-plus';
+import ElMessage from 'element-plus/es/components/message/index.mjs';
+import ElMessageBox from 'element-plus/es/components/message-box/index.mjs';
 import { Delete } from '@element-plus/icons-vue';
 import QRCodeModel from 'qrcode-terminal/vendor/QRCode/index.js';
 import QRErrorCorrectLevel from 'qrcode-terminal/vendor/QRCode/QRErrorCorrectLevel.js';

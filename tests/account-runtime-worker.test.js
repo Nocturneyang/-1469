@@ -9,6 +9,7 @@ const {
   accountKey,
   desiredAccountWorkers,
   parseExplicitWorkers,
+  selectAccountWorkers,
   shouldRunAccountWorker,
 } = require('../workers/account-worker-supervisor');
 
@@ -71,7 +72,7 @@ async function main() {
       loginType: 'wa_qr',
       status: 'authenticated',
     });
-    assert.strictEqual(readSendEnabled(waPaths.rawDbPath, 'wa-runtime'), 1);
+    assert.strictEqual(readSendEnabled(waPaths.rawDbPath, 'wa-runtime'), 0);
     upsertServiceAccountProfile({
       dbPath: waPaths.rawDbPath,
       platform: 'wa',
@@ -81,7 +82,7 @@ async function main() {
       status: 'ready',
       sendEnabled: 0,
     });
-    assert.strictEqual(readSendEnabled(waPaths.rawDbPath, 'wa-runtime'), 1);
+    assert.strictEqual(readSendEnabled(waPaths.rawDbPath, 'wa-runtime'), 0);
 
     const tgPaths = ensureAccountDatabases('tg', 'tg-waiting', { accountDataDir });
     upsertServiceAccountProfile({
@@ -91,6 +92,16 @@ async function main() {
       displayName: 'TG Waiting',
       loginType: 'tg_bot_token',
       status: 'waiting_qr',
+    });
+
+    const waSecondPaths = ensureAccountDatabases('wa', 'wa-runtime-second', { accountDataDir });
+    upsertServiceAccountProfile({
+      dbPath: waSecondPaths.rawDbPath,
+      platform: 'wa',
+      account: 'wa-runtime-second',
+      displayName: 'WA Runtime Second',
+      loginType: 'wa_qr',
+      status: 'ready',
     });
 
     assert.strictEqual(shouldRunAccountWorker({
@@ -119,6 +130,16 @@ async function main() {
     const explicit = parseExplicitWorkers('tg:tg-waiting');
     const forced = desiredAccountWorkers({ refs, explicitWorkers: explicit, startAll: false, maxWorkers: 10 });
     assert.deepStrictEqual(forced.map((ref) => accountKey(ref.platform, ref.account)), ['tg:tg-waiting']);
+
+    const capacity = selectAccountWorkers({
+      refs: [...refs, { platform: 'wa', account: 'wa-runtime-second', paths: waSecondPaths }],
+      startAll: true,
+      maxWorkers: 5,
+      maxWaWorkers: 1,
+      maxTgWorkers: 4,
+    });
+    assert.strictEqual(capacity.desired.filter((ref) => ref.platform === 'wa').length, 1);
+    assert.strictEqual(capacity.waiting.filter((ref) => ref.platform === 'wa').length, 1);
   } finally {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }

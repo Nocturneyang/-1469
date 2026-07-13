@@ -65,6 +65,22 @@ node --check <file>
 
 日常开发通常先改 `/Users/a2026/Desktop/工作台`，生产提交必须落到 `.deploy-worktree`。
 
+部署前必须运行：
+
+```bash
+npm run predeploy:check
+```
+
+检查会执行干净安装、依赖树校验、测试、生产构建、生产依赖审计、数据库路径边界检查，以及根目录与 `.deploy-worktree` 内容一致性检查。任何差异都会阻止部署。
+
+生产数据备份使用独立 `/backups` 挂载。Kubernetes CronJob 每日执行 `npm run backup:daily`（保留 7 份），每周执行 `npm run backup:weekly`（保留 4 份）。恢复命令只写临时目录：
+
+```bash
+WORKBENCH_RESTORE_STAGE_DIR=/data/restore-staging npm run restore:stage -- /backups/daily/<snapshot>
+```
+
+通过 `integrity_check` 并人工核对后，才允许在停机窗口显式切换数据库；脚本不会替换在线文件。
+
 对本次修改过的文件执行同步，例如：
 
 ```bash

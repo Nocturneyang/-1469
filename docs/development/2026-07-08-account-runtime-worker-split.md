@@ -50,10 +50,10 @@ supervisor 默认只拉起满足以下条件的账号：
 生产配置默认开启真实外发，登录账号后坐席可以直接在线回复客户：
 
 ```text
-WORKBENCH_SEND_ENABLED=1
+WORKBENCH_SEND_ENABLED=0
 ```
 
-新登录的服务账号默认 `send_enabled=1`，账号 worker 会消费 `outbound_messages(status=pending)`，按账号串行调用真实渠道发送。入站采集和群列表同步不依赖这个开关。需要单账号只收不发时，可关闭该账号的 `send_enabled`；需要全局紧急只收不发时，可以把 `WORKBENCH_SEND_ENABLED=0` 后重新部署。账号自身 `send_enabled`、坐席权限和发送熔断仍然是独立保护。
+新登录的服务账号默认 `send_enabled=0`，全局 `WORKBENCH_SEND_ENABLED` 也默认关闭。管理员完成渠道授权与风控检查后必须显式开启两级开关，账号 worker 才会消费 `outbound_messages(status=pending)`。入站采集和群列表同步不依赖发送开关。
 
 ## 第一版范围
 

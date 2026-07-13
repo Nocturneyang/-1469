@@ -41,7 +41,7 @@
       collapse-tags
       collapse-tags-tooltip
       :disabled="!visibleAccounts.length"
-      @change="(accountKeys) => update({ accountKeys, labelId: '' })"
+      @change="(accountKeys) => update({ accountKeys, labelId: '', customerTypeId: '' })"
     >
       <el-option
         v-for="account in visibleAccounts"
@@ -76,6 +76,28 @@
       </el-option>
     </el-select>
 
+    <el-select
+      class="customer-type-select"
+      :model-value="modelValue.customerTypeId"
+      placeholder="客户类型"
+      clearable
+      @change="(customerTypeId) => update({ customerTypeId })"
+    >
+      <el-option-group v-for="group in groupedCustomerTypes" :key="group.key" :label="group.label">
+        <el-option
+          v-for="option in group.options"
+          :key="option.id"
+          :label="customerTypeLabel(option)"
+          :value="option.id"
+        >
+          <div class="label-option">
+            <span><i class="customer-type-dot" :style="{ background: option.color || '#64748b' }"></i>{{ option.name }}</span>
+            <small>{{ option.account_display_name || option.account }}</small>
+          </div>
+        </el-option>
+      </el-option-group>
+    </el-select>
+
     <el-button
       class="sync-button"
       :icon="Refresh"
@@ -84,6 +106,10 @@
       @click="$emit('sync-channels')"
     >
       同步渠道分组
+    </el-button>
+
+    <el-button class="profile-toggle-button" @click="$emit('toggle-customer-profile')">
+      {{ profileOpen ? '收起客户资料' : '客户资料' }}
     </el-button>
 
     <el-input
@@ -113,6 +139,10 @@ const props = defineProps({
     type: Array,
     default: () => [],
   },
+  customerTypes: {
+    type: Array,
+    default: () => [],
+  },
   accounts: {
     type: Array,
     default: () => [],
@@ -129,9 +159,13 @@ const props = defineProps({
     type: Object,
     default: () => ({ mode: 'all', active: false, accounts: [] }),
   },
+  profileOpen: {
+    type: Boolean,
+    default: true,
+  },
 });
 
-const emit = defineEmits(['update:modelValue', 'sync-channels']);
+const emit = defineEmits(['update:modelValue', 'sync-channels', 'toggle-customer-profile']);
 
 const platforms = [
   { value: 'wa', label: 'WA', className: 'platform-wa' },
@@ -151,6 +185,24 @@ const visibleAccounts = computed(() => {
   ));
 });
 
+const groupedCustomerTypes = computed(() => {
+  const selectedPlatforms = new Set((props.modelValue.platforms || []).filter(Boolean));
+  const selectedAccounts = new Set((props.modelValue.accountKeys || []).filter(Boolean));
+  const groups = new Map();
+  props.customerTypes.forEach((option) => {
+    const key = `${option.platform}:${option.account}`;
+    if (selectedPlatforms.size && !selectedPlatforms.has(option.platform)) return;
+    if (selectedAccounts.size && !selectedAccounts.has(key)) return;
+    if (!groups.has(key)) groups.set(key, {
+      key,
+      label: option.account_display_name || option.account,
+      options: [],
+    });
+    groups.get(key).options.push(option);
+  });
+  return [...groups.values()];
+});
+
 const toolbarSubtitle = computed(() => {
   if (props.accountScope && props.accountScope.active && props.accountScope.mode === 'explicit') {
     return '显式服务账号范围';
@@ -162,7 +214,6 @@ const toolbarSubtitle = computed(() => {
 });
 
 const scopes = [
-  { value: 'mine', label: '我的会话' },
   { value: 'unread', label: '未读' },
   { value: 'all', label: '全部' },
 ];
@@ -173,7 +224,7 @@ function update(patch) {
 
 function selectPlatform(platform) {
   if (props.modelValue.platforms.length === 1 && props.modelValue.platforms[0] === platform) return;
-  update({ platforms: [platform], accountKeys: [], labelId: '' });
+  update({ platforms: [platform], accountKeys: [], labelId: '', customerTypeId: '' });
 }
 
 function accountKey(account) {
@@ -200,5 +251,10 @@ function labelSourceText(label) {
   if (label.source === 'wa_label') return 'WA 同步标签';
   if (label.source === 'tg_group' || label.source === 'tg_folder') return 'TG 同步文件夹';
   return label.source || '渠道分组';
+}
+
+function customerTypeLabel(option) {
+  const account = option.account_display_name || option.account;
+  return account ? `${option.name} · ${account}` : option.name;
 }
 </script>

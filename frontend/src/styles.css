@@ -1,5 +1,5 @@
 :root {
-  --rail-width: 286px;
+  --rail-width: 240px;
   --topbar-height: 64px;
   --bg: #f4f6f5;
   --surface: #ffffff;
@@ -1887,9 +1887,17 @@ button {
   min-width: 0;
   min-height: 0;
   display: grid;
-  grid-template-columns: minmax(310px, 354px) minmax(0, 1fr) minmax(280px, 318px);
+  grid-template-columns: 320px minmax(560px, 1fr) 320px;
   background: var(--surface);
   overflow: hidden;
+}
+
+.workbench-grid.profile-collapsed {
+  grid-template-columns: 320px minmax(560px, 1fr);
+}
+
+.workbench-grid.profile-collapsed > .inspector-pane {
+  display: none;
 }
 
 .conversation-pane {
@@ -2765,6 +2773,162 @@ button {
   overflow-y: auto;
 }
 
+.customer-profile-header {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+}
+
+.open-native-profile-button.el-button {
+  width: calc(100% - 32px);
+  margin: 0 16px 12px;
+}
+
+.profile-name-input {
+  width: 100%;
+  height: 32px;
+  padding: 0 8px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: var(--text);
+  background: transparent;
+  font-size: 16px;
+  font-weight: 760;
+}
+
+.profile-name-input:hover,
+.profile-name-input:focus {
+  border-color: var(--line);
+  background: var(--surface);
+  outline: none;
+}
+
+.profile-copy small,
+.section-title small {
+  color: var(--muted-2);
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: none;
+}
+
+.customer-core-section {
+  display: grid;
+  gap: 12px;
+}
+
+.customer-core-section .section-title {
+  margin-bottom: 0;
+}
+
+.customer-core-section label {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.customer-core-section .el-select,
+.profile-tag-select {
+  width: 100%;
+}
+
+.compact-tags {
+  margin-top: 10px;
+}
+
+.customer-type-dot {
+  width: 8px;
+  height: 8px;
+  display: inline-block;
+  flex: 0 0 auto;
+  margin-right: 6px;
+  border-radius: 50%;
+}
+
+.customer-type-option-label {
+  display: inline-flex;
+  align-items: center;
+}
+
+.inspector-section summary {
+  cursor: pointer;
+  list-style: none;
+}
+
+.inspector-section summary::-webkit-details-marker {
+  display: none;
+}
+
+.profile-status-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.customer-profile-backdrop {
+  display: none;
+}
+
+.customer-type-admin {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-soft);
+}
+
+.customer-type-create {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 42px auto;
+  gap: 8px;
+}
+
+.customer-type-create input[type="color"] {
+  width: 42px;
+  height: 32px;
+  padding: 2px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+
+.customer-type-option-row {
+  display: grid;
+  grid-template-columns: 12px minmax(0, 1fr) auto minmax(150px, auto);
+  gap: 8px;
+  align-items: center;
+  min-height: 34px;
+}
+
+.customer-type-edit-fields {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 34px;
+  gap: 6px;
+}
+
+.customer-type-edit-fields input[type="color"] {
+  width: 34px;
+  height: 28px;
+  padding: 2px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+
+.customer-type-row-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 2px;
+}
+
+.customer-type-row-actions .el-button + .el-button {
+  margin-left: 0;
+}
+
+.customer-type-option-row small {
+  color: var(--muted);
+}
+
 .inspector-profile {
   display: grid;
   grid-template-columns: 44px minmax(0, 1fr);
@@ -3136,9 +3300,37 @@ button {
   line-height: 1.5;
 }
 
-@media (max-width: 1380px) {
+@media (max-width: 1439px) {
   :root {
-    --rail-width: 256px;
+    --rail-width: 82px;
+  }
+
+  .app-shell {
+    grid-template-columns: 82px minmax(0, 1fr);
+  }
+
+  .service-rail {
+    padding: 12px 8px;
+  }
+
+  .brand-copy,
+  .rail-all-button span:not(.rail-icon),
+  .rail-permission-button span:not(.rail-icon),
+  .rail-profile-button span:not(.rail-icon),
+  .rail-account-copy,
+  .rail-account em,
+  .scope-card,
+  .rail-section-title {
+    display: none;
+  }
+
+  .rail-brand,
+  .rail-all-button,
+  .rail-permission-button,
+  .rail-profile-button,
+  .rail-account {
+    grid-template-columns: 1fr;
+    justify-items: center;
   }
 
   .topbar {
@@ -3158,7 +3350,11 @@ button {
   }
 
   .workbench-grid {
-    grid-template-columns: minmax(300px, 338px) minmax(0, 1fr) 286px;
+    grid-template-columns: 300px minmax(0, 1fr) 286px;
+  }
+
+  .workbench-grid.profile-collapsed {
+    grid-template-columns: 300px minmax(0, 1fr);
   }
 
   .service-login-runtime-grid {
@@ -3170,7 +3366,7 @@ button {
   }
 }
 
-@media (max-width: 1160px) {
+@media (max-width: 1179px) {
   .app-shell {
     grid-template-columns: 82px minmax(0, 1fr);
   }
@@ -3208,6 +3404,30 @@ button {
   }
 
   .inspector-pane {
+    position: fixed;
+    z-index: 110;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: min(380px, 92vw);
+    display: flex;
+    box-shadow: -18px 0 42px rgba(24, 35, 30, 0.18);
+  }
+
+  .workbench-grid.profile-collapsed > .inspector-pane {
+    display: none;
+  }
+
+  .customer-profile-backdrop {
+    position: fixed;
+    z-index: 109;
+    inset: 0;
+    display: block;
+    border: 0;
+    background: rgba(24, 35, 30, 0.25);
+  }
+
+  .workbench-grid.profile-collapsed .customer-profile-backdrop {
     display: none;
   }
 
@@ -3242,6 +3462,13 @@ button {
     height: auto;
     min-height: 100vh;
     grid-template-columns: 1fr;
+  }
+
+  .inspector-pane {
+    left: 0;
+    right: 0;
+    width: auto;
+    max-width: none;
   }
 
   .service-rail {

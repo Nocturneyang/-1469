@@ -12,7 +12,7 @@ const {
   normalizeAccountPlatform,
   sanitizeAccountSegment,
 } = require('../db/account-db');
-const { createOutboundConsumer } = require('../lib/outbound-consumer');
+const { createOutboundConsumer, markDeliveredByRemoteId } = require('../lib/outbound-consumer');
 const {
   readAndClearChannelSyncRequests,
   replaceChannelSnapshot,
@@ -39,6 +39,8 @@ const RAW_DB_PATH = path.resolve(process.env.WORKBENCH_ACCOUNT_RAW_DB_PATH || AC
 const RUNTIME_DB_PATH = path.resolve(process.env.WORKBENCH_ACCOUNT_RUNTIME_DB_PATH || ACCOUNT_PATHS.runtimeDbPath);
 const WORKBENCH_DB_PATH = path.resolve(process.env.WORKBENCH_ACCOUNT_WORKBENCH_DB_PATH || ACCOUNT_PATHS.workbenchDbPath);
 const SESSION_DIR = path.resolve(process.env.WORKBENCH_ACCOUNT_SESSION_DIR || ACCOUNT_PATHS.sessionDir);
+const MEDIA_DIR = path.join(ACCOUNT_PATHS.accountDir, 'media');
+const MEDIA_MAX_BYTES = boundedNumber(process.env.WORKBENCH_INBOUND_MEDIA_MAX_BYTES, 20 * 1024 * 1024, 1024, 100 * 1024 * 1024);
 const OUTBOX_DIR = path.resolve(process.env.WORKBENCH_OUTBOX_DIR || path.join(DATA_DIR, 'outbox'));
 const DISABLE_CHANNEL = process.env.WORKBENCH_ACCOUNT_RUNTIME_DISABLE_CHANNEL === '1';
 const SEND_ENABLED = process.env.WORKBENCH_SEND_ENABLED === '1';
@@ -53,6 +55,7 @@ const STARTED_AT = new Date().toISOString();
 
 fs.mkdirSync(SESSION_DIR, { recursive: true });
 fs.mkdirSync(OUTBOX_DIR, { recursive: true });
+fs.mkdirSync(MEDIA_DIR, { recursive: true });
 
 const rawDb = ensureRawDb(RAW_DB_PATH);
 const runtimeDb = openRuntimeDb(RUNTIME_DB_PATH);
@@ -71,6 +74,8 @@ const outboundConsumer = createOutboundConsumer({
   platform: PLATFORM,
   account: ACCOUNT,
   sendMessage: sendMessageViaChannel,
+  minIntervalMs: tightenedSendMinInterval(),
+  perMinuteLimit: tightenedSendPerMinute(),
 });
 
 log(`started, account=${PLATFORM}:${ACCOUNT}, raw=${RAW_DB_PATH}, runtime=${RUNTIME_DB_PATH}, send=${SEND_ENABLED ? 'enabled' : 'disabled'}`);
@@ -115,11 +120,18 @@ async function tick() {
 }
 
 async function drainOutbound() {
-  if (stopping || !SEND_ENABLED || !channelReady) return;
+  if (stopping || !SEND_ENABLED || !channelReady || !accountSendEnabled()) return;
   const result = await outboundConsumer.runOnce();
   if (result.status !== 'idle') {
     log(`outbound result ${JSON.stringify(result)}`);
   }
+}
+
+function accountSendEnabled() {
+  const row = rawDb.prepare(`
+    SELECT send_enabled FROM channel_account_registry WHERE platform = ? AND account = ?
+  `).get(PLATFORM, ACCOUNT);
+  return Number(row?.send_enabled || 0) === 1;
 }
 
 async function startWhatsAppRuntime() {
@@ -198,6 +210,16 @@ async function startWhatsAppRuntime() {
   });
   client.on('message_create', (message) => {
     handleWaMessage(message).catch((err) => reportError('wa_message_create_failed', err, { fatal: false }));
+  });
+  client.on('message_ack', (message, ack) => {
+    if (Number(ack) < 2) return;
+    const remoteMsgId = whatsappMessageId(message);
+    const changed = markDeliveredByRemoteId(workbenchDb, {
+      platform: PLATFORM,
+      account: ACCOUNT,
+      remoteMsgId,
+    });
+    if (changed) recordRuntimeEvent('outbound_delivered', 'info', `WA message delivered: ${remoteMsgId}`);
   });
 
   client.on('auth_failure', (message) => {
@@ -351,6 +373,7 @@ async function handleWaMessage(message) {
     hasMedia: Boolean(message.hasMedia),
     direction: message.fromMe ? 'outbound' : 'inbound',
   };
+  const media = message.hasMedia ? await downloadWhatsAppMedia(message, messageId) : null;
   const rowId = upsertRawMessage({
     db: rawDb,
     platform: 'wa',
@@ -362,6 +385,7 @@ async function handleWaMessage(message) {
     senderName: contact?.pushname || contact?.name || contact?.number || '',
     content: message.body || '',
     hasMedia: message.hasMedia ? 1 : 0,
+    ...mapStoredMedia(media),
     timestamp: message.timestamp,
     rawData: raw,
     nativeChatId: chatId,
@@ -378,6 +402,7 @@ async function handleTgBotMessage(message) {
   const messageId = `${chatId}:${message.message_id}`;
   const groupName = message.chat.title || message.chat.username || [message.chat.first_name, message.chat.last_name].filter(Boolean).join(' ') || chatId;
   const senderName = [sender.first_name, sender.last_name].filter(Boolean).join(' ') || sender.username || String(sender.id || '');
+  const media = hasTelegramMedia(message) ? await downloadTelegramBotMedia(message, messageId) : null;
   const rowId = upsertRawMessage({
     db: rawDb,
     platform: 'tg',
@@ -389,6 +414,7 @@ async function handleTgBotMessage(message) {
     senderName,
     content: message.text || message.caption || '',
     hasMedia: hasTelegramMedia(message) ? 1 : 0,
+    ...mapStoredMedia(media),
     timestamp: message.date,
     rawData: { ...message, direction: sender.is_bot ? 'outbound' : 'inbound' },
     nativeChatId: chatId,
@@ -405,6 +431,7 @@ async function handleTgUserEvent(event) {
   if (!chatId) return;
   const senderId = stringifyTelegramId(message.senderId || message.fromId || '');
   const messageId = `${chatId}:${message.id}`;
+  const media = message.media ? await downloadTelegramUserMedia(message, messageId) : null;
   const rowId = upsertRawMessage({
     db: rawDb,
     platform: 'tg',
@@ -416,6 +443,7 @@ async function handleTgUserEvent(event) {
     senderName: senderId,
     content: message.message || '',
     hasMedia: message.media ? 1 : 0,
+    ...mapStoredMedia(media),
     timestamp: message.date ? Number(message.date) : undefined,
     rawData: {
       id: String(message.id),
@@ -429,6 +457,90 @@ async function handleTgUserEvent(event) {
   });
   lastMessageAt = new Date().toISOString();
   reportHeartbeat('ready', 'message', `TG user message ${rowId}`);
+}
+
+async function downloadWhatsAppMedia(message, messageId) {
+  try {
+    const media = await message.downloadMedia();
+    if (!media?.data) return null;
+    return storeInboundMedia(Buffer.from(media.data, 'base64'), {
+      messageId,
+      name: media.filename || `wa-${Date.now()}`,
+      mime: media.mimetype || 'application/octet-stream',
+    });
+  } catch (err) {
+    reportError('wa_media_download_failed', err, { fatal: false });
+    return null;
+  }
+}
+
+async function downloadTelegramBotMedia(message, messageId) {
+  const descriptor = telegramBotMediaDescriptor(message);
+  if (!descriptor || typeof channelClient.downloadFile !== 'function') return null;
+  try {
+    const downloadedPath = await channelClient.downloadFile(descriptor.fileId, MEDIA_DIR);
+    const buffer = fs.readFileSync(downloadedPath);
+    const stored = storeInboundMedia(buffer, { messageId, name: descriptor.name, mime: descriptor.mime });
+    try { fs.unlinkSync(downloadedPath); } catch (_) {}
+    return stored;
+  } catch (err) {
+    reportError('tg_bot_media_download_failed', err, { fatal: false });
+    return null;
+  }
+}
+
+async function downloadTelegramUserMedia(message, messageId) {
+  if (typeof channelClient.downloadMedia !== 'function') return null;
+  try {
+    const downloaded = await channelClient.downloadMedia(message, { workers: 1 });
+    const buffer = Buffer.isBuffer(downloaded) ? downloaded : Buffer.from(downloaded || []);
+    if (!buffer.length) return null;
+    return storeInboundMedia(buffer, {
+      messageId,
+      name: `tg-${message.id}`,
+      mime: message.media?.document?.mimeType || 'application/octet-stream',
+    });
+  } catch (err) {
+    reportError('tg_user_media_download_failed', err, { fatal: false });
+    return null;
+  }
+}
+
+function telegramBotMediaDescriptor(message) {
+  if (message.document) return { fileId: message.document.file_id, name: message.document.file_name || 'document', mime: message.document.mime_type || 'application/octet-stream' };
+  if (Array.isArray(message.photo) && message.photo.length) {
+    const photo = [...message.photo].sort((a, b) => Number(b.file_size || 0) - Number(a.file_size || 0))[0];
+    return { fileId: photo.file_id, name: 'photo.jpg', mime: 'image/jpeg' };
+  }
+  for (const key of ['video', 'audio', 'voice', 'animation', 'sticker']) {
+    const item = message[key];
+    if (item?.file_id) return { fileId: item.file_id, name: item.file_name || `${key}`, mime: item.mime_type || 'application/octet-stream' };
+  }
+  return null;
+}
+
+function storeInboundMedia(buffer, { messageId, name, mime }) {
+  if (!Buffer.isBuffer(buffer) || !buffer.length) return null;
+  if (buffer.length > MEDIA_MAX_BYTES) throw Object.assign(new Error('inbound media exceeds size limit'), { code: 'MEDIA_TOO_LARGE' });
+  const sha256 = require('crypto').createHash('sha256').update(buffer).digest('hex');
+  const month = new Date().toISOString().slice(0, 7);
+  const safeName = String(name || 'media').replace(/[^a-zA-Z0-9._-]+/g, '_').slice(-120) || 'media';
+  const relativePath = path.join('media', month, `${sha256.slice(0, 16)}-${safeName}`);
+  const finalPath = path.join(ACCOUNT_PATHS.accountDir, relativePath);
+  fs.mkdirSync(path.dirname(finalPath), { recursive: true });
+  if (!fs.existsSync(finalPath)) fs.writeFileSync(finalPath, buffer, { mode: 0o600 });
+  return { relativePath, name: safeName, mime: String(mime || 'application/octet-stream'), size: buffer.length, sha256, messageId };
+}
+
+function mapStoredMedia(media) {
+  if (!media) return {};
+  return {
+    mediaPath: media.relativePath,
+    mediaName: media.name,
+    mediaMime: media.mime,
+    mediaSize: media.size,
+    mediaSha256: media.sha256,
+  };
 }
 
 async function sendMessageViaChannel(task) {
@@ -450,8 +562,9 @@ async function sendMessageViaChannel(task) {
 
 async function sendWhatsAppTask(task, attachments) {
   const chatId = task.chat_id || task.group_id;
+  const quoteOptions = task.quote_msg_id ? { quotedMessageId: String(task.quote_msg_id) } : {};
   if (!attachments.length) {
-    const sent = await channelClient.sendMessage(chatId, task.text || '');
+    const sent = await channelClient.sendMessage(chatId, task.text || '', quoteOptions);
     return { remote_msg_id: whatsappMessageId(sent) };
   }
   let lastMessageId = '';
@@ -459,7 +572,10 @@ async function sendWhatsAppTask(task, attachments) {
   for (let index = 0; index < attachments.length; index += 1) {
     const attachment = attachments[index];
     const media = new MessageMedia(attachment.type, attachment.base64, attachment.name);
-    const options = index === 0 && task.text ? { caption: task.text } : undefined;
+    const options = {
+      ...(index === 0 && task.text ? { caption: task.text } : {}),
+      ...(index === 0 ? quoteOptions : {}),
+    };
     const sent = await channelClient.sendMessage(chatId, media, options);
     lastMessageId = whatsappMessageId(sent) || lastMessageId;
   }
@@ -468,15 +584,17 @@ async function sendWhatsAppTask(task, attachments) {
 
 async function sendTelegramBotTask(task, attachments) {
   const chatId = task.chat_id || task.group_id;
+  const replyToMessageId = telegramReplyId(task.quote_msg_id);
+  const replyOptions = replyToMessageId ? { reply_to_message_id: replyToMessageId } : {};
   if (!attachments.length) {
-    const sent = await channelClient.sendMessage(chatId, task.text || '');
+    const sent = await channelClient.sendMessage(chatId, task.text || '', replyOptions);
     return { remote_msg_id: telegramMessageId(sent) };
   }
   let lastMessageId = '';
   for (let index = 0; index < attachments.length; index += 1) {
     const attachment = attachments[index];
     const caption = index === 0 && task.text ? task.text : undefined;
-    const options = caption ? { caption } : {};
+    const options = { ...(caption ? { caption } : {}), ...(index === 0 ? replyOptions : {}) };
     const fileOptions = { filename: attachment.name, contentType: attachment.type };
     let sent;
     if (attachment.kind === 'sticker') {
@@ -493,8 +611,9 @@ async function sendTelegramBotTask(task, attachments) {
 
 async function sendTelegramUserTask(task, attachments) {
   const chatId = task.chat_id || task.group_id;
+  const replyTo = telegramReplyId(task.quote_msg_id);
   if (!attachments.length) {
-    const sent = await channelClient.sendMessage(chatId, { message: task.text || '' });
+    const sent = await channelClient.sendMessage(chatId, { message: task.text || '', ...(replyTo ? { replyTo } : {}) });
     return { remote_msg_id: telegramMessageId(sent) };
   }
   if (typeof channelClient.sendFile !== 'function') {
@@ -508,10 +627,22 @@ async function sendTelegramUserTask(task, attachments) {
       caption: index === 0 ? task.text || '' : '',
       fileName: attachment.name,
       forceDocument: attachment.kind === 'file',
+      ...(index === 0 && replyTo ? { replyTo } : {}),
     });
     lastMessageId = telegramMessageId(sent) || lastMessageId;
   }
   return { remote_msg_id: lastMessageId };
+}
+
+function telegramReplyId(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return null;
+  const tail = raw.includes(':') ? raw.split(':').pop() : raw;
+  const numeric = Number(tail);
+  if (!Number.isSafeInteger(numeric) || numeric <= 0) {
+    throw Object.assign(new Error('Telegram quoted message id is invalid'), { code: 'MESSAGE_ID_INVALID' });
+  }
+  return numeric;
 }
 
 function parseTaskAttachments(task) {
@@ -973,6 +1104,20 @@ function boundedNumber(value, fallback, min, max) {
   const numeric = Number(value);
   if (!Number.isFinite(numeric)) return fallback;
   return Math.max(min, Math.min(max, numeric));
+}
+
+function tightenedSendMinInterval() {
+  const baseline = PLATFORM === 'wa' ? 2500 : 1000;
+  const configured = process.env[`WORKBENCH_${PLATFORM.toUpperCase()}_SEND_MIN_INTERVAL_MS`] ||
+    process.env.WORKBENCH_SEND_MIN_INTERVAL_MS;
+  return Math.max(baseline, boundedNumber(configured, baseline, baseline, 60000));
+}
+
+function tightenedSendPerMinute() {
+  const baseline = PLATFORM === 'wa' ? 20 : 30;
+  const configured = process.env[`WORKBENCH_${PLATFORM.toUpperCase()}_SEND_PER_MINUTE`] ||
+    process.env.WORKBENCH_SEND_PER_MINUTE;
+  return Math.min(baseline, boundedNumber(configured, baseline, 1, baseline));
 }
 
 function envFlag(value, fallback) {

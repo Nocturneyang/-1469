@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const Database = require('better-sqlite3');
 const { ensureDirectory, resolveDbPath } = require('./paths');
 const {
@@ -28,9 +29,54 @@ function openWorkbenchDb(dbPath = DEFAULT_WORKBENCH_DB_PATH, options = {}) {
   seedAccessControl(db);
   migrateManualServiceGroups(db);
   migrateLegacyLabels(db);
+  migrateCustomerTypes(db);
   seedDefaultSuperAdmin(db);
   seedDefaultOperator(db);
   return db;
+}
+
+function migrateCustomerTypes(db) {
+  const columns = new Set(db.prepare('PRAGMA table_info(conversation_profiles)').all().map((column) => column.name));
+  if (!columns.has('customer_type_id')) {
+    db.prepare('ALTER TABLE conversation_profiles ADD COLUMN customer_type_id TEXT').run();
+  }
+  db.prepare(`
+    CREATE INDEX IF NOT EXISTS idx_conversation_profiles_customer_type
+      ON conversation_profiles(platform, account, customer_type_id)
+  `).run();
+
+  const rows = db.prepare(`
+    SELECT DISTINCT platform, account, TRIM(customer_type) AS name
+    FROM conversation_profiles
+    WHERE TRIM(COALESCE(customer_type, '')) <> ''
+  `).all();
+  const insert = db.prepare(`
+    INSERT INTO customer_type_options (
+      id, platform, service_account, name, status, created_by, updated_by
+    ) VALUES (@id, @platform, @account, @name, 'active', 'migration', 'migration')
+    ON CONFLICT(platform, service_account, name) DO NOTHING
+  `);
+  const find = db.prepare(`
+    SELECT id FROM customer_type_options
+    WHERE platform = @platform AND service_account = @account AND name = @name
+  `);
+  const update = db.prepare(`
+    UPDATE conversation_profiles
+    SET customer_type_id = @id
+    WHERE platform = @platform
+      AND account = @account
+      AND TRIM(COALESCE(customer_type, '')) = @name
+      AND COALESCE(customer_type_id, '') = ''
+  `);
+  const save = db.transaction(() => {
+    rows.forEach((row) => {
+      const id = `ctype-${crypto.createHash('sha256').update(`${row.platform}:${row.account}:${row.name}`).digest('hex').slice(0, 20)}`;
+      insert.run({ ...row, id });
+      const stored = find.get(row);
+      if (stored) update.run({ ...row, id: stored.id });
+    });
+  });
+  save();
 }
 
 function migrateManualServiceGroups(db) {

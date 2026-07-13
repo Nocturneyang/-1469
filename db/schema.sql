@@ -166,6 +166,7 @@ CREATE TABLE IF NOT EXISTS conversation_profiles (
   starred INTEGER NOT NULL DEFAULT 0,
   follow_up_at TEXT,
   internal_display_name TEXT,
+  customer_type_id TEXT,
   customer_type TEXT,
   owner_note TEXT,
   updated_by TEXT,
@@ -179,6 +180,24 @@ CREATE INDEX IF NOT EXISTS idx_conversation_profiles_status
 
 CREATE INDEX IF NOT EXISTS idx_conversation_profiles_starred
   ON conversation_profiles(platform, account, starred, priority);
+
+CREATE TABLE IF NOT EXISTS customer_type_options (
+  id TEXT PRIMARY KEY,
+  platform TEXT NOT NULL,
+  service_account TEXT NOT NULL,
+  name TEXT NOT NULL,
+  color TEXT,
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  status TEXT NOT NULL DEFAULT 'active',
+  created_by TEXT,
+  updated_by TEXT,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(platform, service_account, name)
+);
+
+CREATE INDEX IF NOT EXISTS idx_customer_type_options_account
+  ON customer_type_options(platform, service_account, status, sort_order, name);
 
 CREATE TABLE IF NOT EXISTS conversation_notes (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
