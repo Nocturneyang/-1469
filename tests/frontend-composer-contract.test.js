@@ -14,6 +14,9 @@ for (const label of ['插入表情', '发送表情包', '发送图片', '发送�
 
 assert.match(composer, /addFiles\([^\n]+, 'sticker'\)/, 'sticker files must keep sticker kind');
 assert.match(composer, /addFiles\([^\n]+, 'image'\)/, 'image files must keep image kind');
+assert.match(composer, /document\.addEventListener\('pointerdown', handleDocumentPointerDown\)/, 'emoji panel must listen for outside pointer events');
+assert.match(composer, /emojiPanelRef\.value\?\.contains\(target\)/, 'emoji panel must ignore its own pointer events');
 assert.match(styles, /\.message-row\.outbound\s*\{[^}]*flex-direction:\s*row-reverse;[^}]*justify-content:\s*flex-start;/s, 'outbound message group must align to the right');
+assert.match(styles, /\.message-scroll\s*\{[^}]*background:\s*linear-gradient\(180deg, #f8f9fb 0%, #f3f5f8 100%\)/s, 'message canvas must use the neutral background');
 
 console.log('[frontend] composer media controls and outbound alignment verified');

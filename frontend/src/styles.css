@@ -4235,8 +4235,8 @@ button {
 .workflow-pill { border-radius: 2px; }
 .unread-badge { top: 42px; right: 14px; background: var(--accent-strong); box-shadow: none; }
 
-.thread-shell { background: #faf8ff; }
-.thread-pane { background: #faf8ff; }
+.thread-shell { background: #f5f6f8; }
+.thread-pane { background: #f5f6f8; }
 .thread-header {
   min-height: 56px;
   height: 56px;
@@ -4275,7 +4275,7 @@ button {
 
 .message-scroll {
   padding: 18px 26px 28px;
-  background: #faf8ff;
+  background: linear-gradient(180deg, #f8f9fb 0%, #f3f5f8 100%);
 }
 .message-date { display: flex; justify-content: center; margin: 2px 0 18px; }
 .message-date span { padding: 4px 10px; color: var(--muted); background: #ededf8; border-radius: 2px; font-size: 10px; }

@@ -26,6 +26,7 @@
     <div class="composer-box">
       <div class="composer-toolbar">
         <button
+          ref="emojiButtonRef"
           class="icon-button"
           type="button"
           title="插入表情"
@@ -71,7 +72,7 @@
           <span>文件</span>
         </button>
       </div>
-      <div v-if="emojiOpen" class="emoji-panel" role="listbox" aria-label="选择表情">
+      <div v-if="emojiOpen" ref="emojiPanelRef" class="emoji-panel" role="listbox" aria-label="选择表情">
         <button
           v-for="emoji in quickEmojis"
           :key="emoji"
@@ -126,7 +127,7 @@
         :placeholder="composerPlaceholder"
         :disabled="disabled"
         @keydown.enter="handleEnter"
-        @keydown.esc.prevent="$emit('clear-quote')"
+        @keydown.esc.prevent="handleEscape"
         @paste="handlePaste"
       ></textarea>
       <div class="composer-foot">
@@ -146,7 +147,7 @@
 </template>
 
 <script setup>
-import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import ElMessage from 'element-plus/es/components/message/index.mjs';
 import {
   ChatDotRound,
@@ -187,6 +188,8 @@ const emit = defineEmits(['send', 'clear-quote', 'typing-state']);
 const draft = ref('');
 const attachments = ref([]);
 const emojiOpen = ref(false);
+const emojiButtonRef = ref(null);
+const emojiPanelRef = ref(null);
 const fileInputRef = ref(null);
 const imageInputRef = ref(null);
 const stickerInputRef = ref(null);
@@ -243,14 +246,34 @@ watch(draft, (value) => {
 });
 
 onBeforeUnmount(() => {
+  document.removeEventListener('pointerdown', handleDocumentPointerDown);
   clearTimeout(typingTimer);
   emit('typing-state', false);
+});
+
+onMounted(() => {
+  document.addEventListener('pointerdown', handleDocumentPointerDown);
 });
 
 function handleEnter(event) {
   if (event.shiftKey) return;
   event.preventDefault();
   submit();
+}
+
+function handleEscape() {
+  if (emojiOpen.value) {
+    emojiOpen.value = false;
+    return;
+  }
+  emit('clear-quote');
+}
+
+function handleDocumentPointerDown(event) {
+  if (!emojiOpen.value) return;
+  const target = event.target;
+  if (emojiButtonRef.value?.contains(target) || emojiPanelRef.value?.contains(target)) return;
+  emojiOpen.value = false;
 }
 
 function openFilePicker() {
