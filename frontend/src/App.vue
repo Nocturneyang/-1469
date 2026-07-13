@@ -45,7 +45,6 @@
       <TopFilters
         v-model="filters"
         :labels="labels"
-        :customer-types="customerTypes"
         :accounts="connectedAccounts"
         :available-platforms="availablePlatforms"
         :account-scope="accountScope"
@@ -61,8 +60,10 @@
           :loading="loadingGroups"
           :selected-id="selectedGroup && selectedGroup.id"
           :scope-label="scopeLabel"
+          :search="filters.search"
           @select="selectGroup"
           @refresh="loadGroups"
+          @search-change="(search) => filters = { ...filters, search }"
         />
 
         <div class="thread-shell">
@@ -72,8 +73,6 @@
             :paging="messagePaging"
             :loading-older="loadingOlder"
             :stick-to-bottom="stickToBottom"
-            :current-operator-id="currentOperatorId"
-            :message-filters="messageFilters"
             :manual-groups="manualGroups"
             :saving-manual-groups="savingManualGroups"
             @retry="handleRetry"
@@ -82,7 +81,6 @@
             @read-progress="handleReadProgress"
             @stick-state-change="handleStickStateChange"
             @quote="handleQuote"
-            @message-search-change="handleMessageSearchChange"
             @manual-groups-change="handleManualGroupsChange"
             @manual-group-create="handleManualGroupCreate"
           />
@@ -98,18 +96,11 @@
 
         <ConversationInspector
           :group="selectedGroup"
-          :messages="messages"
           :workspace-detail="workspaceDetail"
-          :loading-workspace="loadingWorkspace"
-          :customer-types="customerTypes"
-          :manual-groups="manualGroups"
-          :saving-manual-groups="savingManualGroups"
           @workspace-save="handleWorkspaceSave"
           @note-create="handleNoteCreate"
-          @manual-groups-change="handleManualGroupsChange"
           @load-more-notes="handleLoadMoreNotes"
           @load-more-timeline="handleLoadMoreTimeline"
-          @open-native="handleOpenNative"
         />
         <button
           v-if="customerProfileOpen"
@@ -149,7 +140,6 @@ import {
   createReply,
   deleteServiceAccount,
   fetchAccounts,
-  fetchCustomerTypes,
   fetchGroupWorkspace,
   fetchGroupNotes,
   fetchGroupTimeline,
@@ -174,11 +164,9 @@ const filters = ref({
   accountKeys: [],
   scope: 'all',
   labelId: '',
-  customerTypeId: '',
   search: '',
 });
 const labels = ref([]);
-const customerTypes = ref([]);
 const manualGroups = ref([]);
 const accounts = ref([]);
 const groups = ref([]);
@@ -192,13 +180,6 @@ const selectedGroup = ref(null);
 const workspaceDetail = ref({ profile: null, notes: [], timeline: [], presence: [], notes_paging: {}, timeline_paging: {} });
 const loadingWorkspace = ref(false);
 const quoteMessage = ref(null);
-const messageFilters = ref({
-  message_search: '',
-  sender: '',
-  date_from: '',
-  date_to: '',
-  has_attachment: false,
-});
 const loadingGroups = ref(false);
 const loadingOlder = ref(false);
 const stickToBottom = ref(true);
@@ -225,10 +206,6 @@ const WORKBENCH_CACHE_TTL_MS = 10 * 60 * 1000;
 const WORKBENCH_GROUP_CACHE_TTL_MS = 2 * 60 * 1000;
 const LIVE_OUTBOUND_STATUSES = new Set(['pending', 'sending']);
 const CONNECTED_ACCOUNT_STATUSES = new Set(['online', 'authenticated', 'ready', 'monitoring', 'healthy']);
-const currentOperatorId = computed(() => (
-  currentOperator.value && currentOperator.value.id ? currentOperator.value.id : 'demo-operator'
-));
-
 const scopeLabel = computed(() => {
   if (filters.value.scope === 'unread') return '未读';
   return '全部';
@@ -363,7 +340,6 @@ async function bootstrapWorkbench() {
   await Promise.all([
     loadLabels(),
     loadManualGroups(),
-    loadCustomerTypes(),
     loadGroups({ useRetry: true }),
   ]);
   scheduleWorkbenchCacheWrite();
@@ -426,7 +402,6 @@ async function loadGroups({ silent = false, clearSelectionOnMissing = false, use
       accounts: selectedAccountParam.value,
       scope: filters.value.scope,
       label_id: filters.value.labelId || undefined,
-      customer_type_id: filters.value.customerTypeId || undefined,
       search: filters.value.search || undefined,
     });
     const { groups: nextGroups, account_scope } = useRetry
@@ -472,25 +447,6 @@ async function loadLabels() {
   scheduleWorkbenchCacheWrite();
   if (filters.value.labelId && !hasLabel(nextLabels, filters.value.labelId)) {
     filters.value = { ...filters.value, labelId: '' };
-  }
-}
-
-async function loadCustomerTypes() {
-  const rows = await Promise.all(connectedAccounts.value.map(async (account) => {
-    try {
-      const options = await fetchCustomerTypes(account.platform, account.account);
-      return options.map((option) => ({
-        ...option,
-        account: account.account,
-        account_display_name: account.account_display_name || account.account,
-      }));
-    } catch (_) {
-      return [];
-    }
-  }));
-  customerTypes.value = rows.flat();
-  if (filters.value.customerTypeId && !customerTypes.value.some((option) => option.id === filters.value.customerTypeId)) {
-    filters.value = { ...filters.value, customerTypeId: '' };
   }
 }
 
@@ -562,7 +518,6 @@ function groupFilterCacheKey() {
     accountKeys: filters.value.accountKeys,
     scope: filters.value.scope,
     labelId: filters.value.labelId,
-    customerTypeId: filters.value.customerTypeId,
     search: filters.value.search,
   });
 }
@@ -600,7 +555,7 @@ function hasLabel(nextLabels, labelId) {
 function syncPlatformFilterWithScope({ preferMessageAccounts = false } = {}) {
   const platforms = availablePlatforms.value;
   if (!platforms.length) {
-    filters.value = { ...filters.value, platforms: [], accountKeys: [], labelId: '', customerTypeId: '' };
+    filters.value = { ...filters.value, platforms: [], accountKeys: [], labelId: '' };
     return;
   }
   const current = filters.value.platforms.filter((platform) => platforms.includes(platform));
@@ -615,7 +570,7 @@ function syncPlatformFilterWithScope({ preferMessageAccounts = false } = {}) {
     next.some((platform, index) => platform !== filters.value.platforms[index]) ||
     accountKeys.length !== filters.value.accountKeys.length
   ) {
-    filters.value = { ...filters.value, platforms: next, accountKeys, labelId: accountKeys.length ? filters.value.labelId : '', customerTypeId: '' };
+    filters.value = { ...filters.value, platforms: next, accountKeys, labelId: accountKeys.length ? filters.value.labelId : '' };
   }
 }
 
@@ -644,7 +599,6 @@ function selectServiceAccount(account) {
     platforms: [account.platform],
     accountKeys: [`${account.platform}:${account.account}`],
     labelId: '',
-    customerTypeId: '',
   };
 }
 
@@ -653,7 +607,6 @@ function clearServiceAccount() {
     ...filters.value,
     accountKeys: [],
     labelId: '',
-    customerTypeId: '',
   };
 }
 
@@ -789,13 +742,7 @@ async function loadWorkspace({ silent = false } = {}) {
 }
 
 function activeMessageFilterParams() {
-  const params = {};
-  if (messageFilters.value.message_search) params.message_search = messageFilters.value.message_search;
-  if (messageFilters.value.sender) params.sender = messageFilters.value.sender;
-  if (messageFilters.value.date_from) params.date_from = messageFilters.value.date_from;
-  if (messageFilters.value.date_to) params.date_to = messageFilters.value.date_to;
-  if (messageFilters.value.has_attachment) params.has_attachment = 1;
-  return params;
+  return {};
 }
 
 function mergeMessages(...sets) {
@@ -1032,18 +979,6 @@ function clearQuote() {
   quoteMessage.value = null;
 }
 
-async function handleMessageSearchChange(filters) {
-  messageFilters.value = {
-    message_search: String(filters.message_search || '').trim(),
-    sender: String(filters.sender || '').trim(),
-    date_from: filters.date_from || '',
-    date_to: filters.date_to || '',
-    has_attachment: Boolean(filters.has_attachment),
-  };
-  stickToBottom.value = false;
-  await loadMessages();
-}
-
 async function handleTypingState(active) {
   if (!selectedGroup.value) return;
   clearTimeout(typingPresenceTimer);
@@ -1099,15 +1034,6 @@ async function handleMarkRead() {
   readProgressByGroup.set(selectedGroup.value.id, Number(lastReadMessageId) || 0);
   patchSelectedGroup({ unread_count: Number(result.unread_count || 0) });
   await loadWorkspace({ silent: true });
-}
-
-function handleOpenNative(group = selectedGroup.value) {
-  const url = String(group?.native_url || '').trim();
-  if (url) {
-    window.open(url, '_blank', 'noopener,noreferrer');
-    return;
-  }
-  ElMessage.info('当前渠道未返回可打开的原生会话链接');
 }
 
 function openWorkbenchPermissions() {
