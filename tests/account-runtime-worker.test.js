@@ -5,7 +5,7 @@ const path = require('path');
 
 const { ensureAccountDatabases } = require('../db/account-db');
 const { ensureRawDb, upsertRawMessage, upsertServiceAccountProfile } = require('../db/raw-db');
-const { listGroups: listRawGroups } = require('../db/raw-messages');
+const { listGroups: listRawGroups, listMessagesPage } = require('../db/raw-messages');
 const { openWorkbenchDb } = require('../db/workbench-db');
 const { normalizeChannelLabelName, replaceChannelSnapshot } = require('../lib/channel-sync-store');
 const {
@@ -99,6 +99,27 @@ async function main() {
       assert.strictEqual(targetedGroups.length, 1);
       assert.strictEqual(targetedGroups[0].group_id, 'chat-1');
       assert.strictEqual(targetedGroups[0].content, 'hello updated');
+      const directMessagePage = listMessagesPage({
+        rawDbPath: waPaths.rawDbPath,
+        platform: 'wa',
+        account: 'wa-runtime',
+        accountScope: { active: true, accounts: [{ platform: 'wa', account: 'wa-runtime' }] },
+        groupId: 'chat-1',
+        limit: 60,
+        directAccount: true,
+      });
+      assert.strictEqual(directMessagePage.messages.length, 1);
+      assert.strictEqual(directMessagePage.messages[0].content, 'hello updated');
+      assert.strictEqual(directMessagePage.messages[0].account, 'wa-runtime');
+      const directQueryPlan = rawDb.prepare(`
+        EXPLAIN QUERY PLAN
+        SELECT id
+        FROM messages
+        WHERE platform IN ('wa', 'whatsapp') AND group_id = 'chat-1'
+        ORDER BY timestamp DESC, id DESC
+        LIMIT 61
+      `).all();
+      assert.ok(directQueryPlan.some((row) => String(row.detail).includes('idx_messages_group')));
     } finally {
       rawDb.close();
     }
@@ -124,6 +145,37 @@ async function main() {
     assert.strictEqual(readSendEnabled(waPaths.rawDbPath, 'wa-runtime'), 0);
 
     const tgPaths = ensureAccountDatabases('tg', 'tg-waiting', { accountDataDir });
+    const tgRawDb = ensureRawDb(tgPaths.rawDbPath);
+    try {
+      upsertRawMessage({
+        db: tgRawDb,
+        platform: 'tg',
+        account: 'tg-waiting',
+        messageId: '-1001:42',
+        groupId: '-1001',
+        groupName: 'TG 测试群',
+        senderId: '701',
+        senderName: '张 三',
+        content: 'TG recent message',
+        timestamp: 1783500042,
+        rawData: { fromMe: false, media: { kind: 'photo' } },
+        nativeChatId: '-1001',
+        nativeMessageId: '42',
+      });
+    } finally {
+      tgRawDb.close();
+    }
+    const tgDirectMessagePage = listMessagesPage({
+      rawDbPath: tgPaths.rawDbPath,
+      platform: 'tg',
+      account: 'tg-waiting',
+      accountScope: { active: true, accounts: [{ platform: 'tg', account: 'tg-waiting' }] },
+      groupId: '-1001',
+      limit: 60,
+      directAccount: true,
+    });
+    assert.strictEqual(tgDirectMessagePage.messages.length, 1);
+    assert.strictEqual(tgDirectMessagePage.messages[0].content, 'TG recent message');
     upsertServiceAccountProfile({
       dbPath: tgPaths.rawDbPath,
       platform: 'tg',

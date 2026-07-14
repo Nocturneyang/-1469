@@ -132,6 +132,12 @@ function normalizePlatform(platform) {
   return value;
 }
 
+function nativePlatformAliases(platform) {
+  return normalizePlatform(platform) === 'wa'
+    ? ['wa', 'whatsapp']
+    : ['tg', 'telegram', 'telegram-user', 'tg-user'];
+}
+
 function isWorkbenchPlatform(platform) {
   return WORKBENCH_PLATFORM_SET.has(normalizePlatform(platform));
 }
@@ -484,6 +490,7 @@ function listMessages({
   groupId,
   beforeId,
   limit = 80,
+  directAccount = false,
 } = {}) {
   const db = openRawDb(rawDbPath);
   if (!db) return [];
@@ -501,6 +508,48 @@ function listMessages({
     beforeFilter = 'AND id < @beforeId';
   }
   try {
+    if (directAccount) {
+      const platformAliases = nativePlatformAliases(params.platform);
+      const aliasPlaceholders = platformAliases.map((alias, index) => {
+        const key = `nativePlatform${index}`;
+        params[key] = alias;
+        return `@${key}`;
+      });
+      return db.prepare(`
+        SELECT
+          m.id,
+          @platform AS platform,
+          @account AS account,
+          m.message_id,
+          COALESCE(NULLIF(m.group_id, ''), NULLIF(m.sender_id, ''), m.message_id) AS group_id,
+          COALESCE(NULLIF(m.group_name, ''), NULLIF(m.group_id, ''), NULLIF(m.sender_name, ''), '未命名会话') AS group_name,
+          m.sender_id,
+          COALESCE(NULLIF(m.sender_name, ''), '未知成员') AS sender_name,
+          COALESCE(m.content, '') AS content,
+          COALESCE(m.has_media, 0) AS has_media,
+          m.media_path,
+          m.media_name,
+          m.media_mime,
+          m.media_size,
+          m.media_sha256,
+          m.timestamp,
+          COALESCE(o.raw_json, m.raw_data) AS raw_data,
+          m.created_at,
+          COALESCE(m.updated_at, m.created_at) AS updated_at,
+          o.observer_role,
+          o.native_message_id
+        FROM messages m
+        LEFT JOIN message_observations o
+          ON o.platform = m.platform
+         AND o.canonical_message_id = m.message_id
+         AND o.observer_account = @account
+        WHERE m.platform IN (${aliasPlaceholders.join(', ')})
+          AND m.group_id = @groupId
+          ${beforeFilter.replace(/\bid\b/g, 'm.id')}
+        ORDER BY m.timestamp DESC, m.id DESC
+        LIMIT @limit
+      `).all(params).reverse();
+    }
     return db.prepare(`
       WITH normalized AS (${normalizedMessagesSql(db)})
       SELECT *

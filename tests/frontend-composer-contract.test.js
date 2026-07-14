@@ -42,5 +42,9 @@ assert.ok(thread.includes('转发自'), 'Telegram forward metadata must be visib
 assert.match(app, /function applyInstantLabelFilter\(/, 'label selection must filter the loaded conversation list immediately');
 assert.match(app, /groupListCache\.get\(groupFilterCacheKey\(nextBase\)\)/, 'instant label filtering must reuse the unfiltered group snapshot');
 assert.match(app, /writeGroupListCache\(requestKey, nextGroups\)/, 'server results must refresh the exact filter cache');
+assert.match(app, /function primeMessagePreview\(/, 'conversation selection must render the latest list message immediately');
+assert.match(app, /:loading-messages="loadingMessages"/, 'message loading progress must be visible in the thread');
+assert.ok(thread.includes('正在加载完整消息记录'), 'the thread must explain that full history is still loading');
+assert.match(styles, /\.message-loading-skeleton/, 'an empty first message page must show a loading skeleton');
 
-console.log('[frontend] composer, realtime messages, media previews and instant label filtering verified');
+console.log('[frontend] composer, realtime messages, media previews, first paint and instant label filtering verified');

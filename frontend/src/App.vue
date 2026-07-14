@@ -71,6 +71,7 @@
             :group="selectedGroup"
             :messages="messages"
             :paging="messagePaging"
+            :loading-messages="loadingMessages"
             :loading-older="loadingOlder"
             :stick-to-bottom="stickToBottom"
             :manual-groups="manualGroups"
@@ -182,6 +183,7 @@ const workspaceDetail = ref({ profile: null, notes: [], timeline: [], presence: 
 const loadingWorkspace = ref(false);
 const quoteMessage = ref(null);
 const loadingGroups = ref(false);
+const loadingMessages = ref(false);
 const loadingOlder = ref(false);
 const stickToBottom = ref(true);
 const sending = ref(false);
@@ -401,6 +403,7 @@ watch(
       startConversationEventStream(selectedGroup.value);
     }
     else {
+      loadingMessages.value = false;
       messages.value = [];
       messagePaging.value = { has_more: false, before_id: null };
       workspaceDetail.value = { profile: null, notes: [], timeline: [], presence: [], notes_paging: {}, timeline_paging: {} };
@@ -661,6 +664,7 @@ async function selectGroup(group) {
   if (selectedGroup.value && (!group || group.id !== selectedGroup.value.id)) {
     clearPresence(selectedGroup.value);
   }
+  if (group) primeMessagePreview(group);
   selectedGroup.value = group;
 }
 
@@ -757,6 +761,8 @@ async function loadMessages(params = {}) {
   delete requestParams.preserve_existing;
   const requestSeq = ++messageRequestSeq;
   const cacheKey = messageCacheKey(group);
+  const showInitialLoading = !requestParams.before_id && !preserveExisting;
+  if (showInitialLoading) loadingMessages.value = true;
   if (!params.before_id) hydrateCachedMessages(group);
   try {
     const page = await fetchMessages(group, {
@@ -778,6 +784,13 @@ async function loadMessages(params = {}) {
     writeMessageCache(cacheKey, nextMessages, nextPaging);
   } catch (err) {
     // 保留已显示的缓存，网络抖动时不让会话窗口退回空白。
+  } finally {
+    if (
+      showInitialLoading &&
+      requestSeq === messageRequestSeq &&
+      selectedGroup.value &&
+      selectedGroup.value.id === group.id
+    ) loadingMessages.value = false;
   }
 }
 
@@ -797,6 +810,33 @@ function hydrateCachedMessages(group) {
   messageCache.set(key, entry);
   messages.value = entry.messages;
   messagePaging.value = entry.paging;
+}
+
+function primeMessagePreview(group) {
+  const key = messageCacheKey(group);
+  if (messageCache.has(key) || !group.last_message_id) return;
+  const hasMedia = Boolean(group.has_media);
+  const text = String(group.last_content || '').trim() || (hasMedia ? '媒体消息正在加载…' : '最新消息正在加载…');
+  const timestamp = Number(group.last_message_time) || Date.now();
+  writeMessageCache(key, [{
+    id: `preview-${group.id}-${group.last_message_id}`,
+    platform: group.platform,
+    account: group.account,
+    group_id: group.group_id,
+    message_id: group.last_native_message_id || null,
+    sender_name: group.last_sender_name || group.group_name,
+    direction: group.last_direction === 'outbound' ? 'outbound' : 'inbound',
+    text,
+    display_text: text,
+    has_media: hasMedia,
+    attachments: [],
+    status: group.last_direction === 'outbound' ? 'sent' : 'received',
+    timestamp,
+    sort_time: timestamp,
+    created_at: new Date(timestamp).toISOString(),
+    source: 'group-preview',
+    provisional: true,
+  }], { has_more: false, before_id: null });
 }
 
 function writeMessageCache(key, nextMessages, paging) {

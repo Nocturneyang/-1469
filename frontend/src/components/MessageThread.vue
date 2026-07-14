@@ -57,8 +57,16 @@
       <span>从左侧会话列表开始处理消息。</span>
     </div>
     <div v-else class="message-scroll" ref="scrollRef" @scroll="handleScroll">
-      <div v-if="paging && paging.has_more" class="load-older-row"><el-button :loading="loadingOlder" @click="$emit('load-older')">加载更早消息</el-button></div>
-      <div class="message-date"><span>今天</span></div>
+      <div v-if="loadingMessages" class="message-loading-banner" role="status" aria-live="polite">
+        <span class="message-loading-spinner" aria-hidden="true"></span>
+        <span>{{ messages.length ? '正在加载完整消息记录…' : '正在读取最近消息…' }}</span>
+      </div>
+      <div v-if="loadingMessages && !messages.length" class="message-loading-skeleton" aria-hidden="true">
+        <span v-for="index in 3" :key="index"></span>
+      </div>
+      <div v-if="!loadingMessages && paging && paging.has_more" class="load-older-row"><el-button :loading="loadingOlder" @click="$emit('load-older')">加载更早消息</el-button></div>
+      <div v-if="messages.length" class="message-date"><span>今天</span></div>
+      <div v-else-if="!loadingMessages" class="message-empty-state">暂无可展示的消息记录</div>
       <div v-for="message in messages" :key="message.id" class="message-row" :class="message.direction === 'outbound' ? 'outbound' : 'inbound'" :data-raw-id="message.raw_id || null" :data-readable="isReadableMessage(message) ? 'true' : null">
         <div class="sender-chip">{{ message.direction === 'outbound' ? '我' : '客' }}</div>
         <div class="message-content">
@@ -107,7 +115,7 @@ import { Document, EditPen } from '@element-plus/icons-vue';
 import { formatMessageTime, platformClass, statusText } from '../utils/format';
 
 const props = defineProps({
-  group: { type: Object, default: null }, messages: { type: Array, default: () => [] }, paging: { type: Object, default: () => ({ has_more: false, before_id: null }) }, loadingOlder: { type: Boolean, default: false }, stickToBottom: { type: Boolean, default: true }, manualGroups: { type: Array, default: () => [] }, savingManualGroups: { type: Boolean, default: false },
+  group: { type: Object, default: null }, messages: { type: Array, default: () => [] }, paging: { type: Object, default: () => ({ has_more: false, before_id: null }) }, loadingMessages: { type: Boolean, default: false }, loadingOlder: { type: Boolean, default: false }, stickToBottom: { type: Boolean, default: true }, manualGroups: { type: Array, default: () => [] }, savingManualGroups: { type: Boolean, default: false },
 });
 const emit = defineEmits(['retry', 'cancel', 'load-older', 'read-progress', 'stick-state-change', 'quote', 'manual-groups-change', 'manual-group-create']);
 const scrollRef = ref(null);
