@@ -396,9 +396,16 @@ watch(
     quoteMessage.value = null;
     stopConversationEventStream();
     if (selectedGroup.value) {
+      const selectedGroupId = selectedGroup.value.id;
+      workspaceDetail.value = { profile: null, notes: [], timeline: [], presence: [], notes_paging: {}, timeline_paging: {} };
       hydrateCachedMessages(selectedGroup.value);
-      loadMessages().catch(() => {});
-      loadWorkspace().catch(() => {});
+      loadMessages()
+        .catch(() => {})
+        .finally(() => {
+          if (selectedGroup.value && selectedGroup.value.id === selectedGroupId) {
+            loadWorkspace().catch(() => {});
+          }
+        });
       startPresenceHeartbeat();
       startConversationEventStream(selectedGroup.value);
     }
@@ -759,7 +766,8 @@ async function loadMessages(params = {}) {
   const preserveExisting = Boolean(params.preserve_existing);
   const requestParams = { ...params };
   delete requestParams.preserve_existing;
-  const requestSeq = ++messageRequestSeq;
+  // 实时刷新只能复用当前会话代次，不能让首次加载响应失效；切换会话和翻页才开启新代次。
+  const requestSeq = preserveExisting ? messageRequestSeq : ++messageRequestSeq;
   const cacheKey = messageCacheKey(group);
   const showInitialLoading = !requestParams.before_id && !preserveExisting;
   if (showInitialLoading) loadingMessages.value = true;
@@ -1411,6 +1419,8 @@ function stopPendingRefresh() {
 
 async function refreshActiveConversation({ keepStickToBottom = false, forceAncillary = false } = {}) {
   if (refreshingActive || document.hidden) return;
+  // 首次消息尚未返回时，暂停后台轮询，优先让用户点击触发的消息请求完成。
+  if (loadingMessages.value) return;
   refreshingActive = true;
   const previousStickToBottom = stickToBottom.value;
   try {

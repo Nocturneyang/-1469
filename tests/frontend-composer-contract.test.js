@@ -46,5 +46,8 @@ assert.match(app, /function primeMessagePreview\(/, 'conversation selection must
 assert.match(app, /:loading-messages="loadingMessages"/, 'message loading progress must be visible in the thread');
 assert.ok(thread.includes('正在加载完整消息记录'), 'the thread must explain that full history is still loading');
 assert.match(styles, /\.message-loading-skeleton/, 'an empty first message page must show a loading skeleton');
+assert.match(app, /const requestSeq = preserveExisting \? messageRequestSeq : \+\+messageRequestSeq;/, 'background refreshes must not invalidate the first message response');
+assert.match(app, /if \(loadingMessages\.value\) return;/, 'background polling must yield to the first message request');
+assert.match(app, /loadMessages\(\)[\s\S]*?\.finally\(\(\) => \{[\s\S]*?loadWorkspace\(\)/, 'workspace details must load after the first message request');
 
 console.log('[frontend] composer, realtime messages, media previews, first paint and instant label filtering verified');

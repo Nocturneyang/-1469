@@ -709,6 +709,7 @@ function createWorkbenchRouter({ workbenchDb, runtimeDb, rawDbPath = DEFAULT_RAW
   });
 
   router.get('/groups/:groupId/messages', (req, res) => {
+    const requestStartedAt = Date.now();
     const accountScope = getAccountScope();
     const operator = currentOperatorContext(workbenchDb, req);
     const visibleAccountScope = allowedAccountScope(workbenchDb, operator, accountScope, 'can_view');
@@ -719,6 +720,7 @@ function createWorkbenchRouter({ workbenchDb, runtimeDb, rawDbPath = DEFAULT_RAW
     requireConversationCapability(workbenchDb, operator, platform, account, groupId, 'can_view');
     const messageFilters = normalizeMessageFilters(req.query);
     const requestedLimit = Number(req.query.limit) || 80;
+    const rawStartedAt = Date.now();
     const page = accountData.listMessagesPage({
       platform,
       account,
@@ -727,15 +729,27 @@ function createWorkbenchRouter({ workbenchDb, runtimeDb, rawDbPath = DEFAULT_RAW
       beforeId: req.query.before_id,
       limit: messageFilters.active ? Math.max(requestedLimit, 200) : requestedLimit,
     });
+    const rawDurationMs = Date.now() - rawStartedAt;
     const inbound = page.messages.map(mapRawMessage);
-    const outbound = accountData.withWorkbenchDb(platform, account, {}, (accountDb) => listOutboundMessages(accountDb, {
+    const ledgerStartedAt = Date.now();
+    const outbound = accountData.withWorkbenchDb(platform, account, { readonly: accountData.isolated }, (accountDb) => listOutboundMessages(accountDb, {
       platform,
       account,
       groupId,
       scopedIds: accountData.isolated,
     }));
+    const ledgerDurationMs = Date.now() - ledgerStartedAt;
     const merged = applyMentionDisplayNames(mergeConversationMessages(inbound, outbound));
     const messages = messageFilters.active ? filterConversationMessages(merged, messageFilters) : merged;
+    const totalDurationMs = Date.now() - requestStartedAt;
+    res.setHeader('Server-Timing', [
+      `raw_messages;dur=${rawDurationMs}`,
+      `outbound_ledger;dur=${ledgerDurationMs}`,
+      `workbench_messages;dur=${totalDurationMs}`,
+    ].join(', '));
+    if (totalDurationMs >= 1000) {
+      console.warn(`[workbench] slow conversation messages platform=${platform} total_ms=${totalDurationMs} raw_ms=${rawDurationMs} ledger_ms=${ledgerDurationMs} rows=${messages.length}`);
+    }
     res.json({
       ok: true,
       messages,
@@ -752,7 +766,7 @@ function createWorkbenchRouter({ workbenchDb, runtimeDb, rawDbPath = DEFAULT_RAW
     requireVisibleAccount(visibleAccountScope, platform, account);
     const groupId = req.params.groupId;
     requireConversationCapability(workbenchDb, operator, platform, account, groupId, 'can_view');
-    const rawDb = accountData.openAccountRawDb(platform, account);
+    const rawDb = accountData.openAccountRawDb(platform, account, { readonly: true });
     let row;
     try {
       row = rawDb.prepare(`
@@ -843,7 +857,7 @@ function createWorkbenchRouter({ workbenchDb, runtimeDb, rawDbPath = DEFAULT_RAW
     requireVisibleAccount(visibleAccountScope, platform, account);
     const groupId = req.params.groupId;
     requireConversationCapability(workbenchDb, operator, platform, account, groupId, 'can_view');
-    const workspace = accountData.withWorkbenchDb(platform, account, { create: true }, (accountDb) => (
+    const workspace = accountData.withWorkbenchDb(platform, account, { readonly: accountData.isolated }, (accountDb) => (
       buildConversationWorkspace(accountDb, workbenchDb, platform, account, groupId, { notesLimit: 3, timelineLimit: 3 })
     ));
     res.json({ ok: true, ...workspace });
@@ -920,7 +934,7 @@ function createWorkbenchRouter({ workbenchDb, runtimeDb, rawDbPath = DEFAULT_RAW
     requireConversationCapability(workbenchDb, operator, platform, account, groupId, 'can_view');
     const limit = boundedNumber(req.query.limit, 20, 1, 50);
     const beforeId = Math.max(0, Number(req.query.before_id) || 0);
-    const result = accountData.withWorkbenchDb(platform, account, {}, (accountDb) => (
+    const result = accountData.withWorkbenchDb(platform, account, { readonly: accountData.isolated }, (accountDb) => (
       loadConversationNotesPage(accountDb, workbenchDb, platform, account, groupId, { limit, beforeId })
     ));
     res.json({ ok: true, ...result });
@@ -952,7 +966,7 @@ function createWorkbenchRouter({ workbenchDb, runtimeDb, rawDbPath = DEFAULT_RAW
     requireVisibleAccount(visibleAccountScope, platform, account);
     const groupId = req.params.groupId;
     requireConversationCapability(workbenchDb, operator, platform, account, groupId, 'can_view');
-    const timeline = accountData.withWorkbenchDb(platform, account, {}, (accountDb) => (
+    const timeline = accountData.withWorkbenchDb(platform, account, { readonly: accountData.isolated }, (accountDb) => (
       loadConversationTimelinePage(accountDb, workbenchDb, platform, account, groupId, {
         limit: req.query.limit,
         beforeId: req.query.before_id,
@@ -2909,7 +2923,7 @@ function queryWorkbenchDbs(accountData, { platforms, accountScope, sql, params =
 }
 
 function accountChannelStats(accountData, workbenchDb, platform, account) {
-  return accountData.withWorkbenchDb(platform, account, {}, (accountDb) => {
+  return accountData.withWorkbenchDb(platform, account, { readonly: accountData.isolated }, (accountDb) => {
     const breaker = activeBreaker(accountDb, platform, account);
     return {
       label_count: countLabels(accountDb, platform, account),
