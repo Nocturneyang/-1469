@@ -62,17 +62,30 @@
       <div v-for="message in messages" :key="message.id" class="message-row" :class="message.direction === 'outbound' ? 'outbound' : 'inbound'" :data-raw-id="message.raw_id || null" :data-readable="isReadableMessage(message) ? 'true' : null">
         <div class="sender-chip">{{ message.direction === 'outbound' ? '我' : '客' }}</div>
         <div class="message-content">
-          <div class="bubble-author"><span>{{ message.direction === 'outbound' ? '您' : (message.sender_name || group.group_name) }}</span><time>{{ formatMessageTime(message.timestamp || message.created_at) }}</time></div>
+          <div class="bubble-author"><span>{{ message.direction === 'outbound' ? '您' : (message.sender_name || group.group_name) }}<small v-if="message.sender_username">@{{ message.sender_username }}</small></span><time :title="fullMessageTime(message.timestamp || message.created_at)">{{ formatMessageTime(message.timestamp || message.created_at) }}</time></div>
           <article class="bubble" :class="{ failed: message.status === 'failed' || message.status === 'dead' }">
-            <blockquote v-if="message.quote_msg_id">引用消息 {{ message.quote_msg_id }}</blockquote>
-            <p>{{ message.display_text || message.text || (message.has_media ? '[媒体消息]' : '') }}</p>
+            <div v-if="message.forwarded_from" class="forwarded-line">转发自 {{ message.forwarded_from }}</div>
+            <blockquote v-if="message.quote_msg_id">{{ message.quote_text || `引用消息 ${message.quote_msg_id}` }}</blockquote>
+            <p v-if="message.display_text || message.text">{{ message.display_text || message.text }}</p>
             <div v-if="message.attachments && message.attachments.length" class="attachment-stack">
-              <div v-for="attachment in message.attachments" :key="attachment.id || attachment.name" class="attachment-row">
-                <img v-if="attachmentPreview(attachment)" :src="attachmentPreview(attachment)" alt="">
+              <div v-for="attachment in message.attachments" :key="attachment.id || attachment.name" class="attachment-row" :class="{ 'has-preview': attachmentPreview(attachment) }">
+                <a v-if="attachmentPreview(attachment) && attachment.media_url" class="attachment-preview" :href="attachment.media_url" target="_blank" rel="noopener">
+                  <img :src="attachmentPreview(attachment)" :alt="attachment.name || '媒体预览'" loading="lazy" @error="hideBrokenPreview">
+                </a>
+                <img v-else-if="attachmentPreview(attachment)" :src="attachmentPreview(attachment)" :alt="attachment.name || '媒体预览'" loading="lazy" @error="hideBrokenPreview">
                 <el-icon v-else><Document /></el-icon>
-                <a v-if="attachment.media_url" class="attachment-name" :href="attachment.media_url" :download="attachment.kind === 'image' ? null : (attachment.name || '附件')" target="_blank" rel="noopener">{{ attachment.name || '附件' }}</a>
-                <span v-else class="attachment-name" :title="attachment.name || '附件'">{{ attachment.name || '附件' }}</span>
+                <div class="attachment-info">
+                  <a v-if="attachment.media_url" class="attachment-name" :href="attachment.media_url" :download="attachment.kind === 'image' || attachment.kind === 'sticker' ? null : (attachment.name || '附件')" target="_blank" rel="noopener">{{ attachment.name || '附件' }}</a>
+                  <span v-else class="attachment-name" :title="attachment.name || '附件'">{{ attachment.name || '附件' }}</span>
+                  <small>{{ attachmentMeta(attachment) }}</small>
+                </div>
               </div>
+            </div>
+            <div class="message-metadata">
+              <span v-if="message.message_id">消息 #{{ nativeMessageId(message.message_id) }}</span>
+              <span v-if="message.edited_at">已编辑</span>
+              <span v-if="message.views">{{ message.views }} 次查看</span>
+              <span v-if="message.forwards">{{ message.forwards }} 次转发</span>
             </div>
             <div v-if="message.error_display || message.error_message" class="status-detail">{{ message.error_display || message.error_message }}</div>
           </article>
@@ -129,6 +142,12 @@ function headerLabelText(label) { return isWorkbenchTag(label) ? labelDisplayNam
 function labelTitle(label) { return `${isWorkbenchTag(label) ? '工作台标签' : '渠道分组'} · ${headerLabelText(label)}`; }
 function submitManualGroup() { if (!canSubmitManualGroup.value) return; emit('manual-group-create', { name: manualDraft.name.trim(), group_level: 1 }); manualDraft.name = ''; }
 function attachmentPreview(attachment) { const url = attachment?.preview_url || attachment?.data_url || attachment?.media_url; const type = attachment?.type || ''; return (attachment?.kind === 'image' || attachment?.kind === 'sticker' || type.startsWith('image/')) ? url : ''; }
+function attachmentMeta(attachment) { return [mediaKindText(attachment?.media_kind || attachment?.kind), attachment?.type, formatBytes(attachment?.size), attachment?.duration ? `${Math.round(Number(attachment.duration))} 秒` : '', attachment?.detail].filter(Boolean).join(' · '); }
+function mediaKindText(kind) { return ({ photo: '图片', image: '图片', sticker: '贴纸', video: '视频', voice: '语音', document: '文件', contact: '联系人', location: '位置', poll: '投票', webpage: '网页' })[kind] || '附件'; }
+function formatBytes(value) { const bytes = Number(value); if (!Number.isFinite(bytes) || bytes <= 0) return ''; if (bytes < 1024) return `${bytes} B`; if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`; return `${(bytes / (1024 * 1024)).toFixed(1)} MB`; }
+function nativeMessageId(value) { const text = String(value || ''); return text.includes(':') ? text.split(':').pop() : text; }
+function fullMessageTime(value) { const numeric = Number(value); const date = new Date(Number.isFinite(numeric) && numeric > 0 ? (numeric > 1000000000000 ? numeric : numeric * 1000) : value); return Number.isNaN(date.getTime()) ? '' : date.toLocaleString('zh-CN', { hour12: false }); }
+function hideBrokenPreview(event) { if (event?.target) event.target.hidden = true; }
 function scrollToBottom() { const el = scrollRef.value; if (!el) return; el.scrollTop = el.scrollHeight; updateStickState(true); }
 function handleScroll() { const el = scrollRef.value; if (!el) return; updateStickState(el.scrollHeight - el.scrollTop - el.clientHeight <= BOTTOM_THRESHOLD_PX); reportVisibleReadProgress(); }
 function updateStickState(nextState) { if (lastStickState.value === nextState) return; lastStickState.value = nextState; emit('stick-state-change', nextState); }

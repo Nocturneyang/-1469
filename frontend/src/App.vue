@@ -156,6 +156,7 @@ import {
   retryOutbound,
   saveGroupWorkspace,
   saveGroupManualGroups,
+  subscribeConversationEvents,
   updateGroupPresence,
 } from './api';
 
@@ -253,6 +254,8 @@ let cacheWriteTimer = null;
 let restoringWorkbenchCache = false;
 let presenceHeartbeatTimer = null;
 let typingPresenceTimer = null;
+let stopConversationEvents = null;
+let conversationEventRefreshTimer = null;
 const readProgressByGroup = new Map();
 
 function resolveCurrentView() {
@@ -307,6 +310,7 @@ onBeforeUnmount(() => {
   stopAutoRefresh();
   stopPendingRefresh();
   stopChannelRefreshPolling();
+  stopConversationEventStream();
 });
 
 async function bootstrapWorkbench() {
@@ -384,11 +388,13 @@ watch(
   async () => {
     stickToBottom.value = true;
     quoteMessage.value = null;
+    stopConversationEventStream();
     if (selectedGroup.value) {
       hydrateCachedMessages(selectedGroup.value);
       loadMessages().catch(() => {});
       loadWorkspace().catch(() => {});
       startPresenceHeartbeat();
+      startConversationEventStream(selectedGroup.value);
     }
     else {
       messages.value = [];
@@ -688,6 +694,9 @@ function toggleCustomerProfile() {
 async function loadMessages(params = {}) {
   if (!selectedGroup.value) return;
   const group = selectedGroup.value;
+  const preserveExisting = Boolean(params.preserve_existing);
+  const requestParams = { ...params };
+  delete requestParams.preserve_existing;
   const requestSeq = ++messageRequestSeq;
   const cacheKey = messageCacheKey(group);
   if (!params.before_id) hydrateCachedMessages(group);
@@ -695,19 +704,20 @@ async function loadMessages(params = {}) {
     const page = await fetchMessages(group, {
       ...activeMessageFilterParams(),
       limit: MESSAGE_PAGE_LIMIT,
-      ...params,
+      ...requestParams,
     });
     if (
       requestSeq !== messageRequestSeq ||
       !selectedGroup.value ||
       selectedGroup.value.id !== group.id
     ) return;
-    const nextMessages = params.before_id
+    const nextMessages = requestParams.before_id
       ? mergeMessages(page.messages, messages.value)
-      : page.messages;
+      : (preserveExisting ? mergeMessages(messages.value, page.messages) : page.messages);
     messages.value = nextMessages;
-    messagePaging.value = page.paging;
-    writeMessageCache(cacheKey, nextMessages, page.paging);
+    const nextPaging = preserveExisting ? messagePaging.value : page.paging;
+    messagePaging.value = nextPaging;
+    writeMessageCache(cacheKey, nextMessages, nextPaging);
   } catch (err) {
     // 保留已显示的缓存，网络抖动时不让会话窗口退回空白。
   }
@@ -817,7 +827,7 @@ async function handleSend(message) {
     // 外发任务已进入账本；输入框立即恢复，状态刷新在后台继续。
     sending.value = false;
     Promise.all([
-      loadMessages(),
+      loadMessages({ preserve_existing: true }),
       loadGroups({ silent: true }),
     ]).catch(() => {});
     if (LIVE_OUTBOUND_STATUSES.has(reply.status)) startPendingRefresh();
@@ -1132,7 +1142,7 @@ async function handleRetry(message) {
   if (!message.outbound_id) return;
   await retryOutbound(message.outbound_id);
   stickToBottom.value = true;
-  await loadMessages();
+  await loadMessages({ preserve_existing: true });
   await loadWorkspace({ silent: true });
   startPendingRefresh();
 }
@@ -1142,7 +1152,7 @@ async function handleCancel(message) {
   await cancelOutbound(message.outbound_id);
   ElMessage.success('已取消外发任务');
   stickToBottom.value = true;
-  await loadMessages();
+  await loadMessages({ preserve_existing: true });
   await loadWorkspace({ silent: true });
 }
 
@@ -1313,7 +1323,7 @@ async function refreshActiveConversation({ keepStickToBottom = false, forceAncil
       lastGroupLiveRefreshAt = now;
       refreshes.push(loadGroups({ silent: true }));
     }
-    if (selectedGroup.value) refreshes.push(loadMessages());
+    if (selectedGroup.value) refreshes.push(loadMessages({ preserve_existing: true }));
     if (selectedGroup.value && (forceAncillary || now - lastWorkspaceLiveRefreshAt >= WORKSPACE_LIVE_REFRESH_MS)) {
       lastWorkspaceLiveRefreshAt = now;
       refreshes.push(loadWorkspace({ silent: true }));
@@ -1324,6 +1334,29 @@ async function refreshActiveConversation({ keepStickToBottom = false, forceAncil
     if (!keepStickToBottom) stickToBottom.value = previousStickToBottom;
     refreshingActive = false;
   }
+}
+
+function startConversationEventStream(group) {
+  if (!group) return;
+  stopConversationEvents = subscribeConversationEvents(group, {
+    onRefresh: () => {
+      clearTimeout(conversationEventRefreshTimer);
+      conversationEventRefreshTimer = setTimeout(() => {
+        if (!selectedGroup.value || selectedGroup.value.id !== group.id) return;
+        Promise.all([
+          loadMessages({ preserve_existing: true }),
+          loadGroups({ silent: true }),
+        ]).catch(() => {});
+      }, 40);
+    },
+  });
+}
+
+function stopConversationEventStream() {
+  clearTimeout(conversationEventRefreshTimer);
+  conversationEventRefreshTimer = null;
+  if (typeof stopConversationEvents === 'function') stopConversationEvents();
+  stopConversationEvents = null;
 }
 
 function updatePendingRefreshState() {

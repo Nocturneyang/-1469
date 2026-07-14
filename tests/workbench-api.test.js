@@ -718,6 +718,11 @@ async function main() {
     const messages = await requestJson(`${baseUrl}/groups/group-1/messages?platform=wa&account=nanya_wa`);
     assert.strictEqual(messages.ok, true);
     assert.strictEqual(messages.messages.some((message) => message.source === 'workbench'), true);
+    const realtimeReady = await readFirstServerEvent(`${baseUrl}/groups/group-1/events?platform=wa&account=nanya_wa`);
+    assert.strictEqual(realtimeReady.status, 200);
+    assert.match(realtimeReady.contentType, /^text\/event-stream/);
+    assert.match(realtimeReady.chunk, /event: ready/);
+    assert.match(realtimeReady.chunk, /"group_id":"group-1"/);
     const attachmentMessage = messages.messages.find((message) => message.outbound_id === attachmentReply.outbound_id);
     assert.strictEqual(attachmentMessage.attachments[0].name, 'paste.png');
     const quotedMessage = messages.messages.find((message) => message.outbound_id === firstReply.outbound_id);
@@ -1161,6 +1166,26 @@ async function requestRaw(url, options = {}) {
   });
   const payload = await response.json();
   return { response, status: response.status, payload };
+}
+
+async function readFirstServerEvent(url) {
+  const controller = new AbortController();
+  const response = await fetch(url, {
+    headers: { 'x-operator-id': '1469' },
+    signal: controller.signal,
+  });
+  const reader = response.body.getReader();
+  try {
+    const result = await reader.read();
+    return {
+      status: response.status,
+      contentType: response.headers.get('content-type') || '',
+      chunk: Buffer.from(result.value || []).toString('utf8'),
+    };
+  } finally {
+    controller.abort();
+    await reader.cancel().catch(() => {});
+  }
 }
 
 async function createScopedOperator(baseUrl, username, { status = 'active', portal = {}, scope = {} } = {}) {

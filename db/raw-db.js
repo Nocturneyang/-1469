@@ -29,6 +29,7 @@ function ensureRawDb(dbPath = DEFAULT_RAW_DB_PATH) {
       timestamp INTEGER,
       raw_data TEXT,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       UNIQUE(platform, message_id)
     );
 
@@ -96,6 +97,8 @@ function migrateRawDbSchema(db) {
   ensureColumn(db, 'messages', 'media_mime', 'TEXT');
   ensureColumn(db, 'messages', 'media_size', 'INTEGER');
   ensureColumn(db, 'messages', 'media_sha256', 'TEXT');
+  ensureColumn(db, 'messages', 'updated_at', 'TEXT');
+  db.prepare(`UPDATE messages SET updated_at = COALESCE(updated_at, created_at, CURRENT_TIMESTAMP) WHERE updated_at IS NULL`).run();
   ensureColumn(db, 'channel_account_registry', 'login_type', "TEXT NOT NULL DEFAULT 'unknown'");
   ensureColumn(db, 'channel_account_registry', 'account_role', "TEXT NOT NULL DEFAULT 'service'");
   ensureColumn(db, 'channel_account_registry', 'workbench_visible', 'INTEGER NOT NULL DEFAULT 1');
@@ -333,7 +336,8 @@ function upsertRawMessage({
           media_size = COALESCE(excluded.media_size, messages.media_size),
           media_sha256 = COALESCE(excluded.media_sha256, messages.media_sha256),
           timestamp = COALESCE(excluded.timestamp, messages.timestamp),
-          raw_data = COALESCE(excluded.raw_data, messages.raw_data)
+          raw_data = COALESCE(excluded.raw_data, messages.raw_data),
+          updated_at = STRFTIME('%Y-%m-%d %H:%M:%f', 'now')
       `).run(row);
 
       rawDb.prepare(`

@@ -31,7 +31,8 @@ const LEGACY_NORMALIZED_MESSAGES_SQL = `
     media_sha256,
     timestamp,
     raw_data,
-    created_at
+    created_at,
+    COALESCE(updated_at, created_at) AS updated_at
   FROM messages
 `;
 
@@ -65,6 +66,7 @@ function normalizedMessagesSql(db) {
       m.timestamp,
       COALESCE(o.raw_json, m.raw_data) AS raw_data,
       m.created_at,
+      COALESCE(m.updated_at, m.created_at) AS updated_at,
       o.observer_role,
       o.native_message_id
     FROM messages m

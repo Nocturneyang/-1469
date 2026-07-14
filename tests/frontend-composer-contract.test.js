@@ -8,6 +8,7 @@ const root = path.resolve(__dirname, '..');
 const composer = fs.readFileSync(path.join(root, 'frontend/src/components/Composer.vue'), 'utf8');
 const thread = fs.readFileSync(path.join(root, 'frontend/src/components/MessageThread.vue'), 'utf8');
 const app = fs.readFileSync(path.join(root, 'frontend/src/App.vue'), 'utf8');
+const api = fs.readFileSync(path.join(root, 'frontend/src/api.js'), 'utf8');
 const styles = fs.readFileSync(path.join(root, 'frontend/src/styles.css'), 'utf8');
 
 for (const label of ['插入表情', '发送表情包', '发送图片', '发送文件']) {
@@ -31,5 +32,12 @@ assert.match(composer, /props\.group\.global_send_enabled === true/, 'composer m
 assert.match(composer, /!props\.group\.send_breaker_active/, 'composer must disable sending while the account breaker is active');
 assert.ok(composer.includes('当前服务账号发送开关已关闭，请管理员在“服务账号”中开启'), 'composer must explain the account-level send switch');
 assert.match(app, /groups\.value = groups\.value\.map\(/, 'service-account setting changes must update loaded conversations immediately');
+assert.match(api, /new window\.EventSource\(/, 'active conversations must subscribe to server-sent realtime events');
+assert.match(app, /subscribeConversationEvents\(/, 'the selected conversation must start a realtime subscription');
+assert.match(app, /preserve_existing/, 'realtime refreshes must preserve already-loaded history');
+assert.match(thread, /attachment\.media_url/, 'downloaded inbound media must be rendered from the authenticated media endpoint');
+assert.match(thread, /loading="lazy"/, 'large image history must use lazy image decoding/loading');
+assert.ok(thread.includes('次查看'), 'Telegram view counts must be visible');
+assert.ok(thread.includes('转发自'), 'Telegram forward metadata must be visible');
 
-console.log('[frontend] composer media controls and WeChat-style outbound bubbles verified');
+console.log('[frontend] composer, realtime subscription, media previews and message metadata verified');

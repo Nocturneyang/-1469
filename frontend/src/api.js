@@ -265,6 +265,35 @@ export async function fetchMessages(group, params = {}) {
   };
 }
 
+export function subscribeConversationEvents(group, handlers = {}) {
+  if (!group || typeof window.EventSource !== 'function') return () => {};
+  const url = new URL(`/api/workbench/groups/${encodeURIComponent(group.group_id)}/events`, window.location.origin);
+  url.searchParams.set('platform', group.platform);
+  url.searchParams.set('account', group.account);
+  const source = new window.EventSource(url.toString(), { withCredentials: true });
+  const onRefresh = (event) => handlers.onRefresh?.(parseEventData(event));
+  const onReady = (event) => handlers.onReady?.(parseEventData(event));
+  const onWarning = (event) => handlers.onWarning?.(parseEventData(event));
+  source.addEventListener('refresh', onRefresh);
+  source.addEventListener('ready', onReady);
+  source.addEventListener('warning', onWarning);
+  source.onerror = (event) => handlers.onError?.(event);
+  return () => {
+    source.removeEventListener('refresh', onRefresh);
+    source.removeEventListener('ready', onReady);
+    source.removeEventListener('warning', onWarning);
+    source.close();
+  };
+}
+
+function parseEventData(event) {
+  try {
+    return JSON.parse(event?.data || '{}');
+  } catch (_) {
+    return {};
+  }
+}
+
 export async function fetchGroupWorkspace(group) {
   const { data } = await api.get(`/groups/${encodeURIComponent(group.group_id)}/workspace`, {
     params: {

@@ -2490,12 +2490,27 @@ button {
   font-weight: 760;
 }
 
+.bubble-author small {
+  margin-left: 5px;
+  color: var(--muted);
+  font-size: 9px;
+  font-weight: 560;
+}
+
 .bubble p {
   margin: 0;
   color: var(--text);
   font-size: 14px;
   line-height: 1.58;
+  white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+.forwarded-line {
+  margin-bottom: 7px;
+  color: var(--accent-strong);
+  font-size: 11px;
+  font-weight: 650;
 }
 
 .bubble blockquote {
@@ -2535,11 +2550,51 @@ button {
   object-fit: cover;
 }
 
+.attachment-preview {
+  display: block;
+  line-height: 0;
+}
+
+.attachment-row.has-preview {
+  grid-template-columns: minmax(120px, 260px);
+}
+
+.attachment-row.has-preview img {
+  width: 100%;
+  height: auto;
+  max-height: 320px;
+  object-fit: contain;
+  background: rgba(15, 23, 42, 0.04);
+}
+
+.attachment-info {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.attachment-info small {
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
 .attachment-name {
   min-width: 0;
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
+}
+
+.message-metadata {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 9px;
+  margin-top: 8px;
+  color: var(--muted-2);
+  font-size: 9px;
+  line-height: 1.35;
 }
 
 .status-detail {

@@ -17,7 +17,7 @@ const {
   openRawDb,
   parseAccountScopeList,
 } = require('../../db/raw-messages');
-const { ensureOperator, parseJson, safeJson } = require('../../db/workbench-db');
+const { ensureOperator, openWorkbenchDb, parseJson, safeJson } = require('../../db/workbench-db');
 const {
   ALL_GROUPS,
   UNGROUPED_GROUP,
@@ -56,6 +56,8 @@ const MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024;
 const MAX_TOTAL_ATTACHMENT_BYTES = 12 * 1024 * 1024;
 const MAX_INBOUND_MEDIA_BYTES = Math.max(1024, Math.min(Number(process.env.WORKBENCH_INBOUND_MEDIA_MAX_BYTES) || 20 * 1024 * 1024, 100 * 1024 * 1024));
 const ALLOWED_ATTACHMENT_KINDS = new Set(['file', 'image', 'sticker']);
+const CONVERSATION_EVENT_POLL_MS = Math.max(200, Math.min(Number(process.env.WORKBENCH_CONVERSATION_EVENT_POLL_MS) || 350, 5000));
+const CONVERSATION_EVENT_HEARTBEAT_MS = 15000;
 
 function createWorkbenchRouter({ workbenchDb, runtimeDb, rawDbPath = DEFAULT_RAW_DB_PATH, outboxDir, accountDataDir, accountDbMode } = {}) {
   if (!workbenchDb) throw new Error('workbenchDb is required');
@@ -768,11 +770,62 @@ function createWorkbenchRouter({ workbenchDb, runtimeDb, rawDbPath = DEFAULT_RAW
     const mime = String(row.media_mime || 'application/octet-stream');
     const safeInline = /^image\/(?:png|jpeg|webp|gif)$/i.test(mime) && req.query.download !== '1';
     const filename = String(row.media_name || path.basename(mediaPath)).replace(/[\r\n"\\/]/g, '_');
+    const asciiFilename = filename.replace(/[^\x20-\x7e]/g, '_') || 'media';
+    const encodedFilename = encodeURIComponent(filename).replace(/[!'()*]/g, (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`);
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Content-Type', mime);
     res.setHeader('Content-Length', String(mediaStat.size));
-    res.setHeader('Content-Disposition', `${safeInline ? 'inline' : 'attachment'}; filename="${filename}"`);
+    res.setHeader('Content-Disposition', `${safeInline ? 'inline' : 'attachment'}; filename="${asciiFilename}"; filename*=UTF-8''${encodedFilename}`);
     fs.createReadStream(mediaPath).on('error', (err) => res.destroy(err)).pipe(res);
+  });
+
+  router.get('/groups/:groupId/events', (req, res) => {
+    const accountScope = getAccountScope();
+    const operator = currentOperatorContext(workbenchDb, req);
+    const visibleAccountScope = allowedAccountScope(workbenchDb, operator, accountScope, 'can_view');
+    const platform = requirePlatform(req.query.platform);
+    const account = requireText(req.query.account, 'account');
+    requireVisibleAccount(visibleAccountScope, platform, account);
+    const groupId = req.params.groupId;
+    requireConversationCapability(workbenchDb, operator, platform, account, groupId, 'can_view');
+    const eventDbs = openConversationEventDbs(accountData, workbenchDb, accountDataDir, platform, account);
+
+    res.status(200);
+    res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+    res.setHeader('Cache-Control', 'no-cache, no-transform');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('X-Accel-Buffering', 'no');
+    res.flushHeaders?.();
+
+    let closed = false;
+    let signature = readConversationEventSignature(eventDbs, platform, account, groupId);
+    writeConversationEvent(res, 'ready', { platform, account, group_id: groupId });
+
+    const pollTimer = setInterval(() => {
+      if (closed) return;
+      try {
+        const nextSignature = readConversationEventSignature(eventDbs, platform, account, groupId);
+        if (nextSignature === signature) return;
+        signature = nextSignature;
+        writeConversationEvent(res, 'refresh', { platform, account, group_id: groupId });
+      } catch (err) {
+        writeConversationEvent(res, 'warning', { message: 'conversation refresh temporarily unavailable' });
+      }
+    }, CONVERSATION_EVENT_POLL_MS);
+    const heartbeatTimer = setInterval(() => {
+      if (!closed) res.write(`: heartbeat ${Date.now()}\n\n`);
+    }, CONVERSATION_EVENT_HEARTBEAT_MS);
+
+    const cleanup = () => {
+      if (closed) return;
+      closed = true;
+      clearInterval(pollTimer);
+      clearInterval(heartbeatTimer);
+      eventDbs.rawDb.close();
+      if (eventDbs.ownedWorkbenchDb) eventDbs.workbenchDb.close();
+    };
+    req.on('close', cleanup);
+    res.on('close', cleanup);
   });
 
   router.get('/groups/:groupId/workspace', (req, res) => {
@@ -2162,6 +2215,7 @@ function mapRawMessage(row) {
   const timestamp = normalizeTimestamp(row.timestamp, row.created_at);
   const direction = inferDirection(row);
   const text = row.content;
+  const raw = parseJson(row.raw_data, {});
   return {
     id: `raw-${row.id}`,
     raw_id: row.id,
@@ -2171,9 +2225,20 @@ function mapRawMessage(row) {
     message_id: row.message_id,
     sender_id: row.sender_id,
     sender_name: row.sender_name,
+    sender_username: raw.sender_username || '',
+    group_name: raw.chat_name || row.group_name,
     direction,
     text,
     display_text: text,
+    quote_msg_id: raw.reply_to_msg_id || null,
+    quote_text: raw.quote_text || '',
+    forwarded_from: raw.forwarded_from || '',
+    forwarded_at: raw.forwarded_at || '',
+    edited_at: raw.edited_at || '',
+    views: Number(raw.views) || 0,
+    forwards: Number(raw.forwards) || 0,
+    post_author: raw.post_author || '',
+    media_kind: raw.media?.kind || '',
     has_media: Boolean(row.has_media),
     media_path: row.media_path,
     attachments: row.has_media || row.media_path ? [{
@@ -2181,7 +2246,10 @@ function mapRawMessage(row) {
       name: row.media_name || (row.media_path ? path.basename(String(row.media_path)) : '媒体消息'),
       type: row.media_mime || 'application/octet-stream',
       size: row.media_size || null,
-      kind: String(row.media_mime || '').startsWith('image/') ? 'image' : 'file',
+      kind: raw.media?.kind === 'sticker' ? 'sticker' : (String(row.media_mime || '').startsWith('image/') ? 'image' : 'file'),
+      media_kind: raw.media?.kind || '',
+      duration: raw.media?.duration || null,
+      detail: raw.media?.detail || '',
       media_path: row.media_path || null,
       media_url: row.media_path ? `/api/workbench/groups/${encodeURIComponent(row.group_id)}/media/${row.id}?platform=${encodeURIComponent(row.platform)}&account=${encodeURIComponent(row.account)}` : null,
     }] : [],
@@ -2191,6 +2259,58 @@ function mapRawMessage(row) {
     sort_time: timestamp,
     source: 'raw',
   };
+}
+
+function openConversationEventDbs(accountData, centralWorkbenchDb, accountDataDir, platform, account) {
+  const rawDb = openRawDb(accountData.rawDbPathFor(platform, account));
+  if (!rawDb) throw createHttpError(404, 'conversation database not found');
+  if (!accountData.isolated) return { rawDb, workbenchDb: centralWorkbenchDb, ownedWorkbenchDb: false };
+  const accountWorkbenchDb = openWorkbenchDb(
+    resolveAccountPaths(platform, account, { accountDataDir }).workbenchDbPath,
+    { readonly: true },
+  );
+  return { rawDb, workbenchDb: accountWorkbenchDb, ownedWorkbenchDb: true };
+}
+
+function readConversationEventSignature(eventDbs, platform, account, groupId) {
+  const { rawDb, workbenchDb: accountWorkbenchDb } = eventDbs;
+  let raw = { max_id: 0, updated_at: '' };
+  raw = rawDb.prepare(`
+      SELECT
+        COALESCE(MAX(m.id), 0) AS max_id,
+        COALESCE(MAX(COALESCE(m.updated_at, m.created_at)), '') AS updated_at
+      FROM messages m
+      WHERE m.platform = @platform
+        AND m.group_id = @groupId
+        AND (
+          COALESCE(NULLIF(m.receiver_account, ''), @account) = @account
+          OR EXISTS (
+            SELECT 1 FROM message_observations o
+            WHERE o.platform = m.platform
+              AND o.canonical_message_id = m.message_id
+              AND o.observer_account = @account
+              AND COALESCE(NULLIF(o.native_chat_id, ''), m.group_id) = @groupId
+          )
+        )
+    `).get({ platform, account, groupId }) || raw;
+  let outbound = { max_id: 0, updated_at: '', state_signature: '' };
+  outbound = accountWorkbenchDb.prepare(`
+      SELECT
+        COALESCE(MAX(id), 0) AS max_id,
+        COALESCE(MAX(updated_at), '') AS updated_at,
+        COALESCE(SUM(status = 'pending'), 0) || ':' || COALESCE(SUM(status = 'sending'), 0) || ':' ||
+        COALESCE(SUM(status = 'sent'), 0) || ':' || COALESCE(SUM(status = 'delivered'), 0) || ':' ||
+        COALESCE(SUM(status = 'failed'), 0) || ':' || COALESCE(SUM(status = 'dead'), 0) || ':' ||
+        COALESCE(SUM(status = 'paused'), 0) || ':' || COALESCE(SUM(status = 'canceled'), 0) AS state_signature
+      FROM outbound_messages
+      WHERE platform = @platform AND account = @account AND group_id = @groupId
+    `).get({ platform, account, groupId }) || outbound;
+  return [raw.max_id, raw.updated_at, outbound?.max_id || 0, outbound?.updated_at || '', outbound?.state_signature || ''].join(':');
+}
+
+function writeConversationEvent(res, event, payload) {
+  res.write(`event: ${event}\n`);
+  res.write(`data: ${JSON.stringify(payload || {})}\n\n`);
 }
 
 function mapOutboundRow(row, { scopedIds = false } = {}) {

@@ -8,6 +8,12 @@ const { ensureRawDb, upsertRawMessage, upsertServiceAccountProfile } = require('
 const { openWorkbenchDb } = require('../db/workbench-db');
 const { normalizeChannelLabelName, replaceChannelSnapshot } = require('../lib/channel-sync-store');
 const {
+  telegramEntityName,
+  telegramMessageMetadata,
+  telegramMessageText,
+  telegramUserMediaDescriptor,
+} = require('../lib/telegram-message');
+const {
   accountKey,
   desiredAccountWorkers,
   parseExplicitWorkers,
@@ -58,6 +64,8 @@ async function main() {
       assert.strictEqual(messageRows.length, 1);
       assert.strictEqual(messageRows[0].receiver_account, 'wa-runtime');
       assert.strictEqual(messageRows[0].content, 'hello updated');
+      assert.ok(messageRows[0].updated_at, 'raw messages must expose an update timestamp for realtime refresh');
+      assert.match(messageRows[0].updated_at, /\.\d{3}$/, 'raw message updates must keep millisecond precision');
       const observationRows = rawDb.prepare('SELECT * FROM message_observations').all();
       assert.strictEqual(observationRows.length, 1);
       assert.strictEqual(observationRows[0].observer_account, 'wa-runtime');
@@ -98,6 +106,33 @@ async function main() {
 
     assert.strictEqual(normalizeChannelLabelName({ text: '欧美 IT traffic sms/mms', entities: [] }, '文件夹 1'), '欧美 IT traffic sms/mms');
     assert.strictEqual(normalizeChannelLabelName({ entities: [] }, '文件夹 2'), '文件夹 2');
+    const tgPhotoMessage = {
+      id: 42,
+      message: '',
+      media: { className: 'MessageMediaPhoto', photo: { sizes: [{ size: 2048 }] } },
+      chatId: { channelId: '-1001' },
+      senderId: { userId: '701' },
+      replyTo: { replyToMsgId: 41, quoteText: '上一条消息' },
+      fwdFrom: { fromName: '原始频道', date: 1783500000 },
+      views: 17,
+    };
+    const photoDescriptor = telegramUserMediaDescriptor(tgPhotoMessage);
+    assert.strictEqual(photoDescriptor.kind, 'image');
+    assert.strictEqual(photoDescriptor.mime, 'image/jpeg');
+    assert.strictEqual(photoDescriptor.name, 'tg-42.jpg');
+    assert.strictEqual(telegramMessageText(tgPhotoMessage, photoDescriptor), '图片');
+    assert.strictEqual(telegramEntityName({ firstName: '张', lastName: '三' }), '张 三');
+    const photoMetadata = telegramMessageMetadata(tgPhotoMessage, {
+      chat: { title: 'TG 客户群' },
+      sender: { firstName: '张', lastName: '三', username: 'zhangsan' },
+      descriptor: photoDescriptor,
+    });
+    assert.strictEqual(photoMetadata.chat_name, 'TG 客户群');
+    assert.strictEqual(photoMetadata.sender_name, '张 三');
+    assert.strictEqual(photoMetadata.sender_username, 'zhangsan');
+    assert.strictEqual(photoMetadata.reply_to_msg_id, 41);
+    assert.strictEqual(photoMetadata.forwarded_from, '原始频道');
+    assert.strictEqual(photoMetadata.media.kind, 'photo');
     const tgWorkbenchDb = openWorkbenchDb(tgPaths.workbenchDbPath);
     try {
       replaceChannelSnapshot({

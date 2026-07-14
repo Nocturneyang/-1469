@@ -29,6 +29,12 @@ const {
   enrichChromeLaunchError,
   prepareWaChromeProfile,
 } = require('../lib/chrome-launch');
+const {
+  telegramEntityName,
+  telegramMessageMetadata,
+  telegramMessageText,
+  telegramUserMediaDescriptor,
+} = require('../lib/telegram-message');
 
 process.env.WORKBENCH_ACCOUNT_DB_MODE = process.env.WORKBENCH_ACCOUNT_DB_MODE || 'isolated';
 process.env.WORKBENCH_WORKER_ROLE = process.env.WORKBENCH_WORKER_ROLE || 'account-runtime';
@@ -481,8 +487,9 @@ async function handleTgUserEvent(event) {
   if (!chatId) return;
   const senderId = stringifyTelegramId(message.senderId || message.fromId || '');
   const messageId = `${chatId}:${message.id}`;
-  const media = message.media ? await downloadTelegramUserMedia(message, messageId) : null;
-  const rowId = upsertRawMessage({
+  const mediaDescriptor = telegramUserMediaDescriptor(message);
+  const initialMetadata = telegramMessageMetadata(message, { descriptor: mediaDescriptor });
+  const initialRowId = upsertRawMessage({
     db: rawDb,
     platform: 'tg',
     account: ACCOUNT,
@@ -490,23 +497,59 @@ async function handleTgUserEvent(event) {
     groupId: chatId,
     groupName: chatId,
     senderId,
-    senderName: senderId,
-    content: message.message || '',
+    senderName: message.postAuthor || senderId,
+    content: telegramMessageText(message, mediaDescriptor),
     hasMedia: message.media ? 1 : 0,
-    ...mapStoredMedia(media),
+    mediaName: mediaDescriptor?.name || null,
+    mediaMime: mediaDescriptor?.mime || null,
+    mediaSize: mediaDescriptor?.size || null,
     timestamp: message.date ? Number(message.date) : undefined,
-    rawData: {
-      id: String(message.id),
-      chatId,
-      senderId,
-      out: Boolean(message.out),
-      direction: message.out ? 'outbound' : 'inbound',
-    },
+    rawData: initialMetadata,
     nativeChatId: chatId,
     nativeMessageId: String(message.id),
   });
   lastMessageAt = new Date().toISOString();
-  reportHeartbeat('ready', 'message', `TG user message ${rowId}`);
+  reportHeartbeat('ready', 'message', `TG user message ${initialRowId}`);
+
+  const [entities, media] = await Promise.all([
+    resolveTelegramMessageEntities(message),
+    mediaDescriptor?.downloadable
+      ? downloadTelegramUserMedia(message, messageId, mediaDescriptor)
+      : Promise.resolve(null),
+  ]);
+  const metadata = telegramMessageMetadata(message, {
+    chat: entities.chat,
+    sender: entities.sender,
+    descriptor: mediaDescriptor,
+  });
+  upsertRawMessage({
+    db: rawDb,
+    platform: 'tg',
+    account: ACCOUNT,
+    messageId,
+    groupId: chatId,
+    groupName: telegramEntityName(entities.chat, chatId),
+    senderId,
+    senderName: message.postAuthor || telegramEntityName(entities.sender, senderId),
+    content: telegramMessageText(message, mediaDescriptor),
+    hasMedia: message.media ? 1 : 0,
+    mediaName: mediaDescriptor?.name || null,
+    mediaMime: mediaDescriptor?.mime || null,
+    mediaSize: mediaDescriptor?.size || null,
+    ...mapStoredMedia(media),
+    timestamp: message.date ? Number(message.date) : undefined,
+    rawData: metadata,
+    nativeChatId: chatId,
+    nativeMessageId: String(message.id),
+  });
+}
+
+async function resolveTelegramMessageEntities(message) {
+  const [chat, sender] = await Promise.all([
+    typeof message?.getChat === 'function' ? message.getChat().catch(() => null) : Promise.resolve(null),
+    typeof message?.getSender === 'function' ? message.getSender().catch(() => null) : Promise.resolve(null),
+  ]);
+  return { chat, sender };
 }
 
 async function downloadWhatsAppMedia(message, messageId) {
@@ -539,7 +582,7 @@ async function downloadTelegramBotMedia(message, messageId) {
   }
 }
 
-async function downloadTelegramUserMedia(message, messageId) {
+async function downloadTelegramUserMedia(message, messageId, descriptor = telegramUserMediaDescriptor(message)) {
   if (typeof channelClient.downloadMedia !== 'function') return null;
   try {
     const downloaded = await channelClient.downloadMedia(message, { workers: 1 });
@@ -547,8 +590,8 @@ async function downloadTelegramUserMedia(message, messageId) {
     if (!buffer.length) return null;
     return storeInboundMedia(buffer, {
       messageId,
-      name: `tg-${message.id}`,
-      mime: message.media?.document?.mimeType || 'application/octet-stream',
+      name: descriptor?.name || `tg-${message.id}`,
+      mime: descriptor?.mime || 'application/octet-stream',
     });
   } catch (err) {
     reportError('tg_user_media_download_failed', err, { fatal: false });
@@ -574,19 +617,20 @@ function storeInboundMedia(buffer, { messageId, name, mime }) {
   if (buffer.length > MEDIA_MAX_BYTES) throw Object.assign(new Error('inbound media exceeds size limit'), { code: 'MEDIA_TOO_LARGE' });
   const sha256 = require('crypto').createHash('sha256').update(buffer).digest('hex');
   const month = new Date().toISOString().slice(0, 7);
-  const safeName = String(name || 'media').replace(/[^a-zA-Z0-9._-]+/g, '_').slice(-120) || 'media';
+  const originalName = String(name || 'media').trim().slice(0, 180) || 'media';
+  const safeName = originalName.replace(/[^a-zA-Z0-9._-]+/g, '_').slice(-120) || 'media';
   const relativePath = path.join('media', month, `${sha256.slice(0, 16)}-${safeName}`);
   const finalPath = path.join(ACCOUNT_PATHS.accountDir, relativePath);
   fs.mkdirSync(path.dirname(finalPath), { recursive: true });
   if (!fs.existsSync(finalPath)) fs.writeFileSync(finalPath, buffer, { mode: 0o600 });
-  return { relativePath, name: safeName, mime: String(mime || 'application/octet-stream'), size: buffer.length, sha256, messageId };
+  return { relativePath, name: safeName, originalName, mime: String(mime || 'application/octet-stream'), size: buffer.length, sha256, messageId };
 }
 
 function mapStoredMedia(media) {
   if (!media) return {};
   return {
     mediaPath: media.relativePath,
-    mediaName: media.name,
+    mediaName: media.originalName || media.name,
     mediaMime: media.mime,
     mediaSize: media.size,
     mediaSha256: media.sha256,
