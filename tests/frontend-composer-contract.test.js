@@ -39,5 +39,8 @@ assert.match(thread, /attachment\.media_url/, 'downloaded inbound media must be 
 assert.match(thread, /loading="lazy"/, 'large image history must use lazy image decoding/loading');
 assert.ok(thread.includes('次查看'), 'Telegram view counts must be visible');
 assert.ok(thread.includes('转发自'), 'Telegram forward metadata must be visible');
+assert.match(app, /function applyInstantLabelFilter\(/, 'label selection must filter the loaded conversation list immediately');
+assert.match(app, /groupListCache\.get\(groupFilterCacheKey\(nextBase\)\)/, 'instant label filtering must reuse the unfiltered group snapshot');
+assert.match(app, /writeGroupListCache\(requestKey, nextGroups\)/, 'server results must refresh the exact filter cache');
 
-console.log('[frontend] composer, realtime subscription, media previews and message metadata verified');
+console.log('[frontend] composer, realtime messages, media previews and instant label filtering verified');

@@ -622,39 +622,45 @@ function createWorkbenchRouter({ workbenchDb, runtimeDb, rawDbPath = DEFAULT_RAW
     }
     const labelId = req.query.label_id ? String(req.query.label_id) : '';
     const customerTypeId = req.query.customer_type_id ? String(req.query.customer_type_id).trim() : '';
-    const labelIds = labelId ? new Set(expandServiceGroupFilterIdsAcross(accountData, labelId, selectedAccountScope)) : new Set();
+    const labelTargets = labelId
+      ? loadServiceGroupConversationTargetsAcross(accountData, labelId, selectedAccountScope)
+      : null;
+    if (labelTargets && !labelTargets.keys.size) {
+      res.json({ ok: true, groups: [], account_scope: mapAccountScope(visibleAccountScope) });
+      return;
+    }
+    const groupQueryLimit = labelTargets
+      ? Math.max(1, Math.min(labelTargets.keys.size, 500))
+      : req.query.limit;
     const rawGroups = accountData.listGroups({
       platforms,
       accountScope: selectedAccountScope,
       search: req.query.search,
-      limit: req.query.limit,
+      groupIdsByAccount: labelTargets?.groupIdsByAccount,
+      limit: groupQueryLimit,
       offset: req.query.offset,
     });
     const syncedGroups = listSyncedGroupsAcross(accountData, {
       platforms,
       accountScope: selectedAccountScope,
       search: req.query.search,
-      limit: req.query.limit,
+      groupIdsByAccount: labelTargets?.groupIdsByAccount,
+      limit: groupQueryLimit,
       offset: req.query.offset,
     });
+    const sourceGroups = mergeGroupSources(rawGroups, syncedGroups).filter((group) => (
+      !labelTargets || labelTargets.keys.has(groupKey(group.platform, group.account, group.group_id))
+    ));
     const enriched = filterGroupsByCapability(
       workbenchDb,
       operator,
-      enrichGroupsWithAccountData(accountData, workbenchDb, rawDbPath, mergeGroupSources(rawGroups, syncedGroups), operatorId, selectedAccountScope),
+      enrichGroupsWithAccountData(accountData, workbenchDb, rawDbPath, sourceGroups, operatorId, selectedAccountScope),
       'can_view',
     )
       .filter((group) => {
         if (scope === 'mine') return group.assignment && group.assignment.assigned_to === operatorId;
         if (scope === 'unread') return group.unread_count > 0;
         return true;
-      })
-      .filter((group) => {
-        if (!labelIds.size) return true;
-        return group.labels.some((label) => (
-          labelIds.has(String(label.native_label_id)) ||
-          labelIds.has(String(label.native_group_id)) ||
-          labelIds.has(String(label.id))
-        ));
       })
       .filter((group) => !customerTypeId || String(group.customer_type_id || '') === customerTypeId);
     res.json({ ok: true, groups: enriched, account_scope: mapAccountScope(visibleAccountScope) });
@@ -1500,6 +1506,7 @@ function listSyncedGroups(db, {
   platforms,
   accountScope,
   search,
+  groupIds,
   limit = 200,
   offset = 0,
 } = {}) {
@@ -1523,6 +1530,16 @@ function listSyncedGroups(db, {
   if (search && String(search).trim()) {
     params.search = `%${String(search).trim()}%`;
     filters.push('(group_name LIKE @search OR group_id LIKE @search OR account LIKE @search)');
+  }
+  const selectedGroupIds = [...new Set((Array.isArray(groupIds) ? groupIds : []).map((id) => String(id || '').trim()).filter(Boolean))];
+  if (Array.isArray(groupIds) && !selectedGroupIds.length) return [];
+  if (selectedGroupIds.length) {
+    const placeholders = selectedGroupIds.map((id, index) => {
+      const key = `groupId${index}`;
+      params[key] = id;
+      return `@${key}`;
+    });
+    filters.push(`group_id IN (${placeholders.join(', ')})`);
   }
   const where = filters.length ? `WHERE ${filters.join(' AND ')}` : '';
   return db.prepare(`
@@ -1552,6 +1569,7 @@ function listSyncedGroupsAcross(accountData, {
   platforms,
   accountScope,
   search,
+  groupIdsByAccount,
   limit = 200,
   offset = 0,
 } = {}) {
@@ -1560,16 +1578,22 @@ function listSyncedGroupsAcross(accountData, {
       platforms,
       accountScope,
       search,
+      groupIds: groupIdsByAccount instanceof Map
+        ? [...(groupIdsByAccount.get('legacy') || [])]
+        : undefined,
       limit,
       offset,
     });
   }
   const normalizedLimit = Math.max(1, Math.min(Number(limit) || 200, 500));
   const normalizedOffset = Math.max(0, Number(offset) || 0);
-  const rows = accountData.mapWorkbenchDbs({ platforms, accountScope }, (db) => listSyncedGroups(db, {
+  const rows = accountData.mapWorkbenchDbs({ platforms, accountScope }, (db, context) => listSyncedGroups(db, {
     platforms,
     accountScope,
     search,
+    groupIds: groupIdsByAccount instanceof Map
+      ? [...(groupIdsByAccount.get(accountKey(context.platform, context.account)) || [])]
+      : undefined,
     limit: Math.min(normalizedLimit + normalizedOffset, 500),
     offset: 0,
   })).flat();
@@ -3308,6 +3332,39 @@ function expandServiceGroupFilterIdsAcross(accountData, nativeGroupId, accountSc
     .flat()
     .forEach((id) => ids.add(String(id)));
   return [...ids];
+}
+
+function loadServiceGroupConversationTargetsAcross(accountData, nativeGroupId, accountScope) {
+  const rows = accountData.mapWorkbenchDbs({ accountScope }, (db) => {
+    const ids = expandServiceGroupFilterIds(db, nativeGroupId);
+    if (!ids.length) return [];
+    const params = {};
+    const placeholders = ids.map((id, index) => {
+      const key = `nativeGroupId${index}`;
+      params[key] = id;
+      return `@${key}`;
+    });
+    return db.prepare(`
+      SELECT platform, service_account AS account, chat_id AS group_id
+      FROM conversation_service_group_map
+      WHERE native_group_id IN (${placeholders.join(', ')})
+    `).all(params);
+  }).flat().filter((row) => (
+    row.group_id && accountScopeContains(accountScope, normalizePlatform(row.platform), row.account)
+  ));
+  const keys = new Set();
+  const groupIdsByAccount = new Map();
+  rows.forEach((row) => {
+    const platform = normalizePlatform(row.platform);
+    const account = String(row.account || '').trim();
+    const groupId = String(row.group_id || '').trim();
+    if (!platform || !account || !groupId) return;
+    keys.add(groupKey(platform, account, groupId));
+    const key = accountData.isolated ? accountKey(platform, account) : 'legacy';
+    if (!groupIdsByAccount.has(key)) groupIdsByAccount.set(key, new Set());
+    groupIdsByAccount.get(key).add(groupId);
+  });
+  return { keys, groupIdsByAccount };
 }
 
 function orderServiceGroups(groups) {

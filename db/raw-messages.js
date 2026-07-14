@@ -406,13 +406,14 @@ function listGroups({
   platforms,
   accountScope,
   search,
+  groupIds,
   limit = 80,
   offset = 0,
 } = {}) {
   const db = openRawDb(rawDbPath);
   if (!db) return [];
   const params = {
-    limit: Math.max(1, Math.min(Number(limit) || 80, 200)),
+    limit: Math.max(1, Math.min(Number(limit) || 80, 500)),
     offset: Math.max(0, Number(offset) || 0),
   };
   const platformFilter = buildPlatformFilter(platforms, params);
@@ -430,6 +431,17 @@ function listGroups({
       )
     `;
   }
+  let groupIdFilter = '';
+  const selectedGroupIds = [...new Set((Array.isArray(groupIds) ? groupIds : []).map((id) => String(id || '').trim()).filter(Boolean))];
+  if (Array.isArray(groupIds) && !selectedGroupIds.length) return [];
+  if (selectedGroupIds.length) {
+    const placeholders = selectedGroupIds.map((id, index) => {
+      const key = `groupId${index}`;
+      params[key] = id;
+      return `@${key}`;
+    });
+    groupIdFilter = `AND group_id IN (${placeholders.join(', ')})`;
+  }
 
   try {
     return db.prepare(`
@@ -440,6 +452,7 @@ function listGroups({
         WHERE group_id IS NOT NULL
         ${platformFilter}
         ${accountFilter}
+        ${groupIdFilter}
         ${searchFilter}
       ),
       ranked AS (

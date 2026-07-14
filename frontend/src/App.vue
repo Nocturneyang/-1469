@@ -207,6 +207,7 @@ const MESSAGE_PAGE_LIMIT = 60;
 const MESSAGE_CACHE_LIMIT = 24;
 const WORKBENCH_CACHE_TTL_MS = 10 * 60 * 1000;
 const WORKBENCH_GROUP_CACHE_TTL_MS = 2 * 60 * 1000;
+const GROUP_LIST_CACHE_LIMIT = 20;
 const LIVE_OUTBOUND_STATUSES = new Set(['pending', 'sending']);
 const CONNECTED_ACCOUNT_STATUSES = new Set(['online', 'authenticated', 'ready', 'monitoring', 'healthy']);
 const scopeLabel = computed(() => {
@@ -247,6 +248,7 @@ let workspaceRequestSeq = 0;
 let groupsRequestSeq = 0;
 let messageRequestSeq = 0;
 const messageCache = new Map();
+const groupListCache = new Map();
 let bootstrapRetryTimer = null;
 let bootstrapRetryCount = 0;
 let activeCacheUserId = '';
@@ -370,9 +372,11 @@ watch(() => [activeLabelPlatform.value, selectedAccountParam.value || ''], async
 
 watch(
   () => ({ ...filters.value, platforms: [...filters.value.platforms] }),
-  () => {
+  (nextFilters, previousFilters) => {
     if (restoringWorkbenchCache) return;
     clearTimeout(searchTimer);
+    groupsRequestSeq += 1;
+    applyInstantLabelFilter(nextFilters, previousFilters);
     clearPresence();
     selectedGroup.value = null;
     quoteMessage.value = null;
@@ -407,16 +411,22 @@ watch(
 
 async function loadGroups({ silent = false, clearSelectionOnMissing = false, useRetry = false } = {}) {
   const requestSeq = ++groupsRequestSeq;
+  const requestFilters = {
+    ...filters.value,
+    platforms: [...filters.value.platforms],
+    accountKeys: [...filters.value.accountKeys],
+  };
+  const requestKey = groupFilterCacheKey(requestFilters);
   if (!silent && !groups.value.length) loadingGroups.value = true;
   error.value = '';
   noServiceAccount.value = false;
   try {
     const request = () => fetchGroups({
-      platforms: filters.value.platforms.join(','),
-      accounts: selectedAccountParam.value,
-      scope: filters.value.scope,
-      label_id: filters.value.labelId || undefined,
-      search: filters.value.search || undefined,
+      platforms: requestFilters.platforms.join(','),
+      accounts: requestFilters.accountKeys.length ? requestFilters.accountKeys.join(',') : undefined,
+      scope: requestFilters.scope,
+      label_id: requestFilters.labelId || undefined,
+      search: requestFilters.search || undefined,
     });
     const { groups: nextGroups, account_scope } = useRetry
       ? await retryTransientRequest(request)
@@ -431,6 +441,7 @@ async function loadGroups({ silent = false, clearSelectionOnMissing = false, use
       noServiceAccount.value = true;
     }
     groups.value = nextGroups;
+    writeGroupListCache(requestKey, nextGroups);
     scheduleWorkbenchCacheWrite();
     if (!selectedGroup.value) return;
     const currentGroup = nextGroups.find((group) => group.id === selectedGroup.value.id);
@@ -518,6 +529,7 @@ function hydrateWorkbenchCache(user) {
     const cachedGroups = snapshot.groupsByFilter?.[groupFilterCacheKey()];
     if (cachedGroups && Date.now() - Number(cachedGroups.savedAt || 0) <= WORKBENCH_GROUP_CACHE_TTL_MS) {
       groups.value = cachedGroups.groups;
+      writeGroupListCache(groupFilterCacheKey(), cachedGroups.groups);
     }
   } catch (_) {
     // 旧格式或被清理的浏览器存储不影响正常加载。
@@ -526,14 +538,60 @@ function hydrateWorkbenchCache(user) {
   }
 }
 
-function groupFilterCacheKey() {
+function groupFilterCacheKey(filterState = filters.value) {
   return JSON.stringify({
-    platforms: filters.value.platforms,
-    accountKeys: filters.value.accountKeys,
-    scope: filters.value.scope,
-    labelId: filters.value.labelId,
-    search: filters.value.search,
+    platforms: filterState.platforms || [],
+    accountKeys: filterState.accountKeys || [],
+    scope: filterState.scope,
+    labelId: filterState.labelId,
+    search: filterState.search,
   });
+}
+
+function writeGroupListCache(key, nextGroups) {
+  if (!key || !Array.isArray(nextGroups)) return;
+  groupListCache.delete(key);
+  groupListCache.set(key, [...nextGroups]);
+  while (groupListCache.size > GROUP_LIST_CACHE_LIMIT) {
+    groupListCache.delete(groupListCache.keys().next().value);
+  }
+}
+
+function applyInstantLabelFilter(nextFilters, previousFilters = {}) {
+  if (String(nextFilters?.labelId || '') === String(previousFilters?.labelId || '')) return;
+  const exact = groupListCache.get(groupFilterCacheKey(nextFilters));
+  if (exact) {
+    groups.value = [...exact];
+    return;
+  }
+  const nextBase = { ...nextFilters, labelId: '' };
+  const previousBase = { ...previousFilters, labelId: '' };
+  const sameBase = groupFilterCacheKey(nextBase) === groupFilterCacheKey(previousBase);
+  let source = groupListCache.get(groupFilterCacheKey(nextBase));
+  if (!source && sameBase && !previousFilters?.labelId) {
+    source = [...groups.value];
+    writeGroupListCache(groupFilterCacheKey(nextBase), source);
+  }
+  if (!source) return;
+  if (!nextFilters.labelId) {
+    groups.value = [...source];
+    return;
+  }
+  const selectedIds = expandedLabelFilterIds(nextFilters.labelId);
+  groups.value = source.filter((group) => (group.labels || []).some((label) => (
+    selectedIds.has(String(label.native_label_id || label.native_group_id || label.id || ''))
+  )));
+}
+
+function expandedLabelFilterIds(labelId) {
+  const selected = String(labelId || '');
+  const ids = new Set([selected]);
+  labels.value.forEach((label) => {
+    if (String(label.parent_native_group_id || '') === selected) {
+      ids.add(String(label.native_label_id || label.native_group_id || label.id || ''));
+    }
+  });
+  return ids;
 }
 
 function scheduleWorkbenchCacheWrite() {

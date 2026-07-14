@@ -5,6 +5,7 @@ const path = require('path');
 
 const { ensureAccountDatabases } = require('../db/account-db');
 const { ensureRawDb, upsertRawMessage, upsertServiceAccountProfile } = require('../db/raw-db');
+const { listGroups: listRawGroups } = require('../db/raw-messages');
 const { openWorkbenchDb } = require('../db/workbench-db');
 const { normalizeChannelLabelName, replaceChannelSnapshot } = require('../lib/channel-sync-store');
 const {
@@ -72,6 +73,32 @@ async function main() {
       assert.strictEqual(observationRows.length, 1);
       assert.strictEqual(observationRows[0].observer_account, 'wa-runtime');
       assert.strictEqual(observationRows[0].native_chat_id, 'chat-1');
+      for (let index = 0; index < 90; index += 1) {
+        upsertRawMessage({
+          db: rawDb,
+          platform: 'wa',
+          account: 'wa-runtime',
+          messageId: `noise-${index}`,
+          groupId: `noise-group-${index}`,
+          groupName: `无关群 ${index}`,
+          senderId: 'noise',
+          senderName: '无关成员',
+          content: `noise ${index}`,
+          timestamp: 1783600000 + index,
+          nativeChatId: `noise-group-${index}`,
+          nativeMessageId: `noise-${index}`,
+        });
+      }
+      const targetedGroups = listRawGroups({
+        rawDbPath: waPaths.rawDbPath,
+        platforms: ['wa'],
+        accountScope: { active: true, accounts: [{ platform: 'wa', account: 'wa-runtime' }] },
+        groupIds: ['chat-1'],
+        limit: 1,
+      });
+      assert.strictEqual(targetedGroups.length, 1);
+      assert.strictEqual(targetedGroups[0].group_id, 'chat-1');
+      assert.strictEqual(targetedGroups[0].content, 'hello updated');
     } finally {
       rawDb.close();
     }
