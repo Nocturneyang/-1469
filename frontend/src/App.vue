@@ -640,6 +640,15 @@ async function handleDeleteServiceAccount(account) {
 
 function handleServiceAccountSettingsChange(account) {
   accounts.value = accounts.value.map((item) => accountKey(item) === accountKey(account) ? { ...item, ...account } : item);
+  const patch = {
+    send_enabled: account.send_enabled,
+    global_send_enabled: account.global_send_enabled,
+    send_breaker_active: account.send_breaker_active,
+  };
+  groups.value = groups.value.map((group) => accountKey(group) === accountKey(account) ? { ...group, ...patch } : group);
+  if (selectedGroup.value && accountKey(selectedGroup.value) === accountKey(account)) {
+    selectedGroup.value = { ...selectedGroup.value, ...patch };
+  }
 }
 
 function toggleServiceRail() {

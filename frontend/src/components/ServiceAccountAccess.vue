@@ -151,7 +151,7 @@ function isReady(account) {
 
 function canSend(account) {
   if (account.can_send === true || account.can_send === 1) return true;
-  return isReady(account) && Number(account.send_enabled) !== 0;
+  return isReady(account) && account.global_send_enabled === true && Number(account.send_enabled) !== 0;
 }
 
 function statusType(account) {

@@ -19,6 +19,7 @@ const {
   outboundDoorbellDir,
 } = require('../lib/outbound-doorbell');
 const {
+  normalizeChannelLabelName,
   readAndClearChannelSyncRequests,
   replaceChannelSnapshot,
 } = require('../lib/channel-sync-store');
@@ -875,7 +876,7 @@ async function syncTelegramFolders(dialogs) {
     .filter((filter) => filter && Number(filter.id) > 0)
     .map((filter) => ({
       native_label_id: `folder:${filter.id}`,
-      name: String(filter.title || `文件夹 ${filter.id}`),
+      name: normalizeChannelLabelName(filter.title, `文件夹 ${filter.id}`),
       kind: 'folder',
       raw_json: filter,
     }));

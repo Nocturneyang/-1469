@@ -199,6 +199,8 @@ const sendAllowed = computed(() => (
   props.group &&
   props.group.send_enabled !== false &&
   Number(props.group.send_enabled) !== 0 &&
+  props.group.global_send_enabled === true &&
+  !props.group.send_breaker_active &&
   props.group.permissions &&
   props.group.permissions.can_reply !== false
 ));
@@ -212,7 +214,9 @@ const disabledReason = computed(() => {
   if (!props.group) return '请选择会话';
   if (props.sending) return '发送任务创建中';
   if (props.group.permissions && props.group.permissions.can_reply === false) return '当前坐席没有回复权限';
-  if (!sendAllowed.value) return '当前服务账号禁止发送';
+  if (props.group.global_send_enabled !== true) return '生产全局发送开关已关闭';
+  if (props.group.send_enabled === false || Number(props.group.send_enabled) === 0) return '当前服务账号发送开关已关闭，请管理员在“服务账号”中开启';
+  if (props.group.send_breaker_active) return '当前服务账号发送已熔断，请管理员处理后重试';
   return '';
 });
 const composerPlaceholder = computed(() => {

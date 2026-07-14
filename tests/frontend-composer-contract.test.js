@@ -27,5 +27,9 @@ assert.match(app, /const AUTO_REFRESH_MS = 1500;/, 'active conversations must re
 assert.match(app, /const PENDING_REFRESH_MS = 450;/, 'pending outbound status must refresh quickly');
 assert.match(app, /function createOptimisticOutbound\(/, 'outbound messages must render optimistically');
 assert.match(app, /visibilitychange.*handleVisibilityRefresh/, 'foreground conversations must refresh immediately');
+assert.match(composer, /props\.group\.global_send_enabled === true/, 'composer must honor the global send switch');
+assert.match(composer, /!props\.group\.send_breaker_active/, 'composer must disable sending while the account breaker is active');
+assert.ok(composer.includes('当前服务账号发送开关已关闭，请管理员在“服务账号”中开启'), 'composer must explain the account-level send switch');
+assert.match(app, /groups\.value = groups\.value\.map\(/, 'service-account setting changes must update loaded conversations immediately');
 
 console.log('[frontend] composer media controls and WeChat-style outbound bubbles verified');

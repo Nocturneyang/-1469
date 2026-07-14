@@ -5,6 +5,8 @@ const path = require('path');
 
 const { ensureAccountDatabases } = require('../db/account-db');
 const { ensureRawDb, upsertRawMessage, upsertServiceAccountProfile } = require('../db/raw-db');
+const { openWorkbenchDb } = require('../db/workbench-db');
+const { normalizeChannelLabelName, replaceChannelSnapshot } = require('../lib/channel-sync-store');
 const {
   accountKey,
   desiredAccountWorkers,
@@ -93,6 +95,28 @@ async function main() {
       loginType: 'tg_bot_token',
       status: 'waiting_qr',
     });
+
+    assert.strictEqual(normalizeChannelLabelName({ text: '欧美 IT traffic sms/mms', entities: [] }, '文件夹 1'), '欧美 IT traffic sms/mms');
+    assert.strictEqual(normalizeChannelLabelName({ entities: [] }, '文件夹 2'), '文件夹 2');
+    const tgWorkbenchDb = openWorkbenchDb(tgPaths.workbenchDbPath);
+    try {
+      replaceChannelSnapshot({
+        db: tgWorkbenchDb,
+        platform: 'tg',
+        account: 'tg-waiting',
+        groups: [{ group_id: '-1001', group_name: 'TG 测试群' }],
+        labels: [{ native_label_id: 'folder:1', name: { text: '欧美 IT traffic sms/mms', entities: [] }, kind: 'folder' }],
+        maps: [{ group_id: '-1001', native_label_id: 'folder:1' }],
+      });
+      const storedFolder = tgWorkbenchDb.prepare(`
+        SELECT name FROM channel_labels
+        WHERE platform = 'tg' AND account = 'tg-waiting' AND native_label_id = 'folder:1'
+      `).get();
+      assert.strictEqual(storedFolder.name, '欧美 IT traffic sms/mms');
+      assert.notStrictEqual(storedFolder.name, '[object Object]');
+    } finally {
+      tgWorkbenchDb.close();
+    }
 
     const waSecondPaths = ensureAccountDatabases('wa', 'wa-runtime-second', { accountDataDir });
     upsertServiceAccountProfile({
