@@ -30,6 +30,8 @@ const {
   prepareWaChromeProfile,
 } = require('../lib/chrome-launch');
 const {
+  detectImageMime,
+  imageExtensionForMime,
   telegramEntityName,
   telegramMessageMetadata,
   telegramMessageText,
@@ -101,6 +103,8 @@ const outboundDoorbellWatcher = createOutboundDoorbellWatcher({
 });
 
 log(`started, account=${PLATFORM}:${ACCOUNT}, raw=${RAW_DB_PATH}, runtime=${RUNTIME_DB_PATH}, send=${SEND_ENABLED ? 'enabled' : 'disabled'}`);
+const repairedInboundMedia = repairStoredInboundMediaMetadata();
+if (repairedInboundMedia > 0) log(`repaired ${repairedInboundMedia} legacy inbound image metadata row(s)`);
 
 start().catch((err) => {
   reportError('start_failed', err);
@@ -635,6 +639,54 @@ function mapStoredMedia(media) {
     mediaSize: media.size,
     mediaSha256: media.sha256,
   };
+}
+
+function repairStoredInboundMediaMetadata() {
+  const rows = rawDb.prepare(`
+    SELECT id, media_path, media_name
+    FROM messages
+    WHERE media_path IS NOT NULL
+      AND TRIM(media_path) <> ''
+      AND LOWER(COALESCE(media_mime, 'application/octet-stream')) = 'application/octet-stream'
+  `).all();
+  const accountDir = path.resolve(ACCOUNT_PATHS.accountDir);
+  const update = rawDb.prepare(`
+    UPDATE messages
+    SET media_mime = @mime,
+        media_name = @name,
+        updated_at = STRFTIME('%Y-%m-%d %H:%M:%f', 'now')
+    WHERE id = @id
+  `);
+  let repaired = 0;
+  rawDb.transaction(() => {
+    rows.forEach((row) => {
+      const mediaPath = path.resolve(accountDir, String(row.media_path || ''));
+      const relative = path.relative(accountDir, mediaPath);
+      if (!relative || relative.startsWith('..') || path.isAbsolute(relative) || !fs.existsSync(mediaPath)) return;
+      let file;
+      let fd;
+      try {
+        fd = fs.openSync(mediaPath, 'r');
+        const header = Buffer.alloc(16);
+        const bytesRead = fs.readSync(fd, header, 0, header.length, 0);
+        file = header.subarray(0, bytesRead);
+      } catch (_) {
+        return;
+      } finally {
+        if (fd !== undefined) {
+          try { fs.closeSync(fd); } catch (_) {}
+        }
+      }
+      const mime = detectImageMime(file);
+      if (!mime) return;
+      const extension = imageExtensionForMime(mime);
+      const currentName = String(row.media_name || path.basename(mediaPath) || 'tg-image');
+      const name = path.extname(currentName) ? currentName : `${currentName}${extension}`;
+      update.run({ id: row.id, mime, name });
+      repaired += 1;
+    });
+  })();
+  return repaired;
 }
 
 async function sendMessageViaChannel(task) {

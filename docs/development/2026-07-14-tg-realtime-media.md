@@ -21,6 +21,8 @@
 
 图片统一标记为 `image/jpeg` 并使用 `.jpg` 名称；文档保留原始文件名，磁盘路径仍使用安全文件名。
 
+worker 启动时还会只读取旧记录媒体文件的前 16 字节，对旧版本留下的 `application/octet-stream` 图片识别 JPEG/PNG/GIF/WebP，回填 MIME 和扩展名。不识别的文件保持原状，不会猜测或改写文件内容。
+
 ### API
 
 - `messages.updated_at` 表示消息记录或媒体补齐时间。
@@ -40,4 +42,3 @@
 - 数据只写入工作台自己的 raw/workbench/runtime 库和账号目录。
 - runtime worker 仍是唯一 TG session 持有者。
 - 未开启 `WORKBENCH_CHAT_SYNC_ENABLED` 或账号 worker 不在线时，UI 只展示已入库数据。
-
