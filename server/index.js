@@ -16,9 +16,10 @@ const {
   isLocalDevAuthBypass,
   isSsoEnabled,
 } = require('../middleware/auth');
-const { createWorkbenchRouter } = require('./routes/workbench');
+const { createWorkbenchRouter, getActiveGlobalSseClients } = require('./routes/workbench');
 const { listAccountRefs } = require('../db/account-db');
 const { recoverStartupState } = require('../lib/startup-recovery');
+const { installProcessGuards, logEvent } = require('../lib/runtime-observability');
 
 function createApp(options = {}) {
   const app = express();
@@ -57,6 +58,11 @@ function createApp(options = {}) {
     res.status(report.ok ? 200 : 503).json(report);
   });
 
+  app.get('/metrics', (req, res) => {
+    if (!envFlag('WORKBENCH_METRICS_ENABLED')) return res.status(404).send('Not found');
+    res.type('text/plain; version=0.0.4').send(buildPrometheusMetrics({ workbenchDb, runtimeDb }));
+  });
+
   app.get('/runtime-config.js', (req, res) => sendRuntimeConfig(req, res));
   app.get('/auth/sso/start', (req, res) => startSso(req, res));
   app.get('/auth/sso/callback', async (req, res) => {
@@ -82,7 +88,7 @@ function createApp(options = {}) {
     res.json({ success: true, code: 0, data: result.user, user: result.user, source: result.source });
   });
   app.use('/api/auth', createAuthRouter({ authDb, authenticateToken }));
-  app.use('/api/workbench', authenticateToken, requireTrustedOrigin, requireCsrf, createWriteRateLimiter(), createWorkbenchRouter({
+  app.use('/api/workbench', authenticateToken, requireTrustedOrigin, requireCsrf, createWriteRateLimiter(options.writeRateLimit), createWorkbenchRouter({
     authDb,
     workbenchDb,
     runtimeDb,
@@ -116,6 +122,47 @@ function createApp(options = {}) {
   });
 
   return app;
+}
+
+function buildPrometheusMetrics({ workbenchDb, runtimeDb }) {
+  const totals = { pending: 0, sending: 0, sent: 0, delivered: 0, read: 0, failed: 0, dead: 0, paused: 0 };
+  const inspect = (db) => {
+    const rows = db.prepare(`
+      SELECT status, COUNT(*) AS count FROM outbound_messages GROUP BY status
+    `).all();
+    rows.forEach((row) => {
+      if (Object.prototype.hasOwnProperty.call(totals, row.status)) totals[row.status] += Number(row.count || 0);
+    });
+  };
+  inspect(workbenchDb);
+  listAccountRefs().forEach((ref) => {
+    if (!fs.existsSync(ref.paths.workbenchDbPath)) return;
+    const db = new Database(ref.paths.workbenchDbPath, { readonly: true, fileMustExist: true });
+    try { inspect(db); } finally { db.close(); }
+  });
+  const runtimeEvents = Number(runtimeDb.prepare(`
+    SELECT COUNT(*) AS count FROM runtime_events WHERE severity IN ('warn', 'error')
+      AND created_at >= datetime('now', '-1 hour')
+  `).get()?.count || 0);
+  return [
+    '# HELP workbench_process_uptime_seconds API process uptime.',
+    '# TYPE workbench_process_uptime_seconds gauge',
+    `workbench_process_uptime_seconds ${Math.round(process.uptime())}`,
+    '# HELP workbench_sse_clients Active global SSE clients.',
+    '# TYPE workbench_sse_clients gauge',
+    `workbench_sse_clients ${getActiveGlobalSseClients()}`,
+    '# HELP workbench_outbound_messages Outbound messages by status.',
+    '# TYPE workbench_outbound_messages gauge',
+    ...Object.entries(totals).map(([status, count]) => `workbench_outbound_messages{status="${status}"} ${count}`),
+    '# HELP workbench_runtime_events_hour Warning and error runtime events in the last hour.',
+    '# TYPE workbench_runtime_events_hour gauge',
+    `workbench_runtime_events_hour ${runtimeEvents}`,
+    '',
+  ].join('\n');
+}
+
+function envFlag(name) {
+  return ['1', 'true', 'yes', 'on'].includes(String(process.env[name] || '').trim().toLowerCase());
 }
 
 function buildReadyReport({ authDb, rawDb, workbenchDb, runtimeDb, rawDbPath, startedAt }) {
@@ -377,13 +424,30 @@ function safeReturnUrl(req, requested) {
 if (require.main === module) {
   const port = Number(process.env.WORKBENCH_PORT || process.env.PORT || 3311);
   const app = createApp();
-  app.listen(port, () => {
-    console.log(`[workbench] API/UI listening on http://localhost:${port}`);
-    console.log(`[workbench] auth DB: ${process.env.WORKBENCH_AUTH_DB_PATH || DEFAULT_AUTH_DB_PATH}`);
-    console.log(`[workbench] raw messages DB: ${process.env.WORKBENCH_RAW_DB_PATH || process.env.RAW_MESSAGES_DB_PATH || DEFAULT_RAW_DB_PATH}`);
-    console.log(`[workbench] workbench DB: ${process.env.WORKBENCH_DB_PATH || DEFAULT_WORKBENCH_DB_PATH}`);
-    console.log(`[workbench] runtime DB: ${process.env.WORKBENCH_RUNTIME_DB_PATH || DEFAULT_RUNTIME_DB_PATH}`);
+  const server = app.listen(port, () => {
+    logEvent('info', 'workbench-api', 'listening', `API/UI listening on port ${port}`);
   });
+  let shuttingDown = false;
+  const shutdown = (_reason, { exitCode = 0 } = {}) => new Promise((resolve) => {
+    if (shuttingDown) return resolve();
+    shuttingDown = true;
+    server.close(() => {
+      for (const key of ['authDb', 'rawDb', 'workbenchDb', 'runtimeDb']) {
+        try { app.locals[key]?.close(); } catch (_) { }
+      }
+      resolve();
+      process.exit(exitCode);
+    });
+    setTimeout(() => process.exit(exitCode || 1), 10000).unref();
+  });
+  installProcessGuards({
+    processName: 'workbench-api',
+    runtimeDb: app.locals.runtimeDb,
+    shutdown,
+    context: { pid: process.pid },
+  });
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  process.on('SIGINT', () => shutdown('SIGINT'));
 }
 
 module.exports = {

@@ -24,8 +24,8 @@ assert.match(styles, /\.message-scroll\s*\{[^}]*background:\s*linear-gradient\(1
 assert.ok(thread.includes('class="message-footer"'), 'message status and actions must sit outside the bubble');
 assert.match(styles, /\.outbound \.bubble\s*\{[^}]*background:\s*#95ec69;/s, 'outbound bubble must use the WeChat-style green');
 assert.match(styles, /\.outbound \.bubble::after\s*\{[^}]*border-left:\s*8px solid #95ec69;/s, 'outbound bubble must expose the WeChat-style tail');
-assert.match(app, /const AUTO_REFRESH_MS = 1500;/, 'active conversations must refresh near real time');
-assert.match(app, /const PENDING_REFRESH_MS = 450;/, 'pending outbound status must refresh quickly');
+assert.match(app, /const AUTO_REFRESH_MS = 30000;/, 'polling must be a low-frequency realtime fallback');
+assert.match(app, /const PENDING_REFRESH_MS = 30000;/, 'pending status polling must remain a low-frequency fallback');
 assert.match(app, /function createOptimisticOutbound\(/, 'outbound messages must render optimistically');
 assert.match(app, /visibilitychange.*handleVisibilityRefresh/, 'foreground conversations must refresh immediately');
 assert.match(composer, /props\.group\.global_send_enabled === true/, 'composer must honor the global send switch');
@@ -34,6 +34,12 @@ assert.ok(composer.includes('当前服务账号发送开关已关闭，请管理
 assert.match(app, /groups\.value = groups\.value\.map\(/, 'service-account setting changes must update loaded conversations immediately');
 assert.match(api, /new window\.EventSource\(/, 'active conversations must subscribe to server-sent realtime events');
 assert.match(app, /subscribeConversationEvents\(/, 'the selected conversation must start a realtime subscription');
+assert.match(api, /subscribeWorkbenchEvents/, 'the client must expose a global realtime subscription');
+assert.match(app, /startWorkbenchEventStream\(\)/, 'the workbench must start the global realtime subscription');
+assert.match(composer, /social-workbench\.drafts\.v1\./, 'text drafts must be isolated by operator');
+assert.match(composer, /defineExpose\(\{ clearDraft \}\)/, 'the parent must clear a draft only after the outbound task is created');
+assert.match(thread, /\['sent', 'delivered', 'read'\]/, 'the message thread must recognize all three receipt states');
+assert.match(styles, /\.delivery-receipt\.receipt-read\s*\{[^}]*color:/s, 'read receipts must expose a blue double-check state');
 assert.match(app, /preserve_existing/, 'realtime refreshes must preserve already-loaded history');
 assert.match(thread, /attachment\.media_url/, 'downloaded inbound media must be rendered from the authenticated media endpoint');
 assert.match(thread, /loading="lazy"/, 'large image history must use lazy image decoding/loading');

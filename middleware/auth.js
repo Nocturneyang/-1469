@@ -1,4 +1,5 @@
 const crypto = require('crypto');
+const net = require('net');
 const {
   listSsoAdmins,
   resolveAuthSession,
@@ -6,7 +7,7 @@ const {
 } = require('../db/auth-db');
 
 const TOKEN_PREFIX = 'wb1';
-const DEFAULT_SUPER_ADMIN_IDENTITIES = ['1469'];
+const DEFAULT_SUPER_ADMIN_IDENTITIES = [];
 const SSO_USER_CACHE_TTL_MS = positiveNumber('SSO_USER_CACHE_TTL_MS', 30 * 60 * 1000);
 const ssoUserCache = new Map();
 const WORKBENCH_SESSION_COOKIE = 'workbench_session';
@@ -118,8 +119,12 @@ function getSsoUserInfoUrl() {
   return '';
 }
 
-function trustSsoProxyHeaders() {
-  return envFlag('SSO_TRUST_PROXY_HEADERS');
+function trustSsoProxyHeaders(req) {
+  if (!envFlag('SSO_TRUST_PROXY_HEADERS')) return false;
+  const trustedCidrs = splitList(process.env.SSO_TRUSTED_PROXY_CIDR || process.env.TRUSTED_PROXY_CIDR);
+  if (!trustedCidrs.length) return false;
+  const remoteAddress = normalizeIpAddress(req?.socket?.remoteAddress || req?.ip || '');
+  return trustedCidrs.some((cidr) => ipMatchesCidr(remoteAddress, cidr));
 }
 
 function parseSsoUserHeader(req) {
@@ -134,7 +139,7 @@ function parseSsoUserHeader(req) {
 }
 
 function getSsoUserFromHeaders(req) {
-  if (!isSsoEnabled() || !trustSsoProxyHeaders()) return null;
+  if (!isSsoEnabled() || !trustSsoProxyHeaders(req)) return null;
   const encoded = parseSsoUserHeader(req);
   if (encoded) return encoded;
   const id = readHeader(req, ['x-user-id', 'x-auth-user-id', 'x-forwarded-user-id', 'x-sso-user-id']);
@@ -212,17 +217,60 @@ function isLocalRequest(req) {
 
 function isLocalDevAuthBypass(req) {
   if (isSsoEnabled()) return false;
-  if (envFlag('DISABLE_LOCAL_DEV_AUTH_BYPASS')) return false;
-  return (envFlag('LOCAL_DEV_AUTH_BYPASS') || process.env.NODE_ENV !== 'production') && isLocalRequest(req);
+  if (process.env.NODE_ENV === 'production') return false;
+  if (!envFlag('LOCAL_DEV_AUTH_BYPASS') || envFlag('DISABLE_LOCAL_DEV_AUTH_BYPASS')) return false;
+  return isLocalRequest(req);
 }
 
 function localDevUser() {
+  const id = String(process.env.WORKBENCH_LOCAL_DEV_ADMIN_ID || 'local-dev-admin').trim() || 'local-dev-admin';
   return {
-    id: '1469',
+    id,
     username: 'admin',
     display_name: '本地开发管理员',
     role: 'admin',
   };
+}
+
+function normalizeIpAddress(value) {
+  const ip = String(value || '').trim().replace(/^::ffff:/, '');
+  const zoneIndex = ip.indexOf('%');
+  return zoneIndex >= 0 ? ip.slice(0, zoneIndex) : ip;
+}
+
+function ipMatchesCidr(address, rule) {
+  const [networkAddress, prefixText] = String(rule || '').trim().split('/');
+  const ip = normalizeIpAddress(address);
+  const networkIp = normalizeIpAddress(networkAddress);
+  const version = net.isIP(ip);
+  if (!version || net.isIP(networkIp) !== version) return false;
+  if (prefixText === undefined || prefixText === '') return ip === networkIp;
+  const maxBits = version === 4 ? 32 : 128;
+  const prefix = Number(prefixText);
+  if (!Number.isInteger(prefix) || prefix < 0 || prefix > maxBits) return false;
+  const left = ipToBigInt(ip, version);
+  const right = ipToBigInt(networkIp, version);
+  if (left === null || right === null) return false;
+  const shift = BigInt(maxBits - prefix);
+  return (left >> shift) === (right >> shift);
+}
+
+function ipToBigInt(address, version) {
+  if (version === 4) {
+    return address.split('.').reduce((value, part) => (value << 8n) + BigInt(Number(part)), 0n);
+  }
+  const halves = address.split('::');
+  if (halves.length > 2) return null;
+  const left = halves[0] ? halves[0].split(':') : [];
+  const right = halves[1] ? halves[1].split(':') : [];
+  const missing = 8 - left.length - right.length;
+  if (missing < 0) return null;
+  const parts = [...left, ...Array(missing).fill('0'), ...right];
+  try {
+    return parts.reduce((value, part) => (value << 16n) + BigInt(`0x${part || '0'}`), 0n);
+  } catch (_) {
+    return null;
+  }
 }
 
 function splitList(value) {

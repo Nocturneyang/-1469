@@ -22,6 +22,12 @@ const LEGACY_NORMALIZED_MESSAGES_SQL = `
     COALESCE(NULLIF(group_name, ''), NULLIF(group_id, ''), NULLIF(sender_name, ''), '未命名会话') AS group_name,
     sender_id,
     COALESCE(NULLIF(sender_name, ''), '未知成员') AS sender_name,
+    CASE
+      WHEN lower(REPLACE(COALESCE(raw_data, ''), ' ', '')) LIKE '%"fromme":true%'
+        OR lower(REPLACE(COALESCE(raw_data, ''), ' ', '')) LIKE '%"is_from_me":true%'
+        OR lower(REPLACE(COALESCE(raw_data, ''), ' ', '')) LIKE '%"direction":"outbound"%'
+        OR lower(REPLACE(COALESCE(raw_data, ''), ' ', '')) LIKE '%"out":true%'
+      THEN 'outbound' ELSE 'inbound' END AS direction,
     COALESCE(content, '') AS content,
     COALESCE(has_media, 0) AS has_media,
     media_path,
@@ -56,6 +62,12 @@ function normalizedMessagesSql(db) {
       COALESCE(NULLIF(m.group_name, ''), NULLIF(o.native_chat_id, ''), NULLIF(m.group_id, ''), NULLIF(m.sender_name, ''), '未命名会话') AS group_name,
       m.sender_id,
       COALESCE(NULLIF(m.sender_name, ''), '未知成员') AS sender_name,
+      COALESCE(NULLIF(m.direction, ''), CASE
+        WHEN lower(REPLACE(COALESCE(o.raw_json, m.raw_data, ''), ' ', '')) LIKE '%"fromme":true%'
+          OR lower(REPLACE(COALESCE(o.raw_json, m.raw_data, ''), ' ', '')) LIKE '%"is_from_me":true%'
+          OR lower(REPLACE(COALESCE(o.raw_json, m.raw_data, ''), ' ', '')) LIKE '%"direction":"outbound"%'
+          OR lower(REPLACE(COALESCE(o.raw_json, m.raw_data, ''), ' ', '')) LIKE '%"out":true%'
+        THEN 'outbound' ELSE 'inbound' END) AS direction,
       COALESCE(m.content, '') AS content,
       COALESCE(m.has_media, 0) AS has_media,
       m.media_path,
@@ -77,12 +89,7 @@ function normalizedMessagesSql(db) {
 }
 
 const INBOUND_MESSAGE_FILTER_SQL = `
-  AND NOT (
-    lower(REPLACE(COALESCE(raw_data, ''), ' ', '')) LIKE '%"fromme":true%'
-    OR lower(REPLACE(COALESCE(raw_data, ''), ' ', '')) LIKE '%"is_from_me":true%'
-    OR lower(REPLACE(COALESCE(raw_data, ''), ' ', '')) LIKE '%"direction":"outbound"%'
-    OR lower(REPLACE(COALESCE(raw_data, ''), ' ', '')) LIKE '%"out":true%'
-  )
+  AND COALESCE(direction, 'inbound') <> 'outbound'
 `;
 
 function openRawDb(rawDbPath = DEFAULT_RAW_DB_PATH) {

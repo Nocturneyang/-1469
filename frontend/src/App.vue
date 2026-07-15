@@ -50,8 +50,11 @@
         :account-scope="accountScope"
         :syncing="syncingChannels"
         :profile-open="customerProfileOpen"
+        :notification-enabled="notificationsEnabled"
+        :realtime-state="realtimeState"
         @sync-channels="handleChannelSync"
         @toggle-customer-profile="toggleCustomerProfile"
+        @toggle-notifications="handleNotificationToggle"
       />
 
       <main class="workbench-grid" :class="{ 'profile-collapsed': !customerProfileOpen }">
@@ -86,9 +89,11 @@
             @manual-group-create="handleManualGroupCreate"
           />
           <Composer
+            ref="composerRef"
             :group="selectedGroup"
             :sending="sending"
             :quote-message="quoteMessage"
+            :operator-id="currentOperator?.id || currentUser?.id || ''"
             @send="handleSend"
             @clear-quote="clearQuote"
             @typing-state="handleTypingState"
@@ -128,6 +133,7 @@ import ConversationList from './components/ConversationList.vue';
 import MessageThread from './components/MessageThread.vue';
 import Composer from './components/Composer.vue';
 import ConversationInspector from './components/ConversationInspector.vue';
+import { useNotifier } from './composables/useNotifier';
 
 const AccountSettings = defineAsyncComponent(() => import('./components/AccountSettings.vue'));
 const PermissionConfig = defineAsyncComponent(() => import('./components/PermissionConfig.vue'));
@@ -158,6 +164,7 @@ import {
   saveGroupWorkspace,
   saveGroupManualGroups,
   subscribeConversationEvents,
+  subscribeWorkbenchEvents,
   updateGroupPresence,
 } from './api';
 
@@ -195,11 +202,15 @@ const serviceRailCollapsed = ref(readStoredRailCollapsed());
 const customerProfileOpen = ref(readStoredCustomerProfileOpen());
 const currentView = ref(resolveCurrentView());
 const workbenchBootstrapped = ref(false);
+const composerRef = ref(null);
+const realtimeState = ref('connecting');
+const notifier = useNotifier();
+const notificationsEnabled = notifier.enabled;
 
-const AUTO_REFRESH_MS = 1500;
-const PENDING_REFRESH_MS = 450;
-const PENDING_REFRESH_MAX_MS = 45000;
-const GROUP_LIVE_REFRESH_MS = 4000;
+const AUTO_REFRESH_MS = 30000;
+const PENDING_REFRESH_MS = 30000;
+const PENDING_REFRESH_MAX_MS = 120000;
+const GROUP_LIVE_REFRESH_MS = 30000;
 const WORKSPACE_LIVE_REFRESH_MS = 8000;
 const READ_PROGRESS_DEBOUNCE_MS = 350;
 const FILTER_DEBOUNCE_MS = 80;
@@ -260,6 +271,10 @@ let presenceHeartbeatTimer = null;
 let typingPresenceTimer = null;
 let stopConversationEvents = null;
 let conversationEventRefreshTimer = null;
+let stopWorkbenchEvents = null;
+let workbenchEventRefreshTimer = null;
+let workbenchEventNeedsMessages = false;
+const recentInboundEvents = new Map();
 const readProgressByGroup = new Map();
 
 function resolveCurrentView() {
@@ -315,6 +330,8 @@ onBeforeUnmount(() => {
   stopPendingRefresh();
   stopChannelRefreshPolling();
   stopConversationEventStream();
+  stopWorkbenchEventStream();
+  notifier.setUnreadTotal(0);
 });
 
 async function bootstrapWorkbench() {
@@ -359,6 +376,7 @@ async function bootstrapWorkbench() {
     loadGroups({ useRetry: true }),
   ]);
   scheduleWorkbenchCacheWrite();
+  startWorkbenchEventStream();
   startAutoRefresh();
 }
 
@@ -451,6 +469,7 @@ async function loadGroups({ silent = false, clearSelectionOnMissing = false, use
       noServiceAccount.value = true;
     }
     groups.value = nextGroups;
+    notifier.setUnreadTotal(nextGroups.reduce((total, group) => total + Number(group.unread_count || 0), 0));
     writeGroupListCache(requestKey, nextGroups);
     scheduleWorkbenchCacheWrite();
     if (!selectedGroup.value) return;
@@ -912,7 +931,6 @@ async function handleSend(message) {
   messages.value = mergeMessages(messages.value, [optimistic]);
   writeMessageCache(messageCacheKey(group), messages.value, messagePaging.value);
   stickToBottom.value = true;
-  quoteMessage.value = null;
   startPendingRefresh();
   sending.value = true;
   try {
@@ -925,6 +943,8 @@ async function handleSend(message) {
       attachments,
       quote_msg_id: quoteMsgId,
     });
+    composerRef.value?.clearDraft();
+    quoteMessage.value = null;
     patchOptimisticOutbound(clientMsgId, {
       id: `outbound-${reply.outbound_id}`,
       outbound_id: reply.outbound_id,
@@ -1398,6 +1418,11 @@ function handleVisibilityRefresh() {
   if (!document.hidden) handleForegroundRefresh();
 }
 
+async function handleNotificationToggle() {
+  const result = await notifier.toggle();
+  if (result.denied) ElMessage.warning('浏览器未授予桌面通知权限');
+}
+
 function stopAutoRefresh() {
   if (autoRefreshTimer) clearInterval(autoRefreshTimer);
   autoRefreshTimer = null;
@@ -1465,6 +1490,62 @@ function stopConversationEventStream() {
   conversationEventRefreshTimer = null;
   if (typeof stopConversationEvents === 'function') stopConversationEvents();
   stopConversationEvents = null;
+}
+
+function startWorkbenchEventStream() {
+  stopWorkbenchEventStream();
+  realtimeState.value = 'connecting';
+  stopWorkbenchEvents = subscribeWorkbenchEvents({
+    onOpen: () => { realtimeState.value = 'connected'; },
+    onReady: () => { realtimeState.value = 'connected'; },
+    onError: () => { realtimeState.value = 'reconnecting'; },
+    onEvent: handleWorkbenchEvent,
+  });
+}
+
+function stopWorkbenchEventStream() {
+  clearTimeout(workbenchEventRefreshTimer);
+  workbenchEventRefreshTimer = null;
+  workbenchEventNeedsMessages = false;
+  if (typeof stopWorkbenchEvents === 'function') stopWorkbenchEvents();
+  stopWorkbenchEvents = null;
+}
+
+function handleWorkbenchEvent(event) {
+  const isSelected = selectedGroup.value && (
+    String(selectedGroup.value.platform) === String(event.platform) &&
+    String(selectedGroup.value.account) === String(event.account) &&
+    String(selectedGroup.value.group_id) === String(event.group_id)
+  );
+  if (isSelected) workbenchEventNeedsMessages = true;
+  if (event.event_type === 'inbound' && shouldNotifyInbound(event)) {
+    const group = groups.value.find((item) => (
+      String(item.platform) === String(event.platform) &&
+      String(item.account) === String(event.account) &&
+      String(item.group_id) === String(event.group_id)
+    ));
+    notifier.notifyInbound({ ...event, groupName: group?.group_name || '收到新客户消息' });
+  }
+  clearTimeout(workbenchEventRefreshTimer);
+  workbenchEventRefreshTimer = setTimeout(() => {
+    const refreshes = [loadGroups({ silent: true })];
+    if (workbenchEventNeedsMessages && selectedGroup.value) {
+      refreshes.push(loadMessages({ preserve_existing: true }));
+    }
+    workbenchEventNeedsMessages = false;
+    Promise.all(refreshes).then(updatePendingRefreshState).catch(() => {});
+  }, 60);
+}
+
+function shouldNotifyInbound(event) {
+  const key = `${event.platform}:${event.account}:${event.group_id}`;
+  const now = Date.now();
+  const previous = recentInboundEvents.get(key) || 0;
+  recentInboundEvents.set(key, now);
+  for (const [entryKey, seenAt] of recentInboundEvents) {
+    if (now - seenAt > 5000) recentInboundEvents.delete(entryKey);
+  }
+  return now - previous > 1500;
 }
 
 function updatePendingRefreshState() {

@@ -14,11 +14,15 @@ const {
 const { resolveDataDir } = require('../db/paths');
 const { DEFAULT_RUNTIME_DB_PATH, openRuntimeDb } = require('../db/runtime-db');
 const { assertChromeMemoryAvailable } = require('../lib/chrome-launch');
+const { installProcessGuards, logEvent, sendOperationalAlert } = require('../lib/runtime-observability');
 
 const DATA_DIR = resolveDataDir();
 const OUTBOX_DIR = path.resolve(process.env.WORKBENCH_OUTBOX_DIR || path.join(DATA_DIR, 'outbox'));
 const DISCOVERY_MS = boundedNumber(process.env.WORKBENCH_ACCOUNT_SUPERVISOR_DISCOVERY_MS, 10000, 2000, 300000);
 const RESTART_DELAY_MS = boundedNumber(process.env.WORKBENCH_ACCOUNT_WORKER_RESTART_DELAY_MS, 10000, 1000, 300000);
+const RESTART_MAX_DELAY_MS = boundedNumber(process.env.WORKBENCH_ACCOUNT_WORKER_RESTART_MAX_DELAY_MS, 120000, RESTART_DELAY_MS, 600000);
+const RESTART_LIMIT = boundedNumber(process.env.WORKBENCH_ACCOUNT_WORKER_RESTART_LIMIT, 10, 1, 100);
+const RESTART_RESET_MS = boundedNumber(process.env.WORKBENCH_ACCOUNT_WORKER_RESTART_RESET_MS, 60 * 60 * 1000, 60000, 24 * 60 * 60 * 1000);
 const MAX_WORKERS = boundedNumber(process.env.WORKBENCH_ACCOUNT_WORKER_MAX_WORKERS, 5, 1, 100);
 const MAX_WA_WORKERS = boundedNumber(process.env.WORKBENCH_ACCOUNT_WORKER_MAX_WA, 1, 0, 100);
 const MAX_TG_WORKERS = boundedNumber(process.env.WORKBENCH_ACCOUNT_WORKER_MAX_TG, 4, 0, 100);
@@ -32,16 +36,23 @@ const controlRuntimeDb = require.main === module
   ? openRuntimeDb(process.env.WORKBENCH_RUNTIME_DB_PATH || DEFAULT_RUNTIME_DB_PATH)
   : null;
 let stopping = false;
+let supervisorTimer = null;
 
 if (require.main === module) {
+  installProcessGuards({
+    processName: 'account-worker-supervisor',
+    runtimeDb: controlRuntimeDb,
+    shutdown: () => shutdown(supervisorTimer),
+    context: { pid: process.pid },
+  });
   fs.mkdirSync(OUTBOX_DIR, { recursive: true });
   log(`started, discovery=${DISCOVERY_MS}ms, maxWorkers=${MAX_WORKERS}`);
   discover().catch((err) => log(`initial discovery failed: ${err.stack || err.message}`));
-  const timer = setInterval(() => {
+  supervisorTimer = setInterval(() => {
     discover().catch((err) => log(`discovery failed: ${err.stack || err.message}`));
   }, DISCOVERY_MS);
-  process.on('SIGTERM', () => shutdown(timer));
-  process.on('SIGINT', () => shutdown(timer));
+  process.on('SIGTERM', () => shutdown(supervisorTimer));
+  process.on('SIGINT', () => shutdown(supervisorTimer));
 }
 
 async function discover() {
@@ -161,6 +172,8 @@ function startWorker(ref) {
         child: null,
         startedAt: 0,
         nextStartAt: Date.now() + RESTART_DELAY_MS,
+        restartCount: 0,
+        restartWindowStartedAt: Date.now(),
       });
       log(`delaying worker ${key}: ${err.message}`);
       return;
@@ -182,22 +195,67 @@ function startWorker(ref) {
     env,
     stdio: ['ignore', 'inherit', 'inherit', 'ipc'],
   });
+  const previous = workers.get(key) || {};
   workers.set(key, {
     child,
     startedAt: Date.now(),
     nextStartAt: 0,
+    restartCount: Number(previous.restartCount || 0),
+    restartWindowStartedAt: Number(previous.restartWindowStartedAt || Date.now()),
   });
   log(`started worker ${key} pid=${child.pid}`);
   child.on('exit', (code, signal) => {
     const current = workers.get(key);
     if (!current || current.child !== child) return;
+    const now = Date.now();
+    const stableRun = now - Number(current.startedAt || now) >= RESTART_RESET_MS;
+    const expiredWindow = now - Number(current.restartWindowStartedAt || now) >= RESTART_RESET_MS;
+    const restartCount = stableRun || expiredWindow ? 1 : Number(current.restartCount || 0) + 1;
+    const restartWindowStartedAt = stableRun || expiredWindow ? now : current.restartWindowStartedAt;
+    const delay = Math.min(RESTART_MAX_DELAY_MS, Math.round(RESTART_DELAY_MS * (1.5 ** Math.max(0, restartCount - 1))));
+    if (restartCount > RESTART_LIMIT) {
+      workers.set(key, {
+        child: null,
+        startedAt: current.startedAt,
+        nextStartAt: Number.MAX_SAFE_INTEGER,
+        restartCount,
+        restartWindowStartedAt,
+      });
+      updateWorkerRestartStatus(ref, 'restart_exhausted', `restart limit ${RESTART_LIMIT} exceeded`);
+      sendOperationalAlert({
+        severity: 'error',
+        title: `${key} worker restart limit exceeded`,
+        message: `code=${code} signal=${signal} restarts=${restartCount}`,
+        platform: ref.platform,
+        account: ref.account,
+      }).catch(() => {});
+      log(`worker ${key} restart limit exceeded; automatic restart paused`);
+      return;
+    }
     workers.set(key, {
       child: null,
       startedAt: current.startedAt,
-      nextStartAt: Date.now() + RESTART_DELAY_MS,
+      nextStartAt: now + delay,
+      restartCount,
+      restartWindowStartedAt,
     });
-    log(`worker ${key} exited code=${code} signal=${signal}; restart after ${RESTART_DELAY_MS}ms`);
+    updateWorkerRestartStatus(ref, 'restart_wait', `restart ${restartCount}/${RESTART_LIMIT} in ${delay}ms`);
+    log(`worker ${key} exited code=${code} signal=${signal}; restart ${restartCount}/${RESTART_LIMIT} after ${delay}ms`);
   });
+}
+
+function updateWorkerRestartStatus(ref, status, reason) {
+  const db = openRuntimeDb(ref.paths.runtimeDbPath);
+  try {
+    db.prepare(`
+      INSERT INTO account_worker_status (platform, account, status, reason, updated_at)
+      VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+      ON CONFLICT(platform, account) DO UPDATE SET
+        status = excluded.status, reason = excluded.reason, updated_at = CURRENT_TIMESTAMP
+    `).run(ref.platform, ref.account, status, reason);
+  } finally {
+    db.close();
+  }
 }
 
 function stopWorker(key, reason) {
@@ -299,7 +357,7 @@ function boundedNumber(value, fallback, min, max) {
 }
 
 function log(message) {
-  console.log(`[workbench-account-supervisor] ${message}`);
+  logEvent('info', 'account-worker-supervisor', 'runtime', message);
 }
 
 function shutdown(timer) {

@@ -80,6 +80,19 @@
       </el-option>
     </el-select>
 
+    <button
+      type="button"
+      class="notification-button"
+      :class="{ active: notificationEnabled }"
+      :title="notificationEnabled ? '关闭新消息通知' : '开启新消息通知'"
+      :aria-label="notificationEnabled ? '关闭新消息通知' : '开启新消息通知'"
+      :aria-pressed="notificationEnabled"
+      @click="$emit('toggle-notifications')"
+    >
+      <el-icon><BellFilled v-if="notificationEnabled" /><Bell v-else /></el-icon>
+      <span class="realtime-dot" :class="realtimeState" aria-hidden="true"></span>
+    </button>
+
     <el-button
       class="sync-button"
       :icon="Refresh"
@@ -96,7 +109,7 @@
 
 <script setup>
 import { computed } from 'vue';
-import { Refresh, Search } from '@element-plus/icons-vue';
+import { Bell, BellFilled, Refresh, Search } from '@element-plus/icons-vue';
 
 const props = defineProps({
   modelValue: { type: Object, required: true },
@@ -106,9 +119,11 @@ const props = defineProps({
   syncing: { type: Boolean, default: false },
   accountScope: { type: Object, default: () => ({ mode: 'all', active: false, accounts: [] }) },
   profileOpen: { type: Boolean, default: true },
+  notificationEnabled: { type: Boolean, default: false },
+  realtimeState: { type: String, default: 'connecting' },
 });
 
-const emit = defineEmits(['update:modelValue', 'sync-channels', 'toggle-customer-profile']);
+const emit = defineEmits(['update:modelValue', 'sync-channels', 'toggle-customer-profile', 'toggle-notifications']);
 const platforms = [
   { value: 'wa', label: 'WA', className: 'platform-wa' },
   { value: 'tg', label: 'TG', className: 'platform-tg' },

@@ -182,6 +182,10 @@ const props = defineProps({
     type: Object,
     default: null,
   },
+  operatorId: {
+    type: [String, Number],
+    default: '',
+  },
 });
 
 const emit = defineEmits(['send', 'clear-quote', 'typing-state']);
@@ -195,6 +199,9 @@ const imageInputRef = ref(null);
 const stickerInputRef = ref(null);
 const textareaRef = ref(null);
 let typingTimer = null;
+let draftSaveTimer = null;
+let activeDraftKey = '';
+let activeDraftStorageKey = '';
 const sendAllowed = computed(() => (
   props.group &&
   props.group.send_enabled !== false &&
@@ -234,17 +241,23 @@ const quoteSummary = computed(() => {
 });
 
 watch(
-  () => props.group && props.group.id,
+  () => [props.group?.id || '', String(props.operatorId || '')],
   () => {
-    draft.value = '';
+    persistDraft(activeDraftStorageKey, activeDraftKey, draft.value);
+    activeDraftStorageKey = draftStorageKey();
+    activeDraftKey = groupDraftKey();
+    draft.value = readDraft(activeDraftStorageKey, activeDraftKey);
     attachments.value = [];
     emojiOpen.value = false;
     emit('clear-quote');
     emitTyping(false);
   },
+  { immediate: true },
 );
 
 watch(draft, (value) => {
+  clearTimeout(draftSaveTimer);
+  draftSaveTimer = setTimeout(() => persistDraft(activeDraftStorageKey, activeDraftKey, value), 180);
   if (!props.group || disabled.value) return;
   emitTyping(Boolean(String(value || '').trim()));
 });
@@ -252,6 +265,8 @@ watch(draft, (value) => {
 onBeforeUnmount(() => {
   document.removeEventListener('pointerdown', handleDocumentPointerDown);
   clearTimeout(typingTimer);
+  clearTimeout(draftSaveTimer);
+  persistDraft(activeDraftStorageKey, activeDraftKey, draft.value);
   emit('typing-state', false);
 });
 
@@ -418,11 +433,49 @@ function submit() {
       props.quoteMessage.id
     ),
   });
+  emojiOpen.value = false;
+}
+
+function clearDraft() {
   draft.value = '';
   attachments.value = [];
   emojiOpen.value = false;
+  persistDraft(activeDraftStorageKey, activeDraftKey, '');
   emitTyping(false);
 }
+
+function groupDraftKey() {
+  if (!props.group) return '';
+  return [props.group.platform, props.group.account, props.group.group_id || props.group.id].map((value) => String(value || '')).join(':');
+}
+
+function draftStorageKey() {
+  return `social-workbench.drafts.v1.${String(props.operatorId || 'anonymous')}`;
+}
+
+function readDraft(storageKey, key) {
+  if (!storageKey || !key) return '';
+  try {
+    const drafts = JSON.parse(window.localStorage.getItem(storageKey) || '{}');
+    return typeof drafts[key] === 'string' ? drafts[key] : '';
+  } catch (_) {
+    return '';
+  }
+}
+
+function persistDraft(storageKey, key, value) {
+  if (!storageKey || !key) return;
+  try {
+    const drafts = JSON.parse(window.localStorage.getItem(storageKey) || '{}');
+    const text = String(value || '');
+    if (text.trim()) drafts[key] = text;
+    else delete drafts[key];
+    if (Object.keys(drafts).length) window.localStorage.setItem(storageKey, JSON.stringify(drafts));
+    else window.localStorage.removeItem(storageKey);
+  } catch (_) { }
+}
+
+defineExpose({ clearDraft });
 
 function emitTyping(active) {
   clearTimeout(typingTimer);

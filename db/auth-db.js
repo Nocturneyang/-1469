@@ -8,6 +8,8 @@ function openAuthDb(dbPath = DEFAULT_AUTH_DB_PATH) {
   ensureDirectory(dbPath);
   const db = new Database(dbPath);
   db.pragma('journal_mode = WAL');
+  db.pragma('synchronous = NORMAL');
+  db.pragma('wal_autocheckpoint = 2000');
   db.pragma('busy_timeout = 5000');
   db.exec(`
     CREATE TABLE IF NOT EXISTS users (
@@ -172,10 +174,12 @@ function seedBootstrap(db) {
     }
   }
 
-  const identities = [
-    '1469',
-    ...splitList(process.env.SSO_BOOTSTRAP_ADMINS || process.env.SSO_ADMIN_USERS || process.env.WORKBENCH_SUPER_ADMINS),
-  ];
+  const identities = splitList(
+    process.env.SSO_BOOTSTRAP_ADMINS ||
+    process.env.WORKBENCH_BOOTSTRAP_ADMIN ||
+    process.env.SSO_ADMIN_USERS ||
+    process.env.WORKBENCH_SUPER_ADMINS,
+  );
   const insertAdmin = db.prepare(`
     INSERT INTO sso_admins (identity, display_name, note, created_by)
     VALUES (?, ?, 'bootstrap', 'system')

@@ -270,7 +270,7 @@ const permissions = computed(() => access.value.permissions || []);
 const selectedUser = computed(() => users.value.find((user) => user.id === selectedUserId.value) || null);
 const activeUserCount = computed(() => users.value.filter((user) => user.status === 'active').length);
 const selectedRoleText = computed(() => roleLabel(roleDraft.value));
-const canDeleteSelectedUser = computed(() => selectedUser.value && selectedUser.value.id !== '1469');
+const canDeleteSelectedUser = computed(() => selectedUser.value && !selectedUser.value.is_super_admin);
 
 onMounted(load);
 

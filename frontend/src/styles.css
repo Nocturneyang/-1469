@@ -4273,6 +4273,26 @@ button {
 .label-select { flex: 0 1 170px; max-width: 170px; }
 .sync-button.el-button,
 .profile-toggle-button.el-button { height: 36px; border-radius: 2px; }
+.notification-button {
+  position: relative;
+  flex: 0 0 36px;
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 2px;
+  color: var(--muted);
+  background: #fff;
+  cursor: pointer;
+}
+.notification-button:hover,
+.notification-button.active { color: var(--accent-strong); border-color: var(--accent); background: var(--accent-soft); }
+.notification-button .el-icon { font-size: 17px; }
+.realtime-dot { position: absolute; right: 4px; bottom: 4px; width: 6px; height: 6px; border-radius: 50%; background: #d1a12d; }
+.realtime-dot.connected { background: #16a365; }
+.realtime-dot.reconnecting { background: #d84b40; }
 
 .workbench-grid,
 .workbench-grid.profile-collapsed {
@@ -4446,6 +4466,19 @@ button {
 .message-footer { min-height: 16px; display: flex; align-items: center; gap: 8px; margin: 5px 4px 0; color: var(--muted); font-size: 10px; }
 .outbound .message-footer { justify-content: flex-end; }
 .outbound .status { color: #667367; }
+.delivery-receipt {
+  min-width: 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  color: #667367;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0;
+  line-height: 1;
+}
+.delivery-receipt span + span { margin-left: -4px; }
+.delivery-receipt.receipt-read { color: #1689d8; }
 .bubble.failed { border-color: #ef9a9a; background: #fff1ef; }
 .outbound .bubble.failed::after { border-left-color: #fff1ef; }
 .outbound .bubble.failed p { color: var(--text); }

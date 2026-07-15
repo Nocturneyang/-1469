@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const Database = require('better-sqlite3');
 const express = require('express');
 const { setServiceAccountSendEnabled } = require('../../db/raw-db');
 const { writeChannelSyncRequest } = require('../../lib/channel-sync-store');
@@ -25,6 +26,7 @@ const {
   capabilitySummary,
   conversationHasCapability,
   filterGroupsByCapability,
+  isWorkbenchSuperAdmin,
   loadPortalAccess,
   requireAdminPortalAccess,
   requireActiveWorkbenchOperator,
@@ -42,11 +44,12 @@ const {
 } = require('../../lib/access-control');
 const { createAccountDataAccess } = require('../../lib/account-data-access');
 const { writeLoginVerificationDoorbell } = require('../../lib/service-account-login-store');
-const { resolveAccountPaths } = require('../../db/account-db');
+const { listAccountRefs, resolveAccountPaths } = require('../../db/account-db');
 const { resolveDataDir } = require('../../db/paths');
+const { latestChannelEventId, listChannelEvents, recordChannelEvent } = require('../../lib/channel-events');
 
 const ALLOWED_PLATFORMS = new Set(WORKBENCH_PLATFORMS);
-const OUTBOUND_STATUSES = new Set(['pending', 'sending', 'sent', 'delivered', 'failed', 'dead', 'paused', 'canceled']);
+const OUTBOUND_STATUSES = new Set(['pending', 'sending', 'sent', 'delivered', 'read', 'failed', 'dead', 'paused', 'canceled']);
 const CONVERSATION_STATUSES = new Set(['pending', 'in_progress', 'resolved', 'paused']);
 const CONVERSATION_PRIORITIES = new Set(['low', 'normal', 'high', 'urgent']);
 const PRESENCE_MODES = new Set(['viewing', 'typing', 'replying']);
@@ -58,6 +61,8 @@ const MAX_INBOUND_MEDIA_BYTES = Math.max(1024, Math.min(Number(process.env.WORKB
 const ALLOWED_ATTACHMENT_KINDS = new Set(['file', 'image', 'sticker']);
 const CONVERSATION_EVENT_POLL_MS = Math.max(200, Math.min(Number(process.env.WORKBENCH_CONVERSATION_EVENT_POLL_MS) || 350, 5000));
 const CONVERSATION_EVENT_HEARTBEAT_MS = 15000;
+const GLOBAL_EVENT_POLL_MS = Math.max(250, Math.min(Number(process.env.WORKBENCH_GLOBAL_EVENT_POLL_MS) || 500, 5000));
+let activeGlobalSseClients = 0;
 
 function createWorkbenchRouter({ workbenchDb, runtimeDb, rawDbPath = DEFAULT_RAW_DB_PATH, outboxDir, accountDataDir, accountDbMode } = {}) {
   if (!workbenchDb) throw new Error('workbenchDb is required');
@@ -73,6 +78,15 @@ function createWorkbenchRouter({ workbenchDb, runtimeDb, rawDbPath = DEFAULT_RAW
   });
   const getAccountScope = () => accountData.resolveAccountScope();
   const requireAdmin = requireAdminPortalAccess(workbenchDb);
+  const emitChannelEvent = (platform, account, groupId, eventType, payload = null) => (
+    accountData.withRuntimeDb(platform, account, { create: true }, (db) => recordChannelEvent(db, {
+      platform,
+      account,
+      groupId,
+      eventType,
+      payload,
+    }))
+  );
 
   router.use(requireActiveWorkbenchOperator(workbenchDb));
   router.use(requireWorkbenchPortalAccess(workbenchDb));
@@ -89,6 +103,73 @@ function createWorkbenchRouter({ workbenchDb, runtimeDb, rawDbPath = DEFAULT_RAW
       account_db_mode: accountData.isolated ? 'isolated' : 'legacy',
       account_scope: mapAccountScope(accountScope),
     });
+  });
+
+  router.get('/events', (req, res) => {
+    const operator = currentOperatorContext(workbenchDb, req);
+    const visibleScope = allowedAccountScope(workbenchDb, operator, getAccountScope(), 'can_view');
+    const sources = openGlobalEventSources({ accountData, runtimeDb, accountDataDir, visibleScope });
+    const restoredCursor = decodeEventCursor(req.headers['last-event-id']);
+    const cursor = {};
+    sources.forEach((source) => {
+      cursor[source.key] = Object.prototype.hasOwnProperty.call(restoredCursor, source.key)
+        ? Math.max(0, Number(restoredCursor[source.key]) || 0)
+        : latestChannelEventId(source.db);
+    });
+
+    res.status(200);
+    res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+    res.setHeader('Cache-Control', 'no-cache, no-transform');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('X-Accel-Buffering', 'no');
+    res.flushHeaders?.();
+    activeGlobalSseClients += 1;
+    let closed = false;
+    writeGlobalEvent(res, 'ready', { connected: true }, cursor);
+
+    const pollTimer = setInterval(() => {
+      if (closed) return;
+      const events = [];
+      sources.forEach((source) => {
+        try {
+          listChannelEvents(source.db, { afterId: cursor[source.key], limit: 200 }).forEach((event) => {
+            if (!accountScopeContains(visibleScope, event.platform, event.account)) return;
+            events.push({ ...event, sourceKey: source.key });
+          });
+        } catch (_) { }
+      });
+      events
+        .sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)) || a.id - b.id)
+        .forEach((event) => {
+          cursor[event.sourceKey] = Math.max(Number(cursor[event.sourceKey]) || 0, Number(event.id) || 0);
+          writeGlobalEvent(res, event.event_type, {
+            platform: event.platform,
+            account: event.account,
+            group_id: event.group_id,
+            event_type: event.event_type,
+            created_at: event.created_at,
+            ...(event.payload && typeof event.payload === 'object' ? event.payload : {}),
+          }, cursor);
+        });
+    }, GLOBAL_EVENT_POLL_MS);
+    pollTimer.unref?.();
+    const heartbeatTimer = setInterval(() => {
+      if (!closed) res.write(`: heartbeat ${Date.now()}\n\n`);
+    }, CONVERSATION_EVENT_HEARTBEAT_MS);
+    heartbeatTimer.unref?.();
+
+    const cleanup = () => {
+      if (closed) return;
+      closed = true;
+      activeGlobalSseClients = Math.max(0, activeGlobalSseClients - 1);
+      clearInterval(pollTimer);
+      clearInterval(heartbeatTimer);
+      sources.forEach((source) => {
+        if (source.owned) source.db.close();
+      });
+    };
+    req.on('close', cleanup);
+    res.on('close', cleanup);
   });
 
   router.get('/me', (req, res) => {
@@ -1052,13 +1133,24 @@ function createWorkbenchRouter({ workbenchDb, runtimeDb, rawDbPath = DEFAULT_RAW
     const clientMsgId = requireText(body.client_msg_id, 'client_msg_id');
     const text = String(body.text || '').trim();
     const attachments = normalizeAttachments(body.attachments ?? body.attachment_json ?? null);
-    const attachmentJson = attachments.length ? safeJson(attachments) : null;
-    if (!text && !attachmentJson) {
+    if (!text && !attachments.length) {
       throw createHttpError(400, 'text or attachment is required');
     }
-    const result = accountData.withWorkbenchDb(platform, account, { create: true }, (accountDb) => {
+    const result = accountData.withWorkbenchDb(platform, account, { create: true }, (accountDb, context) => {
+      const existing = accountDb.prepare(`
+        SELECT * FROM outbound_messages
+        WHERE created_by = @operatorId AND client_msg_id = @clientMsgId
+      `).get({ operatorId, clientMsgId });
+      if (existing) return { insert: { changes: 0 }, outbound: existing, breaker: null };
       const breaker = activeBreaker(accountDb, platform, account);
       const desiredStatus = breaker ? 'paused' : 'pending';
+      const storedAttachments = persistOutboundAttachmentFiles(attachments, {
+        platform,
+        account,
+        accountPaths: context.paths,
+        accountDataDir,
+      });
+      const attachmentJson = storedAttachments.length ? safeJson(storedAttachments) : null;
       const insert = accountDb.prepare(`
         INSERT INTO outbound_messages (
           client_msg_id, platform, account, group_id, chat_id, text, quote_msg_id,
@@ -1087,6 +1179,7 @@ function createWorkbenchRouter({ workbenchDb, runtimeDb, rawDbPath = DEFAULT_RAW
         WHERE created_by = @operatorId AND client_msg_id = @clientMsgId
       `).get({ operatorId, clientMsgId });
       if (insert.changes > 0) {
+        recordOutboundAttachmentRows(accountDb, outbound.id, storedAttachments);
         writeAction(accountDb, operatorId, 'reply.create', platform, account, groupId, outbound.id, {
           status: outbound.status,
           has_attachment: Boolean(attachmentJson),
@@ -1101,6 +1194,12 @@ function createWorkbenchRouter({ workbenchDb, runtimeDb, rawDbPath = DEFAULT_RAW
       }
       return { insert, outbound, breaker };
     });
+    if (result.insert.changes > 0) {
+      emitChannelEvent(platform, account, groupId, 'outbound_status', {
+        outbound_id: result.outbound.id,
+        status: result.outbound.status,
+      });
+    }
     res.status(result.insert.changes > 0 ? 201 : 200).json({
       ok: true,
       outbound_id: publicOutboundId(result.outbound, accountData),
@@ -1147,6 +1246,10 @@ function createWorkbenchRouter({ workbenchDb, runtimeDb, rawDbPath = DEFAULT_RAW
       groupId,
       lastReadMessageId,
     }), 99);
+    emitChannelEvent(platform, account, groupId, 'conversation_read', {
+      operator_id: operatorId,
+      last_read_message_id: lastReadMessageId,
+    });
     res.json({ ok: true, unread_count: unreadCount });
   });
 
@@ -1172,15 +1275,33 @@ function createWorkbenchRouter({ workbenchDb, runtimeDb, rawDbPath = DEFAULT_RAW
       try {
         requireVisibleAccount(scopedAccountScope, item.platform, item.account);
         requireConversationCapability(workbenchDb, operator, item.platform, item.account, item.group_id, capability);
+        if (action === 'assign' && String(body.assigned_to || operatorId).trim() !== operatorId) {
+          const manageScope = allowedAccountScope(workbenchDb, operator, accountScope, 'can_manage');
+          requireVisibleAccount(manageScope, item.platform, item.account);
+          requireConversationCapability(workbenchDb, operator, item.platform, item.account, item.group_id, 'can_manage');
+        }
         const itemResult = runBulkConversationAction(accountData, workbenchDb, {
           action,
           item,
           body,
           operatorId,
           accountScope: viewAccountScope,
+          allowManage: conversationHasCapability(
+            workbenchDb,
+            operator,
+            item.platform,
+            item.account,
+            item.group_id,
+            'can_manage',
+          ),
         });
         result.changed += itemResult.changed ? 1 : 0;
         result.results.push({ ...item, ok: true, ...itemResult });
+        if (itemResult.changed && ['assign', 'release'].includes(action)) {
+          emitChannelEvent(item.platform, item.account, item.group_id, 'assignment', {
+            assigned_to: action === 'assign' ? itemResult.assignment?.assigned_to || null : null,
+          });
+        }
       } catch (err) {
         result.failed += 1;
         result.results.push({ ...item, ok: false, error: err.message });
@@ -1201,30 +1322,62 @@ function createWorkbenchRouter({ workbenchDb, runtimeDb, rawDbPath = DEFAULT_RAW
     const groupId = req.params.groupId;
     requireConversationCapability(workbenchDb, operator, platform, account, groupId, 'can_assign');
     const assignedTo = String(body.assigned_to || operatorId).trim();
+    const transfer = assignedTo !== operatorId;
+    if (transfer) requireConversationCapability(workbenchDb, operator, platform, account, groupId, 'can_manage');
     ensureOperator(workbenchDb, assignedTo, body.assigned_to_name || assignedTo);
-    const assignment = accountData.withWorkbenchDb(platform, account, { create: true }, (accountDb) => {
+    const assignmentResult = accountData.withWorkbenchDb(platform, account, { create: true }, (accountDb) => {
       const tx = accountDb.transaction(() => {
-        accountDb.prepare(`
-          UPDATE group_assignments
-          SET status = 'released', released_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+        const active = accountDb.prepare(`
+          SELECT * FROM group_assignments
           WHERE platform = @platform AND account = @account AND group_id = @groupId AND status = 'active'
-        `).run({ platform, account, groupId });
+        `).get({ platform, account, groupId });
+        if (active && active.assigned_to === assignedTo) return { assignment: active, created: false };
+        if (active && !transfer) throw createHttpError(409, 'conversation is already assigned');
+        if (active) {
+          accountDb.prepare(`
+            UPDATE group_assignments
+            SET status = 'released', released_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+            WHERE id = ? AND status = 'active'
+          `).run(active.id);
+        }
         const result = accountDb.prepare(`
           INSERT INTO group_assignments (platform, account, group_id, assigned_to, assigned_by)
-          VALUES (@platform, @account, @groupId, @assignedTo, @assignedBy)
+          SELECT @platform, @account, @groupId, @assignedTo, @assignedBy
+          WHERE NOT EXISTS (
+            SELECT 1 FROM group_assignments
+            WHERE platform = @platform AND account = @account AND group_id = @groupId AND status = 'active'
+          )
         `).run({ platform, account, groupId, assignedTo, assignedBy: operatorId });
+        if (!result.changes) throw createHttpError(409, 'conversation is already assigned');
         writeAction(accountDb, operatorId, 'conversation.assign', platform, account, groupId, result.lastInsertRowid, {
           assigned_to: assignedTo,
+          transfer,
         });
         writeConversationTimeline(accountDb, operatorId, 'conversation.assign', platform, account, groupId, {
           assigned_to: assignedTo,
         });
-        return result.lastInsertRowid;
+        return {
+          assignment: accountDb.prepare('SELECT * FROM group_assignments WHERE id = ?').get(result.lastInsertRowid),
+          created: true,
+        };
       });
-      const id = tx();
-      return accountDb.prepare('SELECT * FROM group_assignments WHERE id = ?').get(id);
+      try {
+        return tx();
+      } catch (err) {
+        if (String(err.code || '').includes('SQLITE_CONSTRAINT')) throw createHttpError(409, 'conversation is already assigned');
+        throw err;
+      }
     });
-    res.status(201).json({ ok: true, assignment });
+    if (assignmentResult.created) {
+      emitChannelEvent(platform, account, groupId, 'assignment', {
+        assigned_to: assignmentResult.assignment.assigned_to,
+      });
+    }
+    res.status(assignmentResult.created ? 201 : 200).json({
+      ok: true,
+      assignment: assignmentResult.assignment,
+      idempotent: !assignmentResult.created,
+    });
   });
 
   router.post('/groups/:groupId/release', (req, res) => {
@@ -1239,11 +1392,19 @@ function createWorkbenchRouter({ workbenchDb, runtimeDb, rawDbPath = DEFAULT_RAW
     const groupId = req.params.groupId;
     requireConversationCapability(workbenchDb, operator, platform, account, groupId, 'can_assign');
     const released = accountData.withWorkbenchDb(platform, account, { create: true }, (accountDb) => {
+      const active = accountDb.prepare(`
+        SELECT * FROM group_assignments
+        WHERE platform = @platform AND account = @account AND group_id = @groupId AND status = 'active'
+      `).get({ platform, account, groupId });
+      if (!active) return 0;
+      if (active.assigned_to !== operatorId) {
+        requireConversationCapability(workbenchDb, operator, platform, account, groupId, 'can_manage');
+      }
       const result = accountDb.prepare(`
         UPDATE group_assignments
         SET status = 'released', released_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
-        WHERE platform = @platform AND account = @account AND group_id = @groupId AND status = 'active'
-      `).run({ platform, account, groupId });
+        WHERE id = @id AND status = 'active'
+      `).run({ id: active.id });
       writeAction(accountDb, operatorId, 'conversation.release', platform, account, groupId, groupId, {
         released: result.changes,
       });
@@ -1252,7 +1413,24 @@ function createWorkbenchRouter({ workbenchDb, runtimeDb, rawDbPath = DEFAULT_RAW
       });
       return result.changes;
     });
+    if (released) emitChannelEvent(platform, account, groupId, 'assignment', { assigned_to: null });
     res.json({ ok: true, released });
+  });
+
+  router.get('/outbound/:id/attachments/:fileKey', (req, res) => {
+    const accountScope = getAccountScope();
+    const operator = currentOperatorContext(workbenchDb, req);
+    const visibleAccountScope = allowedAccountScope(workbenchDb, operator, accountScope, 'can_view');
+    const result = withOutboundForRequest(accountData, req, (accountDb, row, context) => {
+      requireVisibleAccount(visibleAccountScope, row.platform, row.account);
+      requireConversationCapability(workbenchDb, operator, row.platform, row.account, row.group_id, 'can_view');
+      const attachment = accountDb.prepare(`
+        SELECT * FROM outbound_attachments WHERE outbound_id = ? AND file_key = ?
+      `).get(row.id, req.params.fileKey);
+      if (!attachment) throw createHttpError(404, 'attachment not found');
+      return { attachment, row, context };
+    });
+    sendOutboundAttachment(res, result, { accountDataDir });
   });
 
   router.get('/outbound/:id', (req, res) => {
@@ -1288,6 +1466,10 @@ function createWorkbenchRouter({ workbenchDb, runtimeDb, rawDbPath = DEFAULT_RAW
         outbound_id: row.id,
       });
       return getOutbound(accountDb, row.id);
+    });
+    emitChannelEvent(outbound.platform, outbound.account, outbound.group_id, 'outbound_status', {
+      outbound_id: outbound.id,
+      status: outbound.status,
     });
     res.json({ ok: true, outbound: mapOutboundRow(outbound, { scopedIds: accountData.isolated }) });
   });
@@ -1329,9 +1511,10 @@ function createWorkbenchRouter({ workbenchDb, runtimeDb, rawDbPath = DEFAULT_RAW
         status,
         createdBy: operatorId,
         retryOf: previous.id,
-        retryCount: Number(previous.retry_count || 0) + 1,
+        retryCount: 0,
       });
       const next = getOutbound(accountDb, result.lastInsertRowid);
+      recordOutboundAttachmentRows(accountDb, next.id, parseJson(next.attachment_json, []));
       writeAction(accountDb, operatorId, 'outbound.retry', next.platform, next.account, next.group_id, next.id, {
         retry_of: previous.id,
       });
@@ -1341,6 +1524,10 @@ function createWorkbenchRouter({ workbenchDb, runtimeDb, rawDbPath = DEFAULT_RAW
       });
       if (next.status === 'pending') writeDoorbell(doorbellRoot, next);
       return next;
+    });
+    emitChannelEvent(outbound.platform, outbound.account, outbound.group_id, 'outbound_status', {
+      outbound_id: outbound.id,
+      status: outbound.status,
     });
     res.status(201).json({ ok: true, outbound: mapOutboundRow(outbound, { scopedIds: accountData.isolated }) });
   });
@@ -2234,6 +2421,8 @@ function mergeConversationMessages(rawMessages, outboundMessages) {
       remote_msg_id: outbound.remote_msg_id,
       sent_at: outbound.sent_at,
       delivered_at: outbound.delivered_at,
+      read_at: outbound.read_at,
+      provider_ack: outbound.provider_ack,
       error_code: outbound.error_code,
       error_message: outbound.error_message,
       error_display: outbound.error_display,
@@ -2340,6 +2529,7 @@ function readConversationEventSignature(eventDbs, platform, account, groupId) {
         COALESCE(MAX(updated_at), '') AS updated_at,
         COALESCE(SUM(status = 'pending'), 0) || ':' || COALESCE(SUM(status = 'sending'), 0) || ':' ||
         COALESCE(SUM(status = 'sent'), 0) || ':' || COALESCE(SUM(status = 'delivered'), 0) || ':' ||
+        COALESCE(SUM(status = 'read'), 0) || ':' ||
         COALESCE(SUM(status = 'failed'), 0) || ':' || COALESCE(SUM(status = 'dead'), 0) || ':' ||
         COALESCE(SUM(status = 'paused'), 0) || ':' || COALESCE(SUM(status = 'canceled'), 0) AS state_signature
       FROM outbound_messages
@@ -2357,6 +2547,13 @@ function mapOutboundRow(row, { scopedIds = false } = {}) {
   const timestamp = normalizeTimestamp(null, row.sent_at || row.created_at);
   const text = row.text;
   const outboundId = scopedIds ? publicOutboundId(row, { isolated: true }) : row.id;
+  const attachments = parseJson(row.attachment_json, []).map((attachment) => {
+    if (!attachment.local_path || !attachment.file_key) return attachment;
+    return {
+      ...attachment,
+      media_url: `/api/workbench/outbound/${encodeURIComponent(outboundId)}/attachments/${encodeURIComponent(attachment.file_key)}`,
+    };
+  });
   return {
     id: `outbound-${outboundId}`,
     outbound_id: outboundId,
@@ -2371,7 +2568,7 @@ function mapOutboundRow(row, { scopedIds = false } = {}) {
     text,
     display_text: text,
     quote_msg_id: row.quote_msg_id,
-    attachments: parseJson(row.attachment_json, []),
+    attachments,
     status: row.status,
     remote_msg_id: row.remote_msg_id,
     retry_of: row.retry_of,
@@ -2382,6 +2579,8 @@ function mapOutboundRow(row, { scopedIds = false } = {}) {
     created_at: row.created_at,
     sent_at: row.sent_at,
     delivered_at: row.delivered_at,
+    read_at: row.read_at,
+    provider_ack: Number(row.provider_ack || 0),
     timestamp,
     sort_time: timestamp,
     source: 'workbench',
@@ -2509,6 +2708,117 @@ function normalizeAttachments(input) {
       data_url: dataUrl,
     };
   });
+}
+
+function persistOutboundAttachmentFiles(attachments, { platform, account, accountPaths, accountDataDir } = {}) {
+  if (!attachments.length) return [];
+  const accountDir = attachmentAccountDir({ platform, account, accountPaths, accountDataDir });
+  const month = new Date().toISOString().slice(0, 7);
+  const targetDir = path.join(accountDir, 'attachments', 'outbound', month);
+  fs.mkdirSync(targetDir, { recursive: true });
+  return attachments.map((attachment, index) => {
+    const dataUrl = String(attachment.data_url || '');
+    const base64 = dataUrl.includes(',') ? dataUrl.slice(dataUrl.indexOf(',') + 1) : '';
+    const buffer = Buffer.from(base64, 'base64');
+    if (!buffer.length) throw createHttpError(400, 'attachment data is empty');
+    const sha256 = crypto.createHash('sha256').update(buffer).digest('hex');
+    const extension = attachmentExtension(attachment.type);
+    const fileName = `${sha256}${extension}`;
+    const absolutePath = path.join(targetDir, fileName);
+    if (!fs.existsSync(absolutePath)) {
+      const tempPath = `${absolutePath}.${process.pid}.${Date.now()}.tmp`;
+      fs.writeFileSync(tempPath, buffer, { mode: 0o600 });
+      try {
+        fs.renameSync(tempPath, absolutePath);
+      } catch (err) {
+        try { fs.unlinkSync(tempPath); } catch (_) { }
+        if (!fs.existsSync(absolutePath)) throw err;
+      }
+    }
+    const relativePath = path.relative(accountDir, absolutePath);
+    if (!relativePath || relativePath.startsWith('..') || path.isAbsolute(relativePath)) {
+      throw createHttpError(500, 'attachment path escaped account directory');
+    }
+    return {
+      id: attachment.id,
+      file_key: `${sha256.slice(0, 24)}-${index + 1}`,
+      name: attachment.name,
+      type: attachment.type,
+      size: buffer.length,
+      kind: attachment.kind,
+      sha256,
+      local_path: relativePath.split(path.sep).join('/'),
+    };
+  });
+}
+
+function recordOutboundAttachmentRows(db, outboundId, attachments) {
+  const insert = db.prepare(`
+    INSERT INTO outbound_attachments (
+      outbound_id, file_key, relative_path, sha256, mime, size, name
+    ) VALUES (
+      @outboundId, @fileKey, @relativePath, @sha256, @mime, @size, @name
+    )
+    ON CONFLICT(outbound_id, file_key) DO NOTHING
+  `);
+  (attachments || []).forEach((attachment) => {
+    if (!attachment.local_path || !attachment.file_key || !attachment.sha256) return;
+    insert.run({
+      outboundId,
+      fileKey: attachment.file_key,
+      relativePath: attachment.local_path,
+      sha256: attachment.sha256,
+      mime: attachment.type || 'application/octet-stream',
+      size: Number(attachment.size || 0),
+      name: attachment.name || 'attachment',
+    });
+  });
+}
+
+function attachmentAccountDir({ platform, account, accountPaths, accountDataDir } = {}) {
+  if (accountPaths?.accountDir) return path.resolve(accountPaths.accountDir);
+  if (accountDataDir) return path.join(path.resolve(accountDataDir), sanitizeSegment(platform), sanitizeSegment(account));
+  return path.join(resolveDataDir(), 'accounts', sanitizeSegment(platform), sanitizeSegment(account));
+}
+
+function attachmentExtension(mime) {
+  const map = {
+    'image/png': '.png',
+    'image/jpeg': '.jpg',
+    'image/webp': '.webp',
+    'image/gif': '.gif',
+    'application/pdf': '.pdf',
+    'text/plain': '.txt',
+    'application/zip': '.zip',
+  };
+  return map[String(mime || '').toLowerCase()] || '.bin';
+}
+
+function sendOutboundAttachment(res, { attachment, row, context }, { accountDataDir } = {}) {
+  const accountDir = attachmentAccountDir({
+    platform: row.platform,
+    account: row.account,
+    accountPaths: context.paths,
+    accountDataDir,
+  });
+  const absolutePath = path.resolve(accountDir, attachment.relative_path);
+  const relative = path.relative(accountDir, absolutePath);
+  if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) {
+    throw createHttpError(403, 'invalid attachment path');
+  }
+  if (!fs.existsSync(absolutePath) || !fs.statSync(absolutePath).isFile()) {
+    throw createHttpError(404, 'attachment file missing');
+  }
+  const mime = String(attachment.mime || 'application/octet-stream');
+  const safeInline = /^image\/(?:png|jpeg|webp|gif)$/i.test(mime) && res.req.query.download !== '1';
+  const name = String(attachment.name || 'attachment').replace(/[\r\n"\\/]/g, '_');
+  const asciiName = name.replace(/[^\x20-\x7e]/g, '_') || 'attachment';
+  const encodedName = encodeURIComponent(name).replace(/[!'()*]/g, (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`);
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Content-Type', mime);
+  res.setHeader('Content-Length', String(fs.statSync(absolutePath).size));
+  res.setHeader('Content-Disposition', `${safeInline ? 'inline' : 'attachment'}; filename="${asciiName}"; filename*=UTF-8''${encodedName}`);
+  fs.createReadStream(absolutePath).on('error', (err) => res.destroy(err)).pipe(res);
 }
 
 function sanitizeAttachmentName(name, index) {
@@ -2719,6 +3029,7 @@ function runBulkConversationAction(accountData, centralDb, {
   body,
   operatorId,
   accountScope,
+  allowManage = false,
 }) {
   if (action === 'mark_read') {
     const lastReadMessageId = Number(
@@ -2762,35 +3073,61 @@ function runBulkConversationAction(accountData, centralDb, {
 
   if (action === 'assign') {
     const assignedTo = String(body.assigned_to || operatorId).trim();
+    const transfer = assignedTo !== operatorId;
     ensureOperator(centralDb, assignedTo, body.assigned_to_name || assignedTo);
-    const assignment = accountData.withWorkbenchDb(item.platform, item.account, { create: true }, (accountDb) => {
+    const result = accountData.withWorkbenchDb(item.platform, item.account, { create: true }, (accountDb) => {
       const tx = accountDb.transaction(() => {
-        accountDb.prepare(`
-          UPDATE group_assignments
-          SET status = 'released', released_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+        const params = { platform: item.platform, account: item.account, groupId: item.group_id, assignedTo, operatorId };
+        const active = accountDb.prepare(`
+          SELECT * FROM group_assignments
           WHERE platform = @platform AND account = @account AND group_id = @groupId AND status = 'active'
-        `).run({ platform: item.platform, account: item.account, groupId: item.group_id });
-        const result = accountDb.prepare(`
+        `).get(params);
+        if (active && active.assigned_to === assignedTo) return { assignment: active, changed: false };
+        if (active && !transfer) throw createHttpError(409, 'conversation is already assigned');
+        if (active) {
+          accountDb.prepare(`
+            UPDATE group_assignments
+            SET status = 'released', released_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+            WHERE id = ? AND status = 'active'
+          `).run(active.id);
+        }
+        const insert = accountDb.prepare(`
           INSERT INTO group_assignments (platform, account, group_id, assigned_to, assigned_by)
-          VALUES (@platform, @account, @groupId, @assignedTo, @operatorId)
-        `).run({ platform: item.platform, account: item.account, groupId: item.group_id, assignedTo, operatorId });
+          SELECT @platform, @account, @groupId, @assignedTo, @operatorId
+          WHERE NOT EXISTS (
+            SELECT 1 FROM group_assignments
+            WHERE platform = @platform AND account = @account AND group_id = @groupId AND status = 'active'
+          )
+        `).run(params);
+        if (!insert.changes) throw createHttpError(409, 'conversation is already assigned');
         writeConversationTimeline(accountDb, operatorId, 'conversation.bulk.assign', item.platform, item.account, item.group_id, {
           assigned_to: assignedTo,
         });
-        return result.lastInsertRowid;
+        return {
+          assignment: accountDb.prepare('SELECT * FROM group_assignments WHERE id = ?').get(insert.lastInsertRowid),
+          changed: true,
+        };
       });
-      return accountDb.prepare('SELECT * FROM group_assignments WHERE id = ?').get(tx());
+      return tx();
     });
-    return { changed: true, assignment };
+    return result;
   }
 
   if (action === 'release') {
     const released = accountData.withWorkbenchDb(item.platform, item.account, { create: true }, (accountDb) => {
+      const active = accountDb.prepare(`
+        SELECT * FROM group_assignments
+        WHERE platform = @platform AND account = @account AND group_id = @groupId AND status = 'active'
+      `).get({ platform: item.platform, account: item.account, groupId: item.group_id });
+      if (!active) return 0;
+      if (active.assigned_to !== operatorId && !allowManage) {
+        throw createHttpError(403, 'cannot release another operator assignment');
+      }
       const result = accountDb.prepare(`
         UPDATE group_assignments
         SET status = 'released', released_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
-        WHERE platform = @platform AND account = @account AND group_id = @groupId AND status = 'active'
-      `).run({ platform: item.platform, account: item.account, groupId: item.group_id });
+        WHERE id = @id AND status = 'active'
+      `).run({ id: active.id });
       writeConversationTimeline(accountDb, operatorId, 'conversation.bulk.release', item.platform, item.account, item.group_id, {
         released: result.changes,
       });
@@ -2953,11 +3290,12 @@ function listAdminOperators(db) {
   return db.prepare(`
     SELECT id, username, display_name, role, status, created_at, updated_at
     FROM operators
-    ORDER BY
-      CASE WHEN id = '1469' THEN 0 ELSE 1 END,
-      updated_at DESC,
-      id ASC
-  `).all();
+    ORDER BY updated_at DESC, id ASC
+  `).all().sort((left, right) => {
+    const leftAdmin = isWorkbenchSuperAdmin(db, left) ? 1 : 0;
+    const rightAdmin = isWorkbenchSuperAdmin(db, right) ? 1 : 0;
+    return rightAdmin - leftAdmin;
+  });
 }
 
 function upsertAdminOperator(db, input = {}) {
@@ -3001,7 +3339,7 @@ function deleteAdminOperator(db, operatorId, currentOperatorId, accountData) {
   const id = requireText(operatorId, 'id');
   const existing = getAdminOperator(db, id);
   if (!existing) throw createHttpError(404, 'operator not found');
-  if (id === '1469') throw createHttpError(400, 'super admin cannot be deleted');
+  if (isWorkbenchSuperAdmin(db, existing)) throw createHttpError(400, 'super admin cannot be deleted');
   if (id === String(currentOperatorId || '').trim()) throw createHttpError(400, 'current operator cannot be deleted');
 
   const releaseAssignments = (targetDb) => {
@@ -3058,7 +3396,7 @@ function enrichOperatorAccess(db, operator) {
     role: operator.role,
     status: operator.status,
     operator_id: String(operator.id),
-    is_super_admin: Boolean(loadPortalAccess(db, operatorContext).can_admin && String(operator.id) === '1469'),
+    is_super_admin: isWorkbenchSuperAdmin(db, operatorContext),
     roles: listOperatorRoles(db, String(operator.id)),
     portal_access: loadEditablePortalAccess(db, String(operator.id), operatorContext),
     scopes: listEditableOperatorScopes(db, String(operator.id)),
@@ -3564,6 +3902,50 @@ function withOutboundForRequest(accountData, req, fn) {
   });
 }
 
+function openGlobalEventSources({ accountData, runtimeDb, accountDataDir, visibleScope }) {
+  if (!accountData.isolated) return [{ key: 'legacy', db: runtimeDb, owned: false }];
+  return listAccountRefs({ accountDataDir })
+    .filter((ref) => accountScopeContains(visibleScope, ref.platform, ref.account))
+    .filter((ref) => fs.existsSync(ref.paths.runtimeDbPath))
+    .map((ref) => {
+      const db = new Database(ref.paths.runtimeDbPath, { readonly: true, fileMustExist: true });
+      db.pragma('busy_timeout = 3000');
+      const hasEvents = Boolean(db.prepare(`
+        SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'channel_events'
+      `).get());
+      if (!hasEvents) {
+        db.close();
+        return null;
+      }
+      return { key: `${ref.platform}:${ref.account}`, db, owned: true };
+    })
+    .filter(Boolean);
+}
+
+function encodeEventCursor(cursor) {
+  return Buffer.from(JSON.stringify(cursor || {})).toString('base64url');
+}
+
+function decodeEventCursor(value) {
+  if (!value) return {};
+  try {
+    const parsed = JSON.parse(Buffer.from(String(value), 'base64url').toString('utf8'));
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+  } catch (_) {
+    return {};
+  }
+}
+
+function writeGlobalEvent(res, event, payload, cursor) {
+  res.write(`id: ${encodeEventCursor(cursor)}\n`);
+  res.write(`event: ${event}\n`);
+  res.write(`data: ${JSON.stringify(payload || {})}\n\n`);
+}
+
+function getActiveGlobalSseClients() {
+  return activeGlobalSseClients;
+}
+
 function sanitizeSegment(value) {
   return String(value || 'default').replace(/[^a-zA-Z0-9._-]/g, '_');
 }
@@ -3605,5 +3987,6 @@ function createHttpError(statusCode, message) {
 
 module.exports = {
   createWorkbenchRouter,
+  getActiveGlobalSseClients,
   writeDoorbell,
 };

@@ -1,3 +1,7 @@
+process.env.LOCAL_DEV_AUTH_BYPASS = '1';
+process.env.WORKBENCH_LOCAL_DEV_ADMIN_ID = '1469';
+process.env.WORKBENCH_BOOTSTRAP_ADMIN = '1469';
+
 const assert = require('assert');
 const fs = require('fs');
 const os = require('os');

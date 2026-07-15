@@ -12,7 +12,9 @@ const {
   normalizeAccountPlatform,
   sanitizeAccountSegment,
 } = require('../db/account-db');
-const { createOutboundConsumer, markDeliveredByRemoteId } = require('../lib/outbound-consumer');
+const { createOutboundConsumer, markProviderAckByRemoteId } = require('../lib/outbound-consumer');
+const { recordChannelEvent } = require('../lib/channel-events');
+const { installProcessGuards, logEvent } = require('../lib/runtime-observability');
 const {
   clearResolvedOutboundDoorbells,
   createOutboundDoorbellWatcher,
@@ -90,6 +92,15 @@ fs.mkdirSync(OUTBOUND_DOORBELL_DIR, { recursive: true });
 const rawDb = ensureRawDb(RAW_DB_PATH);
 const runtimeDb = openRuntimeDb(RUNTIME_DB_PATH);
 const workbenchDb = openWorkbenchDb(WORKBENCH_DB_PATH);
+let heartbeatTimer = null;
+let sendTimer = null;
+
+installProcessGuards({
+  processName: 'account-runtime-worker',
+  runtimeDb,
+  shutdown: (reason, options) => shutdown(reason, options),
+  context: { platform: PLATFORM, account: ACCOUNT, pid: process.pid },
+});
 
 let stopping = false;
 let channelClient = null;
@@ -127,10 +138,10 @@ start().catch((err) => {
   reportError('start_failed', err);
 });
 
-const heartbeatTimer = setInterval(() => {
+heartbeatTimer = setInterval(() => {
   tick().catch((err) => reportError('tick_failed', err, { fatal: false }));
 }, HEARTBEAT_MS);
-const sendTimer = setInterval(() => {
+sendTimer = setInterval(() => {
   scheduleOutboundDrain(0);
 }, SEND_POLL_MS);
 
@@ -173,7 +184,10 @@ async function drainOutbound() {
   try {
     const result = await outboundConsumer.runOnce();
     clearResolvedOutboundDoorbells({ directory: OUTBOUND_DOORBELL_DIR, db: workbenchDb });
-    if (result.status !== 'idle') log(`outbound result ${JSON.stringify(result)}`);
+    if (result.status !== 'idle') {
+      log(`outbound result ${JSON.stringify(result)}`);
+      recordOutboundStatusEvent(result.outbound_id);
+    }
     drainAgain = !['idle', 'paused', 'rate_limited'].includes(result.status);
   } finally {
     outboundDrainInFlight = false;
@@ -298,14 +312,28 @@ async function startWhatsAppRuntime() {
     handleWaMessage(message).catch((err) => reportError('wa_message_create_failed', err, { fatal: false }));
   });
   client.on('message_ack', (message, ack) => {
-    if (Number(ack) < 2) return;
+    if (Number(ack) < 1) return;
     const remoteMsgId = whatsappMessageId(message);
-    const changed = markDeliveredByRemoteId(workbenchDb, {
+    const changed = markProviderAckByRemoteId(workbenchDb, {
       platform: PLATFORM,
       account: ACCOUNT,
       remoteMsgId,
+      ack,
     });
-    if (changed) recordRuntimeEvent('outbound_delivered', 'info', `WA message delivered: ${remoteMsgId}`);
+    if (changed) {
+      recordRuntimeEvent('outbound_receipt', 'info', `WA message receipt ${ack}: ${remoteMsgId}`);
+      const outbound = workbenchDb.prepare(`
+        SELECT id, group_id FROM outbound_messages
+        WHERE platform = ? AND account = ? AND remote_msg_id = ?
+      `).get(PLATFORM, ACCOUNT, remoteMsgId);
+      recordChannelEvent(runtimeDb, {
+        platform: PLATFORM,
+        account: ACCOUNT,
+        groupId: outbound?.group_id,
+        eventType: 'outbound_status',
+        payload: { outbound_id: outbound?.id || null, ack: Number(ack) },
+      });
+    }
   });
 
   client.on('auth_failure', (message) => {
@@ -481,6 +509,7 @@ async function handleWaMessage(message) {
   });
   lastMessageAt = new Date().toISOString();
   reportHeartbeat('ready', 'message', `WA message ${rowId}`);
+  recordMessageEvent(chatId, message.fromMe ? 'outbound_message' : 'inbound');
 }
 
 async function handleTgBotMessage(message) {
@@ -510,6 +539,7 @@ async function handleTgBotMessage(message) {
   });
   lastMessageAt = new Date().toISOString();
   reportHeartbeat('ready', 'message', `TG bot message ${rowId}`);
+  recordMessageEvent(chatId, sender.is_bot ? 'outbound_message' : 'inbound');
 }
 
 async function handleTgUserEvent(event) {
@@ -542,6 +572,7 @@ async function handleTgUserEvent(event) {
   });
   lastMessageAt = new Date().toISOString();
   reportHeartbeat('ready', 'message', `TG user message ${initialRowId}`);
+  recordMessageEvent(chatId, initialMetadata.direction === 'outbound' ? 'outbound_message' : 'inbound');
 
   const [entities, media] = await Promise.all([
     resolveTelegramMessageEntities(message),
@@ -832,6 +863,29 @@ function parseTaskAttachments(task) {
 }
 
 function decodeAttachment(attachment) {
+  if (attachment.local_path) {
+    const absolutePath = path.resolve(ACCOUNT_PATHS.accountDir, String(attachment.local_path));
+    const relative = path.relative(ACCOUNT_PATHS.accountDir, absolutePath);
+    if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) {
+      throw Object.assign(new Error('attachment path escaped account directory'), { code: 'ATTACHMENT_INVALID' });
+    }
+    if (!fs.existsSync(absolutePath) || !fs.statSync(absolutePath).isFile()) {
+      throw Object.assign(new Error('attachment file is missing'), { code: 'ATTACHMENT_DATA_INVALID' });
+    }
+    const buffer = fs.readFileSync(absolutePath);
+    if (!buffer.length) {
+      throw Object.assign(new Error('attachment file is empty'), { code: 'ATTACHMENT_DATA_EMPTY' });
+    }
+    const type = String(attachment.type || 'application/octet-stream').trim() || 'application/octet-stream';
+    return {
+      id: attachment.id,
+      name: String(attachment.name || 'attachment').replace(/[\\/\r\n]/g, '_').slice(0, 180) || 'attachment',
+      type,
+      kind: String(attachment.kind || (type.startsWith('image/') ? 'image' : 'file')).trim().toLowerCase(),
+      base64: buffer.toString('base64'),
+      buffer,
+    };
+  }
   const dataUrl = String(attachment.data_url || attachment.dataUrl || '').trim();
   const match = dataUrl.match(/^data:([^;,]+)?;base64,(.+)$/s);
   if (!match) {
@@ -1271,7 +1325,7 @@ function upsertProfile(status, displayName) {
   });
 }
 
-async function shutdown() {
+async function shutdown(_reason = 'signal', { exitCode = 0 } = {}) {
   if (stopping) return;
   stopping = true;
   log('stopping');
@@ -1280,6 +1334,8 @@ async function shutdown() {
   clearTimeout(outboundDrainTimer);
   outboundDoorbellWatcher.close();
   try {
+    const drained = await outboundConsumer.drainCurrent(30000);
+    if (!drained) log('outbound drain timed out; lease recovery will pause the unresolved task');
     if (PLATFORM === 'wa' && channelClient && typeof channelClient.destroy === 'function') {
       await channelClient.destroy();
     } else if (channelClient && typeof channelClient.close === 'function') {
@@ -1296,7 +1352,29 @@ async function shutdown() {
   rawDb.close();
   runtimeDb.close();
   workbenchDb.close();
-  process.exit(0);
+  process.exit(exitCode);
+}
+
+function recordMessageEvent(groupId, eventType) {
+  recordChannelEvent(runtimeDb, {
+    platform: PLATFORM,
+    account: ACCOUNT,
+    groupId,
+    eventType,
+  });
+}
+
+function recordOutboundStatusEvent(outboundId) {
+  if (!outboundId) return;
+  const outbound = workbenchDb.prepare('SELECT id, group_id, status FROM outbound_messages WHERE id = ?').get(outboundId);
+  if (!outbound) return;
+  recordChannelEvent(runtimeDb, {
+    platform: PLATFORM,
+    account: ACCOUNT,
+    groupId: outbound.group_id,
+    eventType: 'outbound_status',
+    payload: { outbound_id: outbound.id, status: outbound.status },
+  });
 }
 
 function hasTelegramMedia(message) {
@@ -1350,5 +1428,5 @@ function envFlag(value, fallback) {
 }
 
 function log(message) {
-  console.log(`[workbench-account-worker ${PLATFORM}:${ACCOUNT}] ${message}`);
+  logEvent('info', 'account-runtime-worker', 'runtime', message, { platform: PLATFORM, account: ACCOUNT });
 }

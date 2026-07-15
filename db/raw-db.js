@@ -8,6 +8,8 @@ function ensureRawDb(dbPath = DEFAULT_RAW_DB_PATH) {
   ensureDirectory(dbPath);
   const db = new Database(dbPath);
   db.pragma('journal_mode = WAL');
+  db.pragma('synchronous = NORMAL');
+  db.pragma('wal_autocheckpoint = 2000');
   db.pragma('busy_timeout = 5000');
   db.exec(`
     CREATE TABLE IF NOT EXISTS messages (
@@ -19,6 +21,7 @@ function ensureRawDb(dbPath = DEFAULT_RAW_DB_PATH) {
       group_name TEXT,
       sender_id TEXT,
       sender_name TEXT,
+      direction TEXT,
       content TEXT,
       has_media INTEGER NOT NULL DEFAULT 0,
       media_path TEXT,
@@ -97,7 +100,22 @@ function migrateRawDbSchema(db) {
   ensureColumn(db, 'messages', 'media_mime', 'TEXT');
   ensureColumn(db, 'messages', 'media_size', 'INTEGER');
   ensureColumn(db, 'messages', 'media_sha256', 'TEXT');
+  ensureColumn(db, 'messages', 'direction', 'TEXT');
   ensureColumn(db, 'messages', 'updated_at', 'TEXT');
+  db.prepare(`
+    UPDATE messages
+    SET direction = CASE
+      WHEN lower(REPLACE(COALESCE(raw_data, ''), ' ', '')) LIKE '%"fromme":true%'
+        OR lower(REPLACE(COALESCE(raw_data, ''), ' ', '')) LIKE '%"is_from_me":true%'
+        OR lower(REPLACE(COALESCE(raw_data, ''), ' ', '')) LIKE '%"direction":"outbound"%'
+        OR lower(REPLACE(COALESCE(raw_data, ''), ' ', '')) LIKE '%"out":true%'
+      THEN 'outbound' ELSE 'inbound' END
+    WHERE direction IS NULL OR direction = ''
+  `).run();
+  db.prepare(`
+    CREATE INDEX IF NOT EXISTS idx_messages_direction_group
+      ON messages(platform, receiver_account, group_id, direction, id)
+  `).run();
   db.prepare(`UPDATE messages SET updated_at = COALESCE(updated_at, created_at, CURRENT_TIMESTAMP) WHERE updated_at IS NULL`).run();
   ensureColumn(db, 'channel_account_registry', 'login_type', "TEXT NOT NULL DEFAULT 'unknown'");
   ensureColumn(db, 'channel_account_registry', 'account_role', "TEXT NOT NULL DEFAULT 'service'");
@@ -295,6 +313,7 @@ function upsertRawMessage({
     groupName: String(groupName || groupId || nativeChatId || '').trim() || null,
     senderId: String(senderId || '').trim() || null,
     senderName: String(senderName || '').trim() || null,
+    direction: inferStoredDirection(rawData),
     content: String(content || ''),
     hasMedia: hasMedia ? 1 : 0,
     mediaPath: mediaPath || null,
@@ -314,12 +333,12 @@ function upsertRawMessage({
       rawDb.prepare(`
         INSERT INTO messages (
           platform, receiver_account, message_id, group_id, group_name,
-          sender_id, sender_name, content, has_media, media_path,
+          sender_id, sender_name, direction, content, has_media, media_path,
           media_name, media_mime, media_size, media_sha256, timestamp, raw_data
         )
         VALUES (
           @platform, @account, @messageId, @groupId, @groupName,
-          @senderId, @senderName, @content, @hasMedia, @mediaPath,
+          @senderId, @senderName, @direction, @content, @hasMedia, @mediaPath,
           @mediaName, @mediaMime, @mediaSize, @mediaSha256, @timestamp, @rawJson
         )
         ON CONFLICT(platform, message_id) DO UPDATE SET
@@ -328,6 +347,7 @@ function upsertRawMessage({
           group_name = COALESCE(NULLIF(excluded.group_name, ''), messages.group_name),
           sender_id = COALESCE(NULLIF(excluded.sender_id, ''), messages.sender_id),
           sender_name = COALESCE(NULLIF(excluded.sender_name, ''), messages.sender_name),
+          direction = COALESCE(NULLIF(excluded.direction, ''), messages.direction),
           content = excluded.content,
           has_media = excluded.has_media,
           media_path = COALESCE(excluded.media_path, messages.media_path),
@@ -366,6 +386,12 @@ function upsertRawMessage({
   } finally {
     if (closeOwned) rawDb.close();
   }
+}
+
+function inferStoredDirection(rawData) {
+  if (!rawData || typeof rawData !== 'object') return 'inbound';
+  if (rawData.fromMe === true || rawData.is_from_me === true || rawData.out === true) return 'outbound';
+  return String(rawData.direction || '').toLowerCase() === 'outbound' ? 'outbound' : 'inbound';
 }
 
 function normalizePlatform(platform) {

@@ -5,8 +5,10 @@ const path = require('path');
 const { openWorkbenchDb } = require('../db/workbench-db');
 const {
   activeBreaker,
+  claimNextPending,
   createOutboundConsumer,
   markDeliveredByRemoteId,
+  markProviderAckByRemoteId,
   toSqlTimestamp,
 } = require('../lib/outbound-consumer');
 
@@ -40,6 +42,24 @@ async function main() {
     }), 1);
     row = db.prepare('SELECT * FROM outbound_messages WHERE client_msg_id = ?').get('ok-1');
     assert.strictEqual(row.status, 'delivered');
+    assert.strictEqual(markProviderAckByRemoteId(db, {
+      platform: 'wa', account: 'nanya_wa', remoteMsgId: row.remote_msg_id, ack: 1,
+    }), 1);
+    row = db.prepare('SELECT * FROM outbound_messages WHERE client_msg_id = ?').get('ok-1');
+    assert.strictEqual(row.status, 'delivered');
+    assert.strictEqual(markProviderAckByRemoteId(db, {
+      platform: 'wa', account: 'nanya_wa', remoteMsgId: row.remote_msg_id, ack: 3,
+    }), 1);
+    row = db.prepare('SELECT * FROM outbound_messages WHERE client_msg_id = ?').get('ok-1');
+    assert.strictEqual(row.status, 'read');
+    assert.strictEqual(row.provider_ack, 3);
+    assert.ok(row.read_at);
+    assert.strictEqual(markDeliveredByRemoteId(db, {
+      platform: 'wa', account: 'nanya_wa', remoteMsgId: row.remote_msg_id,
+    }), 1);
+    row = db.prepare('SELECT * FROM outbound_messages WHERE client_msg_id = ?').get('ok-1');
+    assert.strictEqual(row.status, 'read');
+    assert.strictEqual(row.provider_ack, 3);
 
     insertOutbound(db, {
       clientMsgId: 'stale-1',
@@ -48,8 +68,21 @@ async function main() {
       sendingStartedAt: toSqlTimestamp(Date.now() - 120000),
     });
     const stale = await consumer.runOnce();
-    assert.strictEqual(stale.status, 'sent');
+    assert.strictEqual(stale.status, 'idle');
     row = db.prepare('SELECT * FROM outbound_messages WHERE client_msg_id = ?').get('stale-1');
+    assert.strictEqual(row.status, 'paused');
+    assert.strictEqual(row.error_code, 'DELIVERY_OUTCOME_UNKNOWN');
+
+    insertOutbound(db, {
+      clientMsgId: 'stale-known-1',
+      text: 'stale known result',
+      status: 'sending',
+      sendingStartedAt: toSqlTimestamp(Date.now() - 120000),
+      remoteMsgId: 'already-returned-by-channel',
+    });
+    const staleKnown = await consumer.runOnce();
+    assert.strictEqual(staleKnown.status, 'idle');
+    row = db.prepare('SELECT * FROM outbound_messages WHERE client_msg_id = ?').get('stale-known-1');
     assert.strictEqual(row.status, 'sent');
 
     const attachmentJson = JSON.stringify([{
@@ -72,6 +105,7 @@ async function main() {
       account: 'jason_tg',
       minIntervalMs: 0,
       perMinuteLimit: 100,
+      retryBaseMs: 0,
       sendMessage: async () => {
         const err = new Error('temporary channel failure');
         err.code = 'TEMP_FAIL';
@@ -82,10 +116,13 @@ async function main() {
     insertOutbound(db, { platform: 'tg', account: 'jason_tg', clientMsgId: 'fail-2' });
     insertOutbound(db, { platform: 'tg', account: 'jason_tg', clientMsgId: 'fail-3' });
 
-    assert.strictEqual((await failingConsumer.runOnce()).status, 'failed');
-    assert.strictEqual((await failingConsumer.runOnce()).status, 'failed');
-    assert.strictEqual((await failingConsumer.runOnce()).status, 'failed');
+    assert.strictEqual((await failingConsumer.runOnce()).status, 'retry_scheduled');
+    assert.strictEqual((await failingConsumer.runOnce()).status, 'retry_scheduled');
+    assert.strictEqual((await failingConsumer.runOnce()).status, 'paused');
     assert.ok(activeBreaker(db, 'tg', 'jason_tg'));
+    row = db.prepare('SELECT * FROM outbound_messages WHERE client_msg_id = ?').get('fail-1');
+    assert.strictEqual(row.status, 'dead');
+    assert.strictEqual(db.prepare('SELECT COUNT(*) AS count FROM outbound_attempts WHERE outbound_id = ?').get(row.id).count, 3);
 
     insertOutbound(db, { platform: 'tg', account: 'jason_tg', clientMsgId: 'paused-1' });
     const paused = await failingConsumer.runOnce();
@@ -94,6 +131,17 @@ async function main() {
     assert.strictEqual(row.status, 'paused');
     assert.strictEqual(row.error_code, 'CIRCUIT_BREAKER');
     failingConsumer.close();
+
+    insertOutbound(db, { account: 'lease-account', clientMsgId: 'lease-1' });
+    const leaseClaim = claimNextPending(db, {
+      platform: 'wa', account: 'lease-account', workerId: 'worker-a', leaseMs: 30000,
+    });
+    assert.ok(leaseClaim);
+    assert.strictEqual(claimNextPending(db, {
+      platform: 'wa', account: 'lease-account', workerId: 'worker-b', leaseMs: 30000,
+    }), null);
+    row = db.prepare('SELECT * FROM outbound_messages WHERE client_msg_id = ?').get('lease-1');
+    assert.strictEqual(row.owner_worker_id, 'worker-a');
 
     insertOutbound(db, { platform: 'tg', account: 'tg-flood', clientMsgId: 'flood-1' });
     const floodConsumer = createOutboundConsumer({
@@ -147,17 +195,18 @@ function insertOutbound(db, {
   status = 'pending',
   sendingStartedAt = null,
   retryCount = 0,
+  remoteMsgId = null,
 } = {}) {
   db.prepare(`
     INSERT INTO outbound_messages (
       client_msg_id, platform, account, group_id, chat_id, text, attachment_json,
-      status, created_by, sending_started_at, retry_count
+      status, created_by, sending_started_at, retry_count, remote_msg_id
     )
     VALUES (
       @clientMsgId, @platform, @account, @groupId, @groupId, @text, @attachmentJson,
-      @status, 'demo-operator', @sendingStartedAt, @retryCount
+      @status, 'demo-operator', @sendingStartedAt, @retryCount, @remoteMsgId
     )
-  `).run({ clientMsgId, platform, account, groupId, text, attachmentJson, status, sendingStartedAt, retryCount });
+  `).run({ clientMsgId, platform, account, groupId, text, attachmentJson, status, sendingStartedAt, retryCount, remoteMsgId });
 }
 
 main().catch((err) => {

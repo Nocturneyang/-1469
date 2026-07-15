@@ -87,11 +87,16 @@ CREATE TABLE IF NOT EXISTS outbound_messages (
   retry_count INTEGER NOT NULL DEFAULT 0,
   error_code TEXT,
   error_message TEXT,
+  provider_ack INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   sending_started_at TEXT,
   sent_at TEXT,
   delivered_at TEXT,
+  read_at TEXT,
+  owner_worker_id TEXT,
+  lease_expires_at TEXT,
+  next_attempt_at TEXT,
   UNIQUE(created_by, client_msg_id),
   FOREIGN KEY(retry_of) REFERENCES outbound_messages(id)
 );
@@ -100,6 +105,42 @@ CREATE INDEX IF NOT EXISTS idx_outbound_delivery_queue
   ON outbound_messages(platform, account, status, created_at);
 CREATE INDEX IF NOT EXISTS idx_outbound_conversation
   ON outbound_messages(platform, account, group_id, created_at);
+CREATE TABLE IF NOT EXISTS outbound_attempts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  outbound_id INTEGER NOT NULL,
+  attempt_number INTEGER NOT NULL,
+  worker_id TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'attempting',
+  remote_msg_id TEXT,
+  error_code TEXT,
+  error_message TEXT,
+  started_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  lease_expires_at TEXT,
+  completed_at TEXT,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(outbound_id, attempt_number),
+  FOREIGN KEY(outbound_id) REFERENCES outbound_messages(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_outbound_attempts_outbound
+  ON outbound_attempts(outbound_id, attempt_number);
+
+CREATE TABLE IF NOT EXISTS outbound_attachments (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  outbound_id INTEGER NOT NULL,
+  file_key TEXT NOT NULL,
+  relative_path TEXT NOT NULL,
+  sha256 TEXT NOT NULL,
+  mime TEXT NOT NULL,
+  size INTEGER NOT NULL,
+  name TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(outbound_id, file_key),
+  FOREIGN KEY(outbound_id) REFERENCES outbound_messages(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_outbound_attachments_outbound
+  ON outbound_attachments(outbound_id);
 
 CREATE TABLE IF NOT EXISTS group_assignments (
   id INTEGER PRIMARY KEY AUTOINCREMENT,

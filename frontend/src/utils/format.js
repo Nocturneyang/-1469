@@ -94,6 +94,7 @@ export function statusText(status) {
     sending: 'sending',
     sent: 'sent',
     delivered: 'delivered',
+    read: 'read',
     failed: 'failed',
     dead: 'dead',
     paused: 'paused',

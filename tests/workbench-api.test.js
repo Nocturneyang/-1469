@@ -1,3 +1,7 @@
+process.env.LOCAL_DEV_AUTH_BYPASS = '1';
+process.env.WORKBENCH_LOCAL_DEV_ADMIN_ID = '1469';
+process.env.WORKBENCH_BOOTSTRAP_ADMIN = '1469';
+
 const assert = require('assert');
 const fs = require('fs');
 const os = require('os');
@@ -12,12 +16,13 @@ async function main() {
   const workbenchDbPath = path.join(tmpDir, 'workbench.sqlite');
   const authDbPath = path.join(tmpDir, 'auth.sqlite');
   const outboxDir = path.join(tmpDir, 'outbox');
+  const accountDataDir = path.join(tmpDir, 'accounts');
   seedRawDb(rawDbPath);
   seedLegacyWorkbenchDb(workbenchDbPath);
 
   const workbenchDb = openWorkbenchDb(workbenchDbPath);
   assertLegacyWorkbenchMigration(workbenchDb);
-  const app = createApp({ authDbPath, workbenchDb, rawDbPath, outboxDir });
+  const app = createApp({ authDbPath, workbenchDb, rawDbPath, outboxDir, accountDataDir, writeRateLimit: { max: 500 } });
   const { server, port } = await listen(app);
   const baseUrl = `http://127.0.0.1:${port}/api/workbench`;
 
@@ -606,7 +611,10 @@ async function main() {
     assert.strictEqual(storedAttachments.length, 1);
     assert.strictEqual(storedAttachments[0].name, 'paste.png');
     assert.strictEqual(storedAttachments[0].kind, 'image');
-    assert.ok(storedAttachments[0].data_url.startsWith('data:image/png;base64,'));
+    assert.strictEqual(storedAttachments[0].data_url, undefined);
+    assert.ok(storedAttachments[0].local_path.startsWith('attachments/outbound/'));
+    assert.match(storedAttachments[0].sha256, /^[a-f0-9]{64}$/);
+    assert.strictEqual(workbenchDb.prepare('SELECT COUNT(*) AS count FROM outbound_attachments WHERE outbound_id = ?').get(attachmentReply.outbound_id).count, 1);
 
     const hiddenReply = await requestRaw(`${baseUrl}/reply`, {
       method: 'POST',
@@ -723,8 +731,25 @@ async function main() {
     assert.match(realtimeReady.contentType, /^text\/event-stream/);
     assert.match(realtimeReady.chunk, /event: ready/);
     assert.match(realtimeReady.chunk, /"group_id":"group-1"/);
+    const globalReady = await readFirstServerEvent(`${baseUrl}/events`);
+    assert.strictEqual(globalReady.status, 200);
+    assert.match(globalReady.contentType, /^text\/event-stream/);
+    assert.match(globalReady.chunk, /event: ready/);
+    const globalReadEvent = await readServerEventAfterAction(`${baseUrl}/events`, 'conversation_read', () => requestJson(`${baseUrl}/messages/read`, {
+      method: 'POST',
+      body: { platform: 'wa', account: 'nanya_wa', group_id: 'group-1', last_read_message_id: 0 },
+    }));
+    assert.match(globalReadEvent, /event: conversation_read/);
+    assert.match(globalReadEvent, /"group_id":"group-1"/);
     const attachmentMessage = messages.messages.find((message) => message.outbound_id === attachmentReply.outbound_id);
     assert.strictEqual(attachmentMessage.attachments[0].name, 'paste.png');
+    assert.ok(attachmentMessage.attachments[0].media_url.startsWith('/api/workbench/outbound/'));
+    const attachmentDownload = await fetch(`http://127.0.0.1:${port}${attachmentMessage.attachments[0].media_url}`, {
+      headers: { 'x-operator-id': '1469' },
+    });
+    assert.strictEqual(attachmentDownload.status, 200);
+    assert.strictEqual(attachmentDownload.headers.get('content-type'), 'image/png');
+    assert.ok((await attachmentDownload.arrayBuffer()).byteLength > 0);
     const quotedMessage = messages.messages.find((message) => message.outbound_id === firstReply.outbound_id);
     assert.strictEqual(quotedMessage.quote_msg_id, 'm-2');
     const searchedMessages = await requestJson(`${baseUrl}/groups/group-1/messages?platform=wa&account=nanya_wa&message_search=${encodeURIComponent('谢谢')}`);
@@ -739,6 +764,32 @@ async function main() {
     assert.strictEqual(openedGroups.groups.find((group) => group.group_id === 'group-1').conversation_status, 'resolved');
     assert.strictEqual(openedGroups.groups.find((group) => group.group_id === 'group-1').starred, true);
     assert.strictEqual(openedGroups.groups.find((group) => group.group_id === 'group-1').notes_count, 1);
+
+    const claimA = await createScopedOperator(baseUrl, 'claim-a', {
+      portal: { can_workbench: true }, scope: { can_view: true, can_assign: true },
+    });
+    const claimB = await createScopedOperator(baseUrl, 'claim-b', {
+      portal: { can_workbench: true }, scope: { can_view: true, can_assign: true },
+    });
+    const claimed = await requestJson(`${baseUrl}/groups/group-1/assign`, {
+      method: 'POST', headers: { 'x-operator-id': claimA.id },
+      body: { platform: 'wa', account: 'nanya_wa' },
+    });
+    assert.strictEqual(claimed.assignment.assigned_to, claimA.id);
+    const duplicateClaim = await requestRaw(`${baseUrl}/groups/group-1/assign`, {
+      method: 'POST', headers: { 'x-operator-id': claimB.id },
+      body: { platform: 'wa', account: 'nanya_wa' },
+    });
+    assert.strictEqual(duplicateClaim.status, 409);
+    const foreignRelease = await requestRaw(`${baseUrl}/groups/group-1/release`, {
+      method: 'POST', headers: { 'x-operator-id': claimB.id },
+      body: { platform: 'wa', account: 'nanya_wa' },
+    });
+    assert.strictEqual(foreignRelease.status, 403);
+    const adminRelease = await requestJson(`${baseUrl}/groups/group-1/release`, {
+      method: 'POST', body: { platform: 'wa', account: 'nanya_wa' },
+    });
+    assert.strictEqual(adminRelease.released, 1);
 
     const sentOutbound = workbenchDb.prepare(`
       INSERT INTO outbound_messages (
@@ -1192,6 +1243,32 @@ async function readFirstServerEvent(url) {
   }
 }
 
+async function readServerEventAfterAction(url, eventName, action) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 5000);
+  const response = await fetch(url, {
+    headers: { 'x-operator-id': '1469' },
+    signal: controller.signal,
+  });
+  const reader = response.body.getReader();
+  let content = '';
+  try {
+    const ready = await reader.read();
+    content += Buffer.from(ready.value || []).toString('utf8');
+    await action();
+    while (!content.includes(`event: ${eventName}`)) {
+      const result = await reader.read();
+      if (result.done) break;
+      content += Buffer.from(result.value || []).toString('utf8');
+    }
+    return content;
+  } finally {
+    clearTimeout(timeout);
+    controller.abort();
+    await reader.cancel().catch(() => {});
+  }
+}
+
 async function createScopedOperator(baseUrl, username, { status = 'active', portal = {}, scope = {} } = {}) {
   const created = await requestJson(`${baseUrl}/admin/users`, {
     method: 'POST',
@@ -1221,7 +1298,7 @@ async function createScopedOperator(baseUrl, username, { status = 'active', port
         native_group_id: '*',
         can_view: Boolean(scope.can_view),
         can_reply: Boolean(scope.can_reply),
-        can_assign: false,
+        can_assign: Boolean(scope.can_assign),
         can_manage: Boolean(scope.can_manage),
       }],
     },

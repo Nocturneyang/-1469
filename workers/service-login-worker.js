@@ -25,6 +25,7 @@ const {
   cancelSupersededLoginRequests,
   updateServiceAccountLoginRequest,
 } = require('../lib/service-account-login-store');
+const { installProcessGuards, logEvent } = require('../lib/runtime-observability');
 
 const DATA_DIR = resolveDataDir();
 const WORKER_PLATFORM = normalizeAccountPlatform(process.env.WORKBENCH_WORKER_PLATFORM);
@@ -58,6 +59,14 @@ const WORKER_RUN_ID = `${Date.now()}-${process.pid}`;
 const runtimeDb = openRuntimeDb(ACCOUNT_SCOPED
   ? path.resolve(process.env.WORKBENCH_ACCOUNT_RUNTIME_DB_PATH || ACCOUNT_PATHS.runtimeDbPath)
   : path.resolve(process.env.WORKBENCH_RUNTIME_DB_PATH || DEFAULT_RUNTIME_DB_PATH));
+let pollTimer = null;
+let stopping = false;
+installProcessGuards({
+  processName: 'service-login-worker',
+  runtimeDb,
+  shutdown: (reason, options) => shutdown(reason, options),
+  context: { platform: WORKER_PLATFORM || null, account: WORKER_ACCOUNT || null, pid: process.pid },
+});
 const activeWaByRequest = new Map();
 const activeWaByAccount = new Map();
 
@@ -67,7 +76,7 @@ fs.mkdirSync(TG_SESSION_DIR, { recursive: true });
 
 log(`started, outbox=${OUTBOX_DIR}${ACCOUNT_SCOPED ? `, account=${WORKER_PLATFORM}:${WORKER_ACCOUNT}` : ''}${ACCOUNT_DB_MODE ? ', account-db-mode=isolated' : ''}`);
 tick().catch((err) => log(`initial tick failed: ${err.stack || err.message}`));
-const pollTimer = setInterval(() => {
+pollTimer = setInterval(() => {
   tick().catch((err) => log(`tick failed: ${err.stack || err.message}`));
 }, POLL_INTERVAL_MS);
 
@@ -1137,7 +1146,7 @@ function mapRequestRow(row) {
   };
 }
 
-function stopWaRequest(requestId) {
+async function stopWaRequest(requestId) {
   const state = activeWaByRequest.get(requestId);
   if (!state) return;
   activeWaByRequest.delete(requestId);
@@ -1145,7 +1154,7 @@ function stopWaRequest(requestId) {
     activeWaByAccount.delete(state.account);
   }
   try {
-    state.client.destroy();
+    await state.client.destroy();
   } catch (_) {}
 }
 
@@ -1173,15 +1182,20 @@ function envFlag(value, fallback) {
 }
 
 function log(message) {
-  console.log(`[workbench-login-worker] ${message}`);
+  logEvent('info', 'service-login-worker', 'runtime', message, {
+    platform: WORKER_PLATFORM || undefined,
+    account: WORKER_ACCOUNT || undefined,
+  });
 }
 
-function shutdown() {
+async function shutdown(_reason = 'signal', { exitCode = 0 } = {}) {
+  if (stopping) return;
+  stopping = true;
   log('stopping');
   clearInterval(pollTimer);
   if (!ACCOUNT_SCOPED) reportProcessHeartbeat('stopped');
-  for (const requestId of [...activeWaByRequest.keys()]) stopWaRequest(requestId);
+  await Promise.all([...activeWaByRequest.keys()].map((requestId) => stopWaRequest(requestId)));
   releaseAccountLease();
   runtimeDb.close();
-  process.exit(0);
+  process.exit(exitCode);
 }

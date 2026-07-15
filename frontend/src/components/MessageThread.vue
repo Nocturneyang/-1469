@@ -99,7 +99,16 @@
               <div v-if="message.error_display || message.error_message" class="status-detail">{{ message.error_display || message.error_message }}</div>
             </article>
             <footer class="message-footer">
-              <span v-if="statusText(message.status)" class="status" :class="`status-${message.status}`">{{ statusText(message.status) }}</span>
+              <span
+                v-if="receiptStatus(message.status)"
+                class="delivery-receipt"
+                :class="`receipt-${receiptStatus(message.status)}`"
+                :title="receiptTitle(message.status)"
+                :aria-label="receiptTitle(message.status)"
+              >
+                <span>✓</span><span v-if="receiptStatus(message.status) !== 'sent'">✓</span>
+              </span>
+              <span v-else-if="statusText(message.status)" class="status" :class="`status-${message.status}`">{{ statusText(message.status) }}</span>
               <button type="button" class="message-action-button" @click="$emit('quote', message)">引用</button>
               <button v-if="['pending', 'paused'].includes(message.status) && canSend(group)" type="button" class="message-action-button" @click="$emit('cancel', message)">取消</button>
               <button v-if="message.outbound_id && ['failed', 'dead', 'paused', 'canceled'].includes(message.status) && canSend(group)" type="button" class="message-action-button danger" @click="$emit('retry', message)">重试</button>
@@ -161,6 +170,8 @@ const canSubmitManualGroup = computed(() => canManageManualGroups.value && !prop
 
 function platformShort(platform) { return platform === 'wa' ? 'W' : platform === 'tg' ? 'T' : '?'; }
 function canSend(group) { return Boolean(group && group.send_enabled !== false && Number(group.send_enabled) !== 0 && (!group.permissions || group.permissions.can_reply !== false)); }
+function receiptStatus(status) { return ['sent', 'delivered', 'read'].includes(status) ? status : ''; }
+function receiptTitle(status) { return ({ sent: '已发送到渠道', delivered: '客户设备已收到', read: '客户已读' })[status] || ''; }
 function isWorkbenchTag(label) { return Number(label?.is_manual) === 1 || String(label?.source || '').startsWith('manual'); }
 function labelKey(label) { return label.id || label.native_label_id || label.native_group_id || label.name; }
 function labelDisplayName(label) { const name = label?.name || label?.native_label_id || label?.native_group_id || ''; return isWorkbenchTag(label) && label?.parent_name ? `${label.parent_name} / ${name}` : name; }

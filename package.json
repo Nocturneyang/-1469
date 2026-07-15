@@ -17,6 +17,7 @@
     "backup:daily": "node scripts/sqlite-backup.js daily",
     "backup:weekly": "node scripts/sqlite-backup.js weekly",
     "restore:stage": "node scripts/sqlite-restore-stage.js",
+    "maintenance:daily": "node scripts/sqlite-maintenance.js",
     "predeploy:check": "node scripts/predeploy-check.js",
     "init-db": "node scripts/init-db.js",
     "seed:demo": "node scripts/seed-demo-raw-db.js",

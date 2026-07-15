@@ -286,6 +286,27 @@ export function subscribeConversationEvents(group, handlers = {}) {
   };
 }
 
+export function subscribeWorkbenchEvents(handlers = {}) {
+  if (typeof window.EventSource !== 'function') return () => {};
+  const source = new window.EventSource('/api/workbench/events', { withCredentials: true });
+  const eventNames = ['inbound', 'outbound_message', 'outbound_status', 'assignment', 'conversation_read'];
+  const listeners = new Map();
+  eventNames.forEach((eventName) => {
+    const listener = (event) => handlers.onEvent?.(parseEventData(event));
+    listeners.set(eventName, listener);
+    source.addEventListener(eventName, listener);
+  });
+  const onReady = (event) => handlers.onReady?.(parseEventData(event));
+  source.addEventListener('ready', onReady);
+  source.onopen = () => handlers.onOpen?.();
+  source.onerror = (event) => handlers.onError?.(event);
+  return () => {
+    listeners.forEach((listener, eventName) => source.removeEventListener(eventName, listener));
+    source.removeEventListener('ready', onReady);
+    source.close();
+  };
+}
+
 function parseEventData(event) {
   try {
     return JSON.parse(event?.data || '{}');

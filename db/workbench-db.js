@@ -23,8 +23,11 @@ function openWorkbenchDb(dbPath = DEFAULT_WORKBENCH_DB_PATH, options = {}) {
   ensureDirectory(dbPath);
   const db = new Database(dbPath);
   db.pragma('journal_mode = WAL');
+  db.pragma('synchronous = NORMAL');
+  db.pragma('wal_autocheckpoint = 2000');
   db.pragma('busy_timeout = 5000');
   db.exec(fs.readFileSync(schemaPath, 'utf8'));
+  migrateOutboundReliability(db);
   migrateAccessControlSchema(db);
   seedAccessControl(db);
   migrateManualServiceGroups(db);
@@ -33,6 +36,22 @@ function openWorkbenchDb(dbPath = DEFAULT_WORKBENCH_DB_PATH, options = {}) {
   seedDefaultSuperAdmin(db);
   seedDefaultOperator(db);
   return db;
+}
+
+function migrateOutboundReliability(db) {
+  const columns = new Set(db.prepare('PRAGMA table_info(outbound_messages)').all().map((column) => column.name));
+  const addColumn = (name, definition) => {
+    if (!columns.has(name)) db.prepare(`ALTER TABLE outbound_messages ADD COLUMN ${name} ${definition}`).run();
+  };
+  addColumn('provider_ack', 'INTEGER NOT NULL DEFAULT 0');
+  addColumn('read_at', 'TEXT');
+  addColumn('owner_worker_id', 'TEXT');
+  addColumn('lease_expires_at', 'TEXT');
+  addColumn('next_attempt_at', 'TEXT');
+  db.prepare(`
+    CREATE INDEX IF NOT EXISTS idx_outbound_claimable
+      ON outbound_messages(platform, account, status, next_attempt_at, created_at)
+  `).run();
 }
 
 function migrateCustomerTypes(db) {
@@ -145,7 +164,11 @@ function seedDefaultOperator(db) {
 }
 
 function seedDefaultSuperAdmin(db) {
-  const defaults = ['1469'];
+  const defaults = splitList(
+    process.env.WORKBENCH_BOOTSTRAP_ADMIN ||
+    process.env.WORKBENCH_SUPER_ADMINS ||
+    (process.env.LOCAL_DEV_AUTH_BYPASS === '1' ? process.env.WORKBENCH_LOCAL_DEV_ADMIN_ID : ''),
+  );
   const insertSuperAdmin = db.prepare(`
     INSERT INTO workbench_super_admins (identity, display_name, status, created_by)
     VALUES (?, ?, 'active', 'system')
@@ -171,6 +194,10 @@ function seedDefaultSuperAdmin(db) {
     insertPortalAccess.run(identity);
     setOperatorRoles(db, identity, ['super_admin'], 'system');
   });
+}
+
+function splitList(value) {
+  return String(value || '').split(',').map((item) => item.trim()).filter(Boolean);
 }
 
 function ensureOperator(db, operatorId, displayName = operatorId) {

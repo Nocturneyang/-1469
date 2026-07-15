@@ -11,6 +11,8 @@ function openRuntimeDb(dbPath = DEFAULT_RUNTIME_DB_PATH) {
   // API 轮询和 WA/TG worker 会同时打开并写入账号 runtime.sqlite。
   // 先设置等待锁，避免 journal_mode=WAL 在并发打开时直接抛 SQLITE_BUSY。
   db.pragma('journal_mode = WAL');
+  db.pragma('synchronous = NORMAL');
+  db.pragma('wal_autocheckpoint = 2000');
   db.exec(`
     CREATE TABLE IF NOT EXISTS collector_heartbeats (
       account_id TEXT NOT NULL,
@@ -116,6 +118,16 @@ function openRuntimeDb(dbPath = DEFAULT_RUNTIME_DB_PATH) {
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
 
+    CREATE TABLE IF NOT EXISTS channel_events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      platform TEXT NOT NULL,
+      account TEXT NOT NULL,
+      group_id TEXT,
+      event_type TEXT NOT NULL,
+      payload_json TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
     CREATE INDEX IF NOT EXISTS idx_runtime_events_account_time
       ON runtime_events(account_id, created_at);
     CREATE INDEX IF NOT EXISTS idx_channel_sync_tasks_status
@@ -124,6 +136,10 @@ function openRuntimeDb(dbPath = DEFAULT_RUNTIME_DB_PATH) {
       ON service_account_login_requests(platform, account, created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_account_worker_leases_expiry
       ON account_worker_leases(expires_at);
+    CREATE INDEX IF NOT EXISTS idx_channel_events_cursor
+      ON channel_events(id, platform, account);
+    CREATE INDEX IF NOT EXISTS idx_channel_events_created
+      ON channel_events(created_at);
   `);
   return db;
 }
