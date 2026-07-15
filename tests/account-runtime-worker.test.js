@@ -10,6 +10,11 @@ const { openWorkbenchDb } = require('../db/workbench-db');
 const { normalizeChannelLabelName, replaceChannelSnapshot } = require('../lib/channel-sync-store');
 const { channelSyncRetryDelay } = require('../lib/channel-sync-retry');
 const {
+  readWhatsAppChatSnapshot,
+  toWhatsAppGroup,
+  whatsappChatId,
+} = require('../lib/wa-chat-snapshot');
+const {
   detectImageMime,
   imageExtensionForMime,
   telegramEntityName,
@@ -36,6 +41,63 @@ async function main() {
     assert.strictEqual(channelSyncRetryDelay(6), 600000);
     assert.strictEqual(channelSyncRetryDelay(20), 600000);
     assert.strictEqual(channelSyncRetryDelay(3, { baseMs: 5000, maxMs: 15000 }), 15000);
+    assert.strictEqual(whatsappChatId({ _serialized: '123@g.us' }), '123@g.us');
+    assert.strictEqual(whatsappChatId({ user: '123', server: 'g.us' }), '123@g.us');
+    assert.deepStrictEqual(toWhatsAppGroup({
+      id: { _serialized: '123@g.us' },
+      formattedTitle: 'WA 群',
+      isGroup: true,
+      unreadCount: 2,
+      pin: 1,
+    }), {
+      group_id: '123@g.us',
+      group_name: 'WA 群',
+      kind: 'group',
+      raw_json: {
+        id: { _serialized: '123@g.us' },
+        isGroup: true,
+        unreadCount: 2,
+        pinned: true,
+      },
+    });
+
+    const normalChat = {
+      id: { _serialized: 'normal@g.us' },
+      name: '正常群',
+      isGroup: true,
+    };
+    const normalSnapshot = await readWhatsAppChatSnapshot({
+      getChats: async () => [normalChat],
+    });
+    assert.strictEqual(normalSnapshot.degraded, false);
+    assert.strictEqual(normalSnapshot.chats[0], normalChat);
+    assert.strictEqual(normalSnapshot.groups[0].group_id, 'normal@g.us');
+
+    const getChatsError = new Error('r');
+    let fallbackEvaluated = false;
+    const degradedSnapshot = await readWhatsAppChatSnapshot({
+      getChats: async () => { throw getChatsError; },
+      pupPage: {
+        evaluate: async () => {
+          fallbackEvaluated = true;
+          return {
+            models: [{
+              id: { _serialized: 'fallback@g.us' },
+              formattedTitle: '降级群',
+              isGroup: true,
+              unreadCount: 3,
+            }],
+            failedCount: 1,
+            failures: [{ chat_id: 'fallback@g.us', error: 'r' }],
+          };
+        },
+      },
+    });
+    assert.strictEqual(fallbackEvaluated, true);
+    assert.strictEqual(degradedSnapshot.degraded, true);
+    assert.strictEqual(degradedSnapshot.originalError, getChatsError);
+    assert.strictEqual(degradedSnapshot.failedCount, 1);
+    assert.strictEqual(degradedSnapshot.groups[0].group_id, 'fallback@g.us');
 
     const waPaths = ensureAccountDatabases('wa', 'wa-runtime', { accountDataDir });
     const rawDb = ensureRawDb(waPaths.rawDbPath);

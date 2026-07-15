@@ -30,6 +30,7 @@ const {
   prepareWaChromeProfile,
 } = require('../lib/chrome-launch');
 const { channelSyncRetryDelay } = require('../lib/channel-sync-retry');
+const { readWhatsAppChatSnapshot } = require('../lib/wa-chat-snapshot');
 const {
   detectImageMime,
   imageExtensionForMime,
@@ -878,22 +879,26 @@ async function syncChannelSnapshot(reason) {
   syncInFlight = true;
   try {
     if (PLATFORM === 'wa' && typeof channelClient.getChats === 'function') {
-      const chats = await channelClient.getChats();
-      const groups = chats.map((chat) => ({
-        group_id: chat.id?._serialized || chat.id?.user || chat.name || '',
-        group_name: chat.name || chat.formattedTitle || chat.id?._serialized || '未命名会话',
-        kind: chat.isGroup ? 'group' : 'chat',
-        raw_json: {
-          id: chat.id,
-          isGroup: Boolean(chat.isGroup),
-          unreadCount: chat.unreadCount || 0,
-          pinned: Boolean(chat.pinned),
-        },
-      })).filter((group) => group.group_id);
-      const labelSnapshot = await syncWhatsAppLabels(chats).catch((err) => {
-        reportError('wa_label_sync_failed', err, { fatal: false });
-        return null;
-      });
+      const chatSnapshot = await readWhatsAppChatSnapshot(channelClient);
+      const { chats, groups } = chatSnapshot;
+      let labelSnapshot = null;
+      if (chatSnapshot.degraded) {
+        recordRuntimeEvent('wa_chat_sync_degraded', 'warning',
+          `WA 会话模型降级同步：${groups.length} 个会话，${chatSnapshot.failedCount} 个模型异常`, {
+            reason,
+            web_version: activeWaWebVersion || null,
+            original_error: chatSnapshot.originalError?.message || String(chatSnapshot.originalError || ''),
+            failed_count: chatSnapshot.failedCount,
+            failures: chatSnapshot.failures,
+          });
+        log(`WA chat snapshot degraded: groups=${groups.length}, failed_models=${chatSnapshot.failedCount}, ` +
+          `original=${chatSnapshot.originalError?.message || chatSnapshot.originalError}`);
+      } else {
+        labelSnapshot = await syncWhatsAppLabels(chats).catch((err) => {
+          reportError('wa_label_sync_failed', err, { fatal: false });
+          return null;
+        });
+      }
       const result = replaceChannelSnapshot({
         db: workbenchDb,
         platform: PLATFORM,
@@ -906,6 +911,8 @@ async function syncChannelSnapshot(reason) {
       recordRuntimeEvent('channel_sync', 'info', `WA 群列表已同步：${result.group_count}`, {
         reason,
         web_version: activeWaWebVersion || null,
+        degraded: chatSnapshot.degraded,
+        failed_models: chatSnapshot.failedCount,
         ...result,
       });
       return result;

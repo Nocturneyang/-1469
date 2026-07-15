@@ -10,6 +10,7 @@
 - 显式版本固定与回退优先级
 - WA 账号间缓存目录隔离
 - 会话同步指数退避和最大等待时间
+- `getChats()` 批量失败后的逐会话降级快照
 - CommonJS 语法、全量后端回归和前端生产构建
 
 ## 自动化结果
@@ -33,6 +34,7 @@
 - `WORKBENCH_WA_WEB_CACHE_FORCE_LATEST=1` 忽略新鲜缓存。
 - `/accounts/wa/first/session` 与 `/accounts/wa/second/session` 使用不同 `.wwebjs_cache`。
 - 默认同步失败等待序列为 30、60、120 秒，最终封顶 600 秒。
+- 正常 `getChats()` 保留完整 Chat 对象供标签同步；批量失败时改用页面内隔离结果，并标记 degraded、失败模型数量和原始错误。
 
 ## 生产验收待办
 

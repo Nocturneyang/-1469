@@ -20,6 +20,7 @@ WA runtime worker 在重启后可以进入 `ready`，但 `Client.getChats()` 持
 5. `WORKBENCH_WA_WEB_CACHE_FORCE_LATEST=1` 可在下一次 worker 启动时强制获取当前版本，不删除账号 session。
 6. `getChats()` 或标签/文件夹同步主流程失败时，按指数退避安排下一次会话同步，避免每 10 秒重试；成功后恢复正常的低频同步周期。
 7. runtime 事件和日志记录当前 WA Web 版本、失败次数和下次重试等待时间，便于区分页面版本不兼容、渠道临时异常和数据异常。
+8. 如果 `whatsapp-web.js` 的批量 `getChats()` 因单个会话模型失败，worker 在页面内逐会话执行模型转换并隔离异常：正常模型完整读取，异常模型退化为 ID、标题、群类型和未读数等基础信息。降级同步不覆盖已有 WA 标签映射。
 
 ## 默认参数
 
@@ -44,4 +45,5 @@ WORKBENCH_CHANNEL_SYNC_RETRY_MAX_MS=600000
 - 缓存过期时日志显示刷新，而不是继续固定旧版本。
 - ready 后日志记录实际 WA Web 版本。
 - `getChats()` 失败后重试间隔逐步增加，不再随 10 秒心跳持续刷错。
+- 单个群元数据异常时出现 `wa_chat_sync_degraded`，但群列表主同步仍成功。
 - 成功日志出现 `WA 群列表已同步`，并且 worker 保持 ready、Pod 无重启。
