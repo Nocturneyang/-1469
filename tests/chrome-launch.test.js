@@ -87,16 +87,71 @@ function main() {
 
     const cacheDir = path.join(tmpDir, 'wa-web-cache');
     fs.mkdirSync(cacheDir, { recursive: true });
-    fs.writeFileSync(path.join(cacheDir, '2.3000.1.html'), '<html></html>');
+    const cachedVersionPath = path.join(cacheDir, '2.3000.1.html');
+    fs.writeFileSync(cachedVersionPath, '<html></html>');
+    const cacheNow = Date.now();
+    fs.utimesSync(cachedVersionPath, new Date(cacheNow - 2 * 3600000), new Date(cacheNow - 2 * 3600000));
+    const cacheLogs = [];
     const webOptions = buildWaWebVersionOptions(tmpDir, {
       env: { WORKBENCH_WA_WEB_CACHE_DIR: cacheDir },
+      now: cacheNow,
+      log: (message) => cacheLogs.push(message),
     });
     assert.strictEqual(webOptions.webVersion, '2.3000.1');
+    assert.ok(cacheLogs.some((message) => message.includes('2h old, max 72h')));
     assert.deepStrictEqual(webOptions.webVersionCache, {
       type: 'local',
       path: cacheDir,
       strict: false,
     });
+
+    fs.utimesSync(cachedVersionPath, new Date(cacheNow - 80 * 3600000), new Date(cacheNow - 80 * 3600000));
+    const staleLogs = [];
+    const staleWebOptions = buildWaWebVersionOptions(tmpDir, {
+      env: {
+        WORKBENCH_WA_WEB_CACHE_DIR: cacheDir,
+        WORKBENCH_WA_WEB_CACHE_MAX_AGE_HOURS: '72',
+      },
+      now: cacheNow,
+      log: (message) => staleLogs.push(message),
+    });
+    assert.strictEqual(staleWebOptions.webVersion, null);
+    assert.ok(staleLogs.some((message) => message.includes('cache stale')));
+    assert.ok(staleLogs.some((message) => message.includes('refreshing on startup')));
+
+    const pinnedWebOptions = buildWaWebVersionOptions(tmpDir, {
+      env: {
+        WORKBENCH_WA_WEB_CACHE_DIR: cacheDir,
+        WORKBENCH_WA_WEB_VERSION: '2.3000.0',
+        WORKBENCH_WA_WEB_CACHE_FORCE_LATEST: '1',
+      },
+      now: cacheNow,
+    });
+    assert.strictEqual(pinnedWebOptions.webVersion, '2.3000.0');
+
+    fs.utimesSync(cachedVersionPath, new Date(cacheNow), new Date(cacheNow));
+    const forcedWebOptions = buildWaWebVersionOptions(tmpDir, {
+      env: {
+        WORKBENCH_WA_WEB_CACHE_DIR: cacheDir,
+        WORKBENCH_WA_WEB_CACHE_FORCE_LATEST: '1',
+      },
+      now: cacheNow,
+    });
+    assert.strictEqual(forcedWebOptions.webVersion, null);
+
+    const firstAccountSession = path.join(tmpDir, 'accounts', 'wa', 'first', 'session');
+    const secondAccountSession = path.join(tmpDir, 'accounts', 'wa', 'second', 'session');
+    const firstAccountWebOptions = buildWaWebVersionOptions(firstAccountSession, {
+      env: { DATA_DIR: '/data' },
+      now: cacheNow,
+    });
+    const secondAccountWebOptions = buildWaWebVersionOptions(secondAccountSession, {
+      env: { DATA_DIR: '/data' },
+      now: cacheNow,
+    });
+    assert.strictEqual(firstAccountWebOptions.webVersionCache.path, path.join(tmpDir, 'accounts', 'wa', 'first', '.wwebjs_cache'));
+    assert.strictEqual(secondAccountWebOptions.webVersionCache.path, path.join(tmpDir, 'accounts', 'wa', 'second', '.wwebjs_cache'));
+    assert.notStrictEqual(firstAccountWebOptions.webVersionCache.path, secondAccountWebOptions.webVersionCache.path);
 
     const profileDirs = getChromeProfileDirs(tmpDir, 'wa_test');
     fs.mkdirSync(profileDirs[0], { recursive: true });

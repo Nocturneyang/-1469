@@ -113,6 +113,12 @@ spec:
               value: "384"
             - name: WORKBENCH_WA_CHROME_PREFLIGHT
               value: "1"
+            - name: WORKBENCH_WA_WEB_CACHE_MAX_AGE_HOURS
+              value: "72"
+            - name: WORKBENCH_CHANNEL_SYNC_RETRY_BASE_MS
+              value: "30000"
+            - name: WORKBENCH_CHANNEL_SYNC_RETRY_MAX_MS
+              value: "600000"
             - name: WORKBENCH_CHAT_SYNC_ENABLED
               value: "1"
             - name: WORKBENCH_LABEL_SYNC_ENABLED

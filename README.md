@@ -180,12 +180,17 @@ WORKBENCH_SEND_ENABLED=0
 WORKBENCH_CHROME_STATE_DIR=/tmp/workbench-chrome
 WORKBENCH_WA_CHROME_MIN_AVAILABLE_MB=384
 WORKBENCH_WA_CHROME_PREFLIGHT=1
+WORKBENCH_WA_WEB_CACHE_MAX_AGE_HOURS=72
+WORKBENCH_CHANNEL_SYNC_RETRY_BASE_MS=30000
+WORKBENCH_CHANNEL_SYNC_RETRY_MAX_MS=600000
 WORKBENCH_ACCOUNT_WORKER_MAX_WORKERS=1
 ```
 
 WA 登录 worker 和账号 runtime worker 在启动 `whatsapp-web.js` 前会先清理本账号 profile 的残留 `Singleton*` 锁、确认 session/profile 目录可写、读取 cgroup/proc 内存余量，并真实运行一次 Chromium headless `about:blank` 预检。预检失败时会直接标记登录失败或延迟拉起账号 worker，避免 Chromium 被 OOM/锁文件反复杀死后留下更坏的 profile 状态。`Code=null` 通常代表 Chromium 被外部信号终止；stderr 中 D-Bus 连接失败多数不是根因，优先看内存、profile 锁和 headless 预检结果。
 
 生产镜像显式安装并启动 D-Bus，Chrome 子进程继承有效的 system/session bus 地址。WA 启动参数只保留容器所需的稳定参数，不再强制 `--no-zygote`、`--process-per-site` 或禁用 crashpad；这些激进参数在部分 Debian Chromium 构建中可能表现为启动期 `SIGTRAP`。
+
+WA Web HTML 缓存默认按账号隔离并保留 72 小时。缓存过期后，账号 worker 在下一次启动时获取当前 WA Web 版本；旧缓存文件和账号 session 均保留。需要回退时可设置 `WORKBENCH_WA_WEB_VERSION=<version>`，需要忽略有效缓存刷新一次时可设置 `WORKBENCH_WA_WEB_CACHE_FORCE_LATEST=1`。会话列表同步失败按 30 秒起步、10 分钟封顶进行指数退避，不影响 worker 心跳、消息接收和外发消费循环。
 
 账号隔离目录结构：
 

@@ -8,6 +8,7 @@ const { ensureRawDb, upsertRawMessage, upsertServiceAccountProfile } = require('
 const { listGroups: listRawGroups, listMessagesPage } = require('../db/raw-messages');
 const { openWorkbenchDb } = require('../db/workbench-db');
 const { normalizeChannelLabelName, replaceChannelSnapshot } = require('../lib/channel-sync-store');
+const { channelSyncRetryDelay } = require('../lib/channel-sync-retry');
 const {
   detectImageMime,
   imageExtensionForMime,
@@ -29,6 +30,13 @@ async function main() {
   const accountDataDir = path.join(tmpDir, 'accounts');
 
   try {
+    assert.strictEqual(channelSyncRetryDelay(1), 30000);
+    assert.strictEqual(channelSyncRetryDelay(2), 60000);
+    assert.strictEqual(channelSyncRetryDelay(3), 120000);
+    assert.strictEqual(channelSyncRetryDelay(6), 600000);
+    assert.strictEqual(channelSyncRetryDelay(20), 600000);
+    assert.strictEqual(channelSyncRetryDelay(3, { baseMs: 5000, maxMs: 15000 }), 15000);
+
     const waPaths = ensureAccountDatabases('wa', 'wa-runtime', { accountDataDir });
     const rawDb = ensureRawDb(waPaths.rawDbPath);
     try {

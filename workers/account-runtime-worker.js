@@ -29,6 +29,7 @@ const {
   enrichChromeLaunchError,
   prepareWaChromeProfile,
 } = require('../lib/chrome-launch');
+const { channelSyncRetryDelay } = require('../lib/channel-sync-retry');
 const {
   detectImageMime,
   imageExtensionForMime,
@@ -63,6 +64,18 @@ const SEND_POLL_MS = boundedNumber(process.env.WORKBENCH_ACCOUNT_WORKER_SEND_POL
 const HEARTBEAT_MS = boundedNumber(process.env.WORKBENCH_ACCOUNT_WORKER_HEARTBEAT_MS, 10000, 1000, 120000);
 const LEASE_TTL_MS = boundedNumber(process.env.WORKBENCH_WORKER_LEASE_TTL_MS, 45000, 15000, 300000);
 const CHAT_SYNC_MS = boundedNumber(process.env.WORKBENCH_ACCOUNT_WORKER_CHAT_SYNC_MS, 10 * 60 * 1000, 30000, 60 * 60 * 1000);
+const CHANNEL_SYNC_RETRY_BASE_MS = boundedNumber(
+  process.env.WORKBENCH_CHANNEL_SYNC_RETRY_BASE_MS,
+  30000,
+  1000,
+  60 * 60 * 1000,
+);
+const CHANNEL_SYNC_RETRY_MAX_MS = boundedNumber(
+  process.env.WORKBENCH_CHANNEL_SYNC_RETRY_MAX_MS,
+  10 * 60 * 1000,
+  CHANNEL_SYNC_RETRY_BASE_MS,
+  24 * 60 * 60 * 1000,
+);
 const WORKER_HOLDER_ID = process.env.HOSTNAME || `${process.pid}`;
 const WORKER_RUN_ID = `${Date.now()}-${process.pid}`;
 const STARTED_AT = new Date().toISOString();
@@ -83,6 +96,9 @@ let channelKind = '';
 let channelReady = false;
 let lastMessageAt = null;
 let lastSyncAt = 0;
+let nextSyncAt = 0;
+let syncFailureCount = 0;
+let activeWaWebVersion = '';
 let syncInFlight = false;
 let outboundDrainInFlight = false;
 let outboundDrainRequested = false;
@@ -139,7 +155,7 @@ async function tick() {
   if (stopping) return;
   renewLease();
   processSyncRequests();
-  if (channelReady && Date.now() - lastSyncAt >= CHAT_SYNC_MS) {
+  if (channelReady && Date.now() >= nextSyncAt) {
     await syncChannelSnapshot('periodic');
   }
   reportHeartbeat(channelReady ? 'ready' : 'starting', channelReady ? 'monitoring' : 'starting', '');
@@ -259,6 +275,17 @@ async function startWhatsAppRuntime() {
     upsertProfile('ready', displayName);
     reportHeartbeat('ready', 'monitoring', `WA runtime 已接管：${displayName}`);
     recordRuntimeEvent('account_ready', 'info', `WA 账号已接管：${displayName}`);
+    try {
+      activeWaWebVersion = String(await client.getWWebVersion() || '').trim();
+      if (activeWaWebVersion) {
+        log(`WA WebVersion active: ${activeWaWebVersion}`);
+        recordRuntimeEvent('wa_web_version', 'info', `WA WebVersion：${activeWaWebVersion}`, {
+          version: activeWaWebVersion,
+        });
+      }
+    } catch (err) {
+      log(`WA WebVersion detection failed: ${err.message}`);
+    }
     scheduleOutboundDrain(0);
     await syncChannelSnapshot('ready').catch((err) => reportError('wa_sync_failed', err, { fatal: false }));
   });
@@ -850,71 +877,110 @@ async function syncChannelSnapshot(reason) {
   if (syncInFlight) return null;
   syncInFlight = true;
   try {
-  if (PLATFORM === 'wa' && typeof channelClient.getChats === 'function') {
-    const chats = await channelClient.getChats();
-    const groups = chats.map((chat) => ({
-      group_id: chat.id?._serialized || chat.id?.user || chat.name || '',
-      group_name: chat.name || chat.formattedTitle || chat.id?._serialized || '未命名会话',
-      kind: chat.isGroup ? 'group' : 'chat',
-      raw_json: {
-        id: chat.id,
-        isGroup: Boolean(chat.isGroup),
-        unreadCount: chat.unreadCount || 0,
-        pinned: Boolean(chat.pinned),
-      },
-    })).filter((group) => group.group_id);
-    const labelSnapshot = await syncWhatsAppLabels(chats).catch((err) => {
-      reportError('wa_label_sync_failed', err, { fatal: false });
-      return null;
-    });
-    const result = replaceChannelSnapshot({
-      db: workbenchDb,
-      platform: PLATFORM,
-      account: ACCOUNT,
-      groups,
-      ...(labelSnapshot || {}),
-    });
-    lastSyncAt = Date.now();
-    reportHeartbeat('ready', 'sync', `WA 群列表已同步：${result.group_count}`);
-    recordRuntimeEvent('channel_sync', 'info', `WA 群列表已同步：${result.group_count}`, { reason, ...result });
-    return result;
-  }
-  if (PLATFORM === 'tg' && channelClient.getDialogs && typeof channelClient.getDialogs === 'function') {
-    const dialogs = await channelClient.getDialogs({ limit: Number(process.env.WORKBENCH_TG_DIALOG_SYNC_LIMIT || 500) });
-    const groups = dialogs.map((dialog) => {
-      const entity = dialog.entity || {};
-      const id = stringifyTelegramId(entity.id || dialog.id || dialog.inputEntity || '');
-      return {
-        group_id: id,
-        group_name: entity.title || entity.username || [entity.firstName, entity.lastName].filter(Boolean).join(' ') || id,
-        kind: entity.megagroup || entity.broadcast || entity.className === 'Channel' ? 'group' : 'chat',
+    if (PLATFORM === 'wa' && typeof channelClient.getChats === 'function') {
+      const chats = await channelClient.getChats();
+      const groups = chats.map((chat) => ({
+        group_id: chat.id?._serialized || chat.id?.user || chat.name || '',
+        group_name: chat.name || chat.formattedTitle || chat.id?._serialized || '未命名会话',
+        kind: chat.isGroup ? 'group' : 'chat',
         raw_json: {
-          id,
-          className: entity.className,
-          unreadCount: dialog.unreadCount || 0,
+          id: chat.id,
+          isGroup: Boolean(chat.isGroup),
+          unreadCount: chat.unreadCount || 0,
+          pinned: Boolean(chat.pinned),
         },
-      };
-    }).filter((group) => group.group_id);
-    const folderSnapshot = await syncTelegramFolders(dialogs).catch((err) => {
-      reportError('tg_folder_sync_failed', err, { fatal: false });
-      return null;
-    });
-    const result = replaceChannelSnapshot({
-      db: workbenchDb,
-      platform: PLATFORM,
-      account: ACCOUNT,
-      groups,
-      ...(folderSnapshot || {}),
-    });
-    lastSyncAt = Date.now();
-    reportHeartbeat('ready', 'sync', `TG 会话列表已同步：${result.group_count}`);
-    recordRuntimeEvent('channel_sync', 'info', `TG 会话列表已同步：${result.group_count}`, { reason, ...result });
-    return result;
-  }
-  return null;
+      })).filter((group) => group.group_id);
+      const labelSnapshot = await syncWhatsAppLabels(chats).catch((err) => {
+        reportError('wa_label_sync_failed', err, { fatal: false });
+        return null;
+      });
+      const result = replaceChannelSnapshot({
+        db: workbenchDb,
+        platform: PLATFORM,
+        account: ACCOUNT,
+        groups,
+        ...(labelSnapshot || {}),
+      });
+      markChannelSyncSuccess();
+      reportHeartbeat('ready', 'sync', `WA 群列表已同步：${result.group_count}`);
+      recordRuntimeEvent('channel_sync', 'info', `WA 群列表已同步：${result.group_count}`, {
+        reason,
+        web_version: activeWaWebVersion || null,
+        ...result,
+      });
+      return result;
+    }
+    if (PLATFORM === 'tg' && channelClient.getDialogs && typeof channelClient.getDialogs === 'function') {
+      const dialogs = await channelClient.getDialogs({ limit: Number(process.env.WORKBENCH_TG_DIALOG_SYNC_LIMIT || 500) });
+      const groups = dialogs.map((dialog) => {
+        const entity = dialog.entity || {};
+        const id = stringifyTelegramId(entity.id || dialog.id || dialog.inputEntity || '');
+        return {
+          group_id: id,
+          group_name: entity.title || entity.username || [entity.firstName, entity.lastName].filter(Boolean).join(' ') || id,
+          kind: entity.megagroup || entity.broadcast || entity.className === 'Channel' ? 'group' : 'chat',
+          raw_json: {
+            id,
+            className: entity.className,
+            unreadCount: dialog.unreadCount || 0,
+          },
+        };
+      }).filter((group) => group.group_id);
+      const folderSnapshot = await syncTelegramFolders(dialogs).catch((err) => {
+        reportError('tg_folder_sync_failed', err, { fatal: false });
+        return null;
+      });
+      const result = replaceChannelSnapshot({
+        db: workbenchDb,
+        platform: PLATFORM,
+        account: ACCOUNT,
+        groups,
+        ...(folderSnapshot || {}),
+      });
+      markChannelSyncSuccess();
+      reportHeartbeat('ready', 'sync', `TG 会话列表已同步：${result.group_count}`);
+      recordRuntimeEvent('channel_sync', 'info', `TG 会话列表已同步：${result.group_count}`, { reason, ...result });
+      return result;
+    }
+    return null;
+  } catch (err) {
+    throw channelSyncFailure(err, reason);
   } finally {
     syncInFlight = false;
   }
+}
+
+function markChannelSyncSuccess() {
+  lastSyncAt = Date.now();
+  nextSyncAt = lastSyncAt + CHAT_SYNC_MS;
+  syncFailureCount = 0;
+}
+
+function channelSyncFailure(err, reason) {
+  const original = err instanceof Error ? err : new Error(String(err || 'unknown error'));
+  syncFailureCount += 1;
+  const retryMs = channelSyncRetryDelay(syncFailureCount, {
+    baseMs: CHANNEL_SYNC_RETRY_BASE_MS,
+    maxMs: CHANNEL_SYNC_RETRY_MAX_MS,
+  });
+  nextSyncAt = Date.now() + retryMs;
+  const context = {
+    platform: PLATFORM,
+    account: ACCOUNT,
+    reason: String(reason || 'unknown'),
+    failure_count: syncFailureCount,
+    retry_ms: retryMs,
+    next_sync_at: new Date(nextSyncAt).toISOString(),
+    web_version: PLATFORM === 'wa' ? activeWaWebVersion || null : null,
+  };
+  const versionText = context.web_version ? `, web_version=${context.web_version}` : '';
+  const wrapped = new Error(
+    `${PLATFORM.toUpperCase()} 会话同步失败（reason=${context.reason}, failure=${syncFailureCount}, ` +
+    `retry_in=${Math.round(retryMs / 1000)}s${versionText}）：${original.message}`,
+  );
+  wrapped.cause = original;
+  wrapped.syncContext = context;
+  return wrapped;
 }
 
 async function syncWhatsAppLabels(chats) {
@@ -1166,7 +1232,10 @@ function reportError(type, err, { fatal = true } = {}) {
     upsertProfile('error');
   }
   reportHeartbeat(fatal ? 'error' : (channelReady ? 'ready' : 'warning'), type, error.message);
-  recordRuntimeEvent(type, 'error', error.message, { stack: error.stack });
+  recordRuntimeEvent(type, 'error', error.message, {
+    stack: error.stack,
+    ...(error.syncContext ? { sync: error.syncContext } : {}),
+  });
   log(`${type}: ${error.stack || error.message}`);
 }
 
