@@ -789,6 +789,10 @@ async function main() {
     assert.strictEqual(pagedMessages.ok, true);
     assert.strictEqual(pagedMessages.paging.has_more, true);
     assert.ok(pagedMessages.paging.before_id);
+    const olderMessages = await requestJson(`${baseUrl}/groups/group-1/messages?platform=wa&account=nanya_wa&limit=1&before_id=${pagedMessages.paging.before_id}`);
+    assert.strictEqual(olderMessages.ok, true);
+    assert.strictEqual(olderMessages.messages.some((message) => message.message_id === 'm-1'), true);
+    assert.strictEqual(olderMessages.messages.some((message) => message.message_id === 'm-2'), false);
     const afterPagingGroups = await requestJson(`${baseUrl}/groups?scope=all`);
     assert.strictEqual(afterPagingGroups.groups.find((group) => group.group_id === 'group-1').unread_count, 2);
 

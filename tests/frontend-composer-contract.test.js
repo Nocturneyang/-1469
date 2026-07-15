@@ -49,5 +49,9 @@ assert.match(styles, /\.message-loading-skeleton/, 'an empty first message page 
 assert.match(app, /const requestSeq = preserveExisting \? messageRequestSeq : \+\+messageRequestSeq;/, 'background refreshes must not invalidate the first message response');
 assert.match(app, /if \(loadingMessages\.value\) return;/, 'background polling must yield to the first message request');
 assert.match(app, /loadMessages\(\)[\s\S]*?\.finally\(\(\) => \{[\s\S]*?loadWorkspace\(\)/, 'workspace details must load after the first message request');
+assert.match(thread, /el\.scrollTop <= TOP_LOAD_THRESHOLD_PX\) requestOlderMessages\(\)/, 'scrolling to the top must request older messages');
+assert.match(thread, /el\.scrollHeight - snapshot\.scrollHeight/, 'prepending history must preserve the current reading position');
+assert.match(thread, /shouldShowDateSeparator\(message, index\)/, 'message history must render a separator for every calendar day');
+assert.match(thread, /formatMessageDateLabel\(messageTimeValue\(message\)\)/, 'date separators must not be hard-coded to today');
 
 console.log('[frontend] composer, realtime messages, media previews, first paint and instant label filtering verified');

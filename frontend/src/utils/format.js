@@ -16,6 +16,25 @@ export function formatMessageTime(value) {
   return formatShanghaiClock(date);
 }
 
+export function messageDayKey(value) {
+  const date = toDate(value);
+  return date ? formatShanghaiDayKey(date) : '';
+}
+
+export function formatMessageDateLabel(value, now = new Date()) {
+  const date = toDate(value);
+  if (!date) return '';
+  const dayKey = formatShanghaiDayKey(date);
+  if (dayKey === formatShanghaiDayKey(now)) return '今天';
+  if (dayKey === formatShanghaiDayKey(new Date(now.getTime() - 24 * 60 * 60 * 1000))) return '昨天';
+  return new Intl.DateTimeFormat('zh-CN', {
+    timeZone: DISPLAY_TIME_ZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(date);
+}
+
 export function toDate(value) {
   if (!value) return null;
   if (typeof value === 'number') return new Date(value > 1000000000000 ? value : value * 1000);
