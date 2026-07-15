@@ -947,7 +947,10 @@ async function syncChannelSnapshot(reason) {
           });
         log(`WA chat snapshot degraded: groups=${groups.length}, failed_models=${chatSnapshot.failedCount}, ` +
           `original=${chatSnapshot.originalError?.message || chatSnapshot.originalError}`);
-      } else {
+      }
+      if (chatSnapshot.labelSnapshot) {
+        labelSnapshot = chatSnapshot.labelSnapshot;
+      } else if (chatSnapshot.snapshotMode !== 'native') {
         labelSnapshot = await syncWhatsAppLabels(chats).catch((err) => {
           reportError('wa_label_sync_failed', err, { fatal: false });
           return null;
@@ -965,6 +968,7 @@ async function syncChannelSnapshot(reason) {
       recordRuntimeEvent('channel_sync', 'info', `WA 群列表已同步：${result.group_count}`, {
         reason,
         web_version: activeWaWebVersion || null,
+        snapshot_mode: chatSnapshot.snapshotMode,
         degraded: chatSnapshot.degraded,
         failed_models: chatSnapshot.failedCount,
         ...result,

@@ -11,6 +11,7 @@ const { normalizeChannelLabelName, replaceChannelSnapshot } = require('../lib/ch
 const { channelSyncRetryDelay } = require('../lib/channel-sync-retry');
 const {
   readWhatsAppChatSnapshot,
+  readNativeWhatsAppChatSnapshot,
   toWhatsAppGroup,
   whatsappChatId,
 } = require('../lib/wa-chat-snapshot');
@@ -73,31 +74,71 @@ async function main() {
     assert.strictEqual(normalSnapshot.chats[0], normalChat);
     assert.strictEqual(normalSnapshot.groups[0].group_id, 'normal@g.us');
 
-    const getChatsError = new Error('r');
-    let fallbackEvaluated = false;
-    const degradedSnapshot = await readWhatsAppChatSnapshot({
-      getChats: async () => { throw getChatsError; },
-      pupPage: {
-        evaluate: async () => {
-          fallbackEvaluated = true;
-          return {
-            models: [{
-              id: { _serialized: 'fallback@g.us' },
-              formattedTitle: '降级群',
-              isGroup: true,
-              unreadCount: 3,
-            }],
-            failedCount: 1,
-            failures: [{ chat_id: 'fallback@g.us', error: 'r' }],
-          };
-        },
+    const originalWindow = global.window;
+    global.window = {
+      require(name) {
+        assert.strictEqual(name, 'WAWebCollections');
+        return {
+          Chat: {
+            getModelsArray() {
+              return [{
+                id: { _serialized: 'native@g.us', user: 'native', server: 'g.us' },
+                formattedTitle: '原生群',
+                groupMetadata: {},
+                unreadCount: 4,
+                labels: ['1'],
+              }];
+            },
+          },
+          Label: {
+            getModelsArray() {
+              return [{ id: '1', name: '售后', hexColor: '#00ff00' }];
+            },
+          },
+        };
       },
+    };
+    try {
+      const nativeSnapshot = await readNativeWhatsAppChatSnapshot({
+        pupPage: { evaluate: async (fn) => fn() },
+      });
+      assert.strictEqual(nativeSnapshot.available, true);
+      assert.strictEqual(nativeSnapshot.models[0].id._serialized, 'native@g.us');
+      assert.deepStrictEqual(nativeSnapshot.labelSnapshot, {
+        labels: [{
+          native_label_id: '1',
+          name: '售后',
+          color: '#00ff00',
+          kind: 'label',
+          raw_json: { id: '1', name: '售后', color: '#00ff00' },
+        }],
+        maps: [{ group_id: 'native@g.us', native_label_id: '1' }],
+      });
+      const preferredSnapshot = await readWhatsAppChatSnapshot({
+        getChats: async () => { throw new Error('must not use unstable serializer'); },
+        pupPage: { evaluate: async (fn) => fn() },
+      });
+      assert.strictEqual(preferredSnapshot.degraded, false);
+      assert.strictEqual(preferredSnapshot.snapshotMode, 'native');
+      assert.strictEqual(preferredSnapshot.groups[0].group_id, 'native@g.us');
+    } finally {
+      global.window = originalWindow;
+    }
+
+    const libraryFallbackSnapshot = await readWhatsAppChatSnapshot({
+      getChats: async () => [normalChat],
+      pupPage: { evaluate: async () => ({ available: false }) },
     });
-    assert.strictEqual(fallbackEvaluated, true);
-    assert.strictEqual(degradedSnapshot.degraded, true);
-    assert.strictEqual(degradedSnapshot.originalError, getChatsError);
-    assert.strictEqual(degradedSnapshot.failedCount, 1);
-    assert.strictEqual(degradedSnapshot.groups[0].group_id, 'fallback@g.us');
+    assert.strictEqual(libraryFallbackSnapshot.snapshotMode, 'wwebjs');
+    assert.strictEqual(libraryFallbackSnapshot.groups[0].group_id, 'normal@g.us');
+
+    await assert.rejects(
+      readWhatsAppChatSnapshot({
+        getChats: async () => { throw new Error('r'); },
+        pupPage: { evaluate: async () => ({ available: false }) },
+      }),
+      /r/,
+    );
 
     const waPaths = ensureAccountDatabases('wa', 'wa-runtime', { accountDataDir });
     const rawDb = ensureRawDb(waPaths.rawDbPath);
