@@ -4488,20 +4488,54 @@ button {
 .message-row:hover .message-footer .message-action-button,
 .message-footer .message-action-button:focus-visible { opacity: 1; transform: translateY(0); }
 
-.composer { min-height: 128px; padding: 14px 16px 12px; border-top-color: var(--line); }
-.composer-box { padding: 0; border-color: var(--line); border-radius: 4px; background: #fff; }
-.composer-box:focus-within { border-color: var(--accent); background: #fff; box-shadow: 0 0 0 1px var(--accent); }
-.composer-toolbar { order: 2; min-height: 38px; margin: 0; padding: 5px 8px; border-top: 1px solid var(--line-soft); }
-.composer-toolbar .icon-button { width: auto; gap: 6px; padding: 0 8px; border-radius: 2px; }
+.composer { min-height: 122px; padding: 10px 16px 12px; border-top-color: var(--line); background: #f8f9fb; }
+.composer-box {
+  padding: 0;
+  border-color: #cfd5e6;
+  border-radius: 6px;
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(17, 24, 39, .04);
+}
+.composer-box:focus-within {
+  border-color: var(--accent);
+  background: #fff;
+  box-shadow: 0 0 0 2px rgba(29, 78, 216, .10), 0 1px 2px rgba(17, 24, 39, .04);
+}
+.composer-toolbar { min-height: 34px; margin: 0; padding: 6px 10px 0; border-top: 0; }
+.composer-toolbar .icon-button {
+  width: auto;
+  height: 28px;
+  gap: 6px;
+  padding: 0 8px;
+  border-color: transparent;
+  border-radius: 4px;
+  color: #657084;
+  background: transparent;
+}
 .composer-toolbar .icon-button span { font-size: 11px; }
-.composer-toolbar .icon-button:hover { border-color: var(--line); color: var(--accent-strong); background: var(--surface-soft); }
-.emoji-panel { bottom: 50px; border-radius: 4px; }
-.emoji-button { border-radius: 2px; background: #fff; }
-.composer textarea { min-height: 58px; padding: 12px; }
-.composer-foot { order: 3; min-height: 40px; margin: -40px 6px 0 auto; pointer-events: none; }
-.composer-foot > * { pointer-events: auto; }
-.composer-foot > span { position: absolute; left: 62px; bottom: 14px; max-width: calc(100% - 190px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.composer-foot .el-button { min-width: 86px; border-radius: 2px; background: var(--accent-strong); }
+.composer-toolbar .icon-button:hover { border-color: #dce2f0; color: var(--accent-strong); background: #f5f8ff; }
+.emoji-panel { bottom: 50px; border-radius: 6px; }
+.emoji-button { border-radius: 4px; background: #fff; }
+.composer textarea { min-height: 52px; padding: 8px 12px 4px; background: transparent; line-height: 1.5; }
+.composer-foot {
+  min-height: 38px;
+  margin: 0;
+  padding: 0 10px 8px 12px;
+  align-items: center;
+  pointer-events: auto;
+}
+.composer-foot > span {
+  position: static;
+  flex: 1;
+  min-width: 0;
+  max-width: none;
+  overflow: hidden;
+  color: #7b8497;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.composer-foot .el-button { min-width: 86px; height: 32px; border-radius: 4px; background: var(--accent-strong); }
 .quote-preview,
 .attachment-tray { margin: 8px 10px 0; }
 

@@ -61,5 +61,7 @@ assert.match(thread, /el\.scrollTop <= TOP_LOAD_THRESHOLD_PX\) requestOlderMessa
 assert.match(thread, /el\.scrollHeight - snapshot\.scrollHeight/, 'prepending history must preserve the current reading position');
 assert.match(thread, /shouldShowDateSeparator\(message, index\)/, 'message history must render a separator for every calendar day');
 assert.match(thread, /formatMessageDateLabel\(messageTimeValue\(message\)\)/, 'date separators must not be hard-coded to today');
+assert.doesNotMatch(styles, /\.composer-foot\s*\{[^}]*margin:\s*-\d/s, 'composer footer must not rely on negative margins');
+assert.match(styles, /\.composer-foot > span\s*\{[^}]*position:\s*static;/s, 'composer account hint must stay in the normal footer layout');
 
 console.log('[frontend] composer, realtime messages, media previews, first paint and instant label filtering verified');
