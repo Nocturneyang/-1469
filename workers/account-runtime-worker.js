@@ -115,6 +115,8 @@ let syncInFlight = false;
 let outboundDrainInFlight = false;
 let outboundDrainRequested = false;
 let outboundDrainTimer = null;
+const immediateOutboundIds = [];
+const immediateOutboundIdSet = new Set();
 
 const outboundConsumer = createOutboundConsumer({
   db: workbenchDb,
@@ -126,7 +128,10 @@ const outboundConsumer = createOutboundConsumer({
 });
 const outboundDoorbellWatcher = createOutboundDoorbellWatcher({
   directory: OUTBOUND_DOORBELL_DIR,
-  onWake: () => scheduleOutboundDrain(15),
+  onWake: (event) => {
+    rememberImmediateOutbound(event && event.payload);
+    scheduleOutboundDrain(15);
+  },
   onError: (err) => reportError('outbound_doorbell_watch_failed', err, { fatal: false }),
 });
 
@@ -181,14 +186,17 @@ async function drainOutbound() {
   if (stopping || !SEND_ENABLED || !channelReady || !accountSendEnabled()) return;
   outboundDrainInFlight = true;
   let drainAgain = false;
+  const immediateOutboundId = nextImmediateOutboundId();
   try {
-    const result = await outboundConsumer.runOnce();
+    const result = await outboundConsumer.runOnce(immediateOutboundId ? { outboundId: immediateOutboundId } : {});
     clearResolvedOutboundDoorbells({ directory: OUTBOUND_DOORBELL_DIR, db: workbenchDb });
     if (result.status !== 'idle') {
       log(`outbound result ${JSON.stringify(result)}`);
       recordOutboundStatusEvent(result.outbound_id);
     }
-    drainAgain = !['idle', 'paused', 'rate_limited'].includes(result.status);
+    drainAgain = immediateOutboundId
+      ? result.status !== 'paused' && result.status !== 'rate_limited'
+      : !['idle', 'paused', 'rate_limited'].includes(result.status);
   } finally {
     outboundDrainInFlight = false;
     const requested = outboundDrainRequested;
@@ -213,6 +221,29 @@ function scheduleOutboundDrain(delayMs = 0) {
     drainOutbound().catch((err) => reportError('send_loop_failed', err, { fatal: false }));
   }, delay);
   outboundDrainTimer.unref?.();
+}
+
+function rememberImmediateOutbound(payload) {
+  if (PLATFORM !== 'tg') return;
+  const outboundId = normalizePositiveInteger(payload && payload.outbound_id);
+  if (!outboundId || immediateOutboundIdSet.has(outboundId)) return;
+  immediateOutboundIdSet.add(outboundId);
+  immediateOutboundIds.push(outboundId);
+}
+
+function nextImmediateOutboundId() {
+  if (PLATFORM !== 'tg') return 0;
+  while (immediateOutboundIds.length) {
+    const outboundId = immediateOutboundIds.shift();
+    immediateOutboundIdSet.delete(outboundId);
+    if (outboundId) return outboundId;
+  }
+  return 0;
+}
+
+function normalizePositiveInteger(value) {
+  const numeric = Number(value);
+  return Number.isSafeInteger(numeric) && numeric > 0 ? numeric : 0;
 }
 
 function accountSendEnabled() {

@@ -480,8 +480,9 @@ WA/TG 收到消息
 -> 写 workbench.sqlite.outbound_messages(status=pending)
 -> 写 outbox/worker-{platform}-{account}/{outbound_id}.json 作为门铃
 -> worker 被唤醒
--> worker 从 workbench.sqlite 查询 pending
--> 同账号串行 sendMessage
+-> WA worker 从 workbench.sqlite 按账号 FIFO 查询 pending
+-> TG worker 优先 claim 门铃指定 outbound_id，随后再兜底扫描 pending
+-> 对应账号 runtime 串行 sendMessage
 -> 回写 sent/failed/paused/dead
 -> 渠道 message_create 事件把真实外发消息写入 raw.sqlite.messages
 -> 通过 remote_msg_id 与 outbound_messages 关联
@@ -494,6 +495,13 @@ WA/TG 收到消息
 ```
 
 文件门铃丢失不影响一致性，因为 worker 有定时扫描。
+
+平台差异：
+
+- WhatsApp 外发采用账本化串行队列，按 `platform + account + created_at/id` 保守 FIFO 消费，避免同账号并发和高频风控。
+- Telegram 外发采用账本化即时派发。API 仍必须先写 `outbound_messages`，但 TG worker 收到门铃后可以优先 claim 门铃里的 `outbound_id`，不被同账号更早的普通 pending 长时间阻塞。
+- TG 即时派发不得绕过账号发送开关、坐席权限、`send_circuit_breaker`、`next_attempt_at`、发送 lease、失败重试和审计。
+- API 进程不得直接持有 WA/TG client；真实发送者仍然只能是对应账号 runtime worker。
 
 ### 8.3 文件门铃
 
@@ -525,6 +533,7 @@ outbox/
 - 文件重复不影响发送，因为数据库状态会去重。
 - worker 处理完成后可删除文件。
 - 删除失败也不影响最终一致性。
+- TG worker 可以读取门铃里的 `outbound_id` 作为即时派发目标；读取失败时必须降级为普通 DB 扫描。
 
 ### 8.4 worker 消费策略
 
@@ -537,6 +546,8 @@ worker 启动：
 4. 每 30 秒定时扫描 DB 兜底
 5. 同一账号 concurrency = 1 串行发送
 ```
+
+TG worker 收到门铃时，优先处理门铃指定的 `outbound_id`；WA worker 收到门铃时只把门铃视为唤醒信号，继续按 FIFO 消费。
 
 查询边界：
 

@@ -18,13 +18,18 @@ async function main() {
   const directory = outboundDoorbellDir(path.join(tmpDir, 'outbox'), 'wa', 'wa-test');
   fs.mkdirSync(directory, { recursive: true });
   let wakeCount = 0;
+  let lastWake = null;
   let watchCallback = null;
   const fakeWatcher = { on() {}, close() {} };
   const watcher = createOutboundDoorbellWatcher({
     directory,
-    onWake: () => { wakeCount += 1; },
+    onWake: (event) => {
+      wakeCount += 1;
+      lastWake = event;
+    },
     fsModule: {
       mkdirSync: fs.mkdirSync,
+      readFileSync: fs.readFileSync,
       watch(_directory, _options, callback) {
         watchCallback = callback;
         return fakeWatcher;
@@ -44,10 +49,16 @@ async function main() {
       INSERT INTO outbound_messages (client_msg_id, platform, account, group_id, text, status, created_by)
       VALUES ('sent-1', 'wa', 'wa-test', 'group-1', 'done', 'sent', 'operator-1')
     `).run().lastInsertRowid;
-    fs.writeFileSync(path.join(directory, `${pending}.json`), '{}');
+    fs.writeFileSync(path.join(directory, `${pending}.json`), JSON.stringify({
+      outbound_id: pending,
+      platform: 'wa',
+      account: 'wa-test',
+    }));
     fs.writeFileSync(path.join(directory, `${sent}.json`), '{}');
     watchCallback('rename', `${pending}.json`);
     assert.ok(wakeCount > 0, 'doorbell file must wake the account worker');
+    assert.strictEqual(lastWake.payload.outbound_id, pending);
+    assert.strictEqual(lastWake.payload.platform, 'wa');
     assert.strictEqual(clearResolvedOutboundDoorbells({ directory, db }), 1);
     assert.ok(fs.existsSync(path.join(directory, `${pending}.json`)));
     assert.ok(!fs.existsSync(path.join(directory, `${sent}.json`)));

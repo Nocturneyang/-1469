@@ -5,6 +5,7 @@ const path = require('path');
 const { openWorkbenchDb } = require('../db/workbench-db');
 const {
   activeBreaker,
+  claimPendingById,
   claimNextPending,
   createOutboundConsumer,
   markDeliveredByRemoteId,
@@ -99,6 +100,84 @@ async function main() {
     assert.strictEqual(sentTasks[sentTasks.length - 1].attachment_json, attachmentJson);
     consumer.close();
 
+    const immediateTasks = [];
+    const immediateConsumer = createOutboundConsumer({
+      db,
+      platform: 'tg',
+      account: 'tg-immediate',
+      minIntervalMs: 0,
+      perMinuteLimit: 100,
+      sendMessage: async (task) => {
+        immediateTasks.push(task);
+        return { remote_msg_id: `tg-${task.id}` };
+      },
+    });
+    const olderImmediateId = insertOutbound(db, {
+      platform: 'tg',
+      account: 'tg-immediate',
+      clientMsgId: 'tg-immediate-old',
+      text: 'old',
+    });
+    const newerImmediateId = insertOutbound(db, {
+      platform: 'tg',
+      account: 'tg-immediate',
+      clientMsgId: 'tg-immediate-new',
+      text: 'new',
+    });
+    assert.strictEqual((await immediateConsumer.runOnce({ outboundId: newerImmediateId })).status, 'sent');
+    assert.strictEqual(immediateTasks[0].id, newerImmediateId);
+    row = db.prepare('SELECT * FROM outbound_messages WHERE id = ?').get(olderImmediateId);
+    assert.strictEqual(row.status, 'pending');
+    assert.strictEqual((await immediateConsumer.runOnce()).status, 'sent');
+    assert.strictEqual(immediateTasks[1].id, olderImmediateId);
+    immediateConsumer.close();
+
+    const futureId = insertOutbound(db, {
+      platform: 'tg',
+      account: 'tg-future',
+      clientMsgId: 'tg-future-1',
+      nextAttemptAt: toSqlTimestamp(Date.now() + 60000),
+    });
+    const futureConsumer = createOutboundConsumer({
+      db,
+      platform: 'tg',
+      account: 'tg-future',
+      minIntervalMs: 0,
+      perMinuteLimit: 100,
+      sendMessage: async () => {
+        throw new Error('future task must not be sent');
+      },
+    });
+    assert.strictEqual((await futureConsumer.runOnce({ outboundId: futureId })).status, 'idle');
+    row = db.prepare('SELECT * FROM outbound_messages WHERE id = ?').get(futureId);
+    assert.strictEqual(row.status, 'pending');
+    futureConsumer.close();
+
+    const rateLimitedTasks = [];
+    const rateLimitedConsumer = createOutboundConsumer({
+      db,
+      platform: 'tg',
+      account: 'tg-rate-limited',
+      minIntervalMs: 60000,
+      perMinuteLimit: 100,
+      sendMessage: async (task) => {
+        rateLimitedTasks.push(task);
+        return { remote_msg_id: `limited-${task.id}` };
+      },
+    });
+    insertOutbound(db, { platform: 'tg', account: 'tg-rate-limited', clientMsgId: 'tg-rate-old' });
+    assert.strictEqual((await rateLimitedConsumer.runOnce()).status, 'sent');
+    const rateLimitedTargetId = insertOutbound(db, {
+      platform: 'tg',
+      account: 'tg-rate-limited',
+      clientMsgId: 'tg-rate-target',
+    });
+    assert.strictEqual((await rateLimitedConsumer.runOnce({ outboundId: rateLimitedTargetId })).status, 'rate_limited');
+    assert.strictEqual(rateLimitedTasks.length, 1);
+    row = db.prepare('SELECT * FROM outbound_messages WHERE id = ?').get(rateLimitedTargetId);
+    assert.strictEqual(row.status, 'pending');
+    rateLimitedConsumer.close();
+
     const failingConsumer = createOutboundConsumer({
       db,
       platform: 'tg',
@@ -132,6 +211,32 @@ async function main() {
     assert.strictEqual(row.error_code, 'CIRCUIT_BREAKER');
     failingConsumer.close();
 
+    const breakerTargetId = insertOutbound(db, {
+      platform: 'tg',
+      account: 'tg-breaker-target',
+      clientMsgId: 'breaker-target-1',
+    });
+    db.prepare(`
+      INSERT INTO send_circuit_breaker (
+        platform, account, status, reason, failure_count, cooldown_until
+      ) VALUES ('tg', 'tg-breaker-target', 'cooldown', 'manual cooldown', 1, @cooldownUntil)
+    `).run({ cooldownUntil: toSqlTimestamp(Date.now() + 60000) });
+    const breakerTargetConsumer = createOutboundConsumer({
+      db,
+      platform: 'tg',
+      account: 'tg-breaker-target',
+      minIntervalMs: 0,
+      perMinuteLimit: 100,
+      sendMessage: async () => {
+        throw new Error('breaker target must not be sent');
+      },
+    });
+    assert.strictEqual((await breakerTargetConsumer.runOnce({ outboundId: breakerTargetId })).status, 'paused');
+    row = db.prepare('SELECT * FROM outbound_messages WHERE id = ?').get(breakerTargetId);
+    assert.strictEqual(row.status, 'paused');
+    assert.strictEqual(row.error_code, 'CIRCUIT_BREAKER');
+    breakerTargetConsumer.close();
+
     insertOutbound(db, { account: 'lease-account', clientMsgId: 'lease-1' });
     const leaseClaim = claimNextPending(db, {
       platform: 'wa', account: 'lease-account', workerId: 'worker-a', leaseMs: 30000,
@@ -142,6 +247,16 @@ async function main() {
     }), null);
     row = db.prepare('SELECT * FROM outbound_messages WHERE client_msg_id = ?').get('lease-1');
     assert.strictEqual(row.owner_worker_id, 'worker-a');
+
+    insertOutbound(db, { platform: 'tg', account: 'direct-claim', clientMsgId: 'direct-old' });
+    const directTargetId = insertOutbound(db, { platform: 'tg', account: 'direct-claim', clientMsgId: 'direct-target' });
+    const directClaim = claimPendingById(db, {
+      platform: 'tg', account: 'direct-claim', outboundId: directTargetId, workerId: 'worker-direct',
+    });
+    assert.ok(directClaim);
+    assert.strictEqual(directClaim.id, directTargetId);
+    row = db.prepare('SELECT * FROM outbound_messages WHERE client_msg_id = ?').get('direct-old');
+    assert.strictEqual(row.status, 'pending');
 
     insertOutbound(db, { platform: 'tg', account: 'tg-flood', clientMsgId: 'flood-1' });
     const floodConsumer = createOutboundConsumer({
@@ -196,17 +311,31 @@ function insertOutbound(db, {
   sendingStartedAt = null,
   retryCount = 0,
   remoteMsgId = null,
+  nextAttemptAt = null,
 } = {}) {
-  db.prepare(`
+  const result = db.prepare(`
     INSERT INTO outbound_messages (
       client_msg_id, platform, account, group_id, chat_id, text, attachment_json,
-      status, created_by, sending_started_at, retry_count, remote_msg_id
+      status, created_by, sending_started_at, retry_count, remote_msg_id, next_attempt_at
     )
     VALUES (
       @clientMsgId, @platform, @account, @groupId, @groupId, @text, @attachmentJson,
-      @status, 'demo-operator', @sendingStartedAt, @retryCount, @remoteMsgId
+      @status, 'demo-operator', @sendingStartedAt, @retryCount, @remoteMsgId, @nextAttemptAt
     )
-  `).run({ clientMsgId, platform, account, groupId, text, attachmentJson, status, sendingStartedAt, retryCount, remoteMsgId });
+  `).run({
+    clientMsgId,
+    platform,
+    account,
+    groupId,
+    text,
+    attachmentJson,
+    status,
+    sendingStartedAt,
+    retryCount,
+    remoteMsgId,
+    nextAttemptAt,
+  });
+  return Number(result.lastInsertRowid);
 }
 
 main().catch((err) => {

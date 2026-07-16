@@ -34,6 +34,7 @@ API 只创建外发任务，不直接登录或调用 WA/TG session；独立账�
 
 - 恢复超时 `sending` 任务。
 - 按 `platform + account` 串行 claim `pending` 任务。
+- 支持 TG worker 按门铃指定的 `outbound_id` 优先 claim 单条 pending，实现账本化即时派发。
 - 调用注入的 `sendMessage(task)`。
 - 成功后回写 `sent` 和 `remote_msg_id`。
 - 失败后回写 `failed`、`error_code`、`error_message`。
@@ -46,6 +47,11 @@ API 只创建外发任务，不直接登录或调用 WA/TG session；独立账�
 - 自动开启生产外发。
 
 真实发送者只允许是持有工作台渠道 session 的账号 worker。全局和账号发送开关均默认关闭。
+
+平台发送语义：
+
+- WA：账本化串行队列。门铃只唤醒 worker，worker 仍按账号 FIFO 消费，保持低频、单账号串行和风控优先。
+- TG：账本化即时派发。门铃中的 `outbound_id` 可让 TG worker 优先发送指定消息，避免被同账号旧 pending 队列挡住；但仍不能绕过发送开关、熔断、`next_attempt_at`、lease、审计和失败恢复。
 
 ## 本地测试账号适配
 
