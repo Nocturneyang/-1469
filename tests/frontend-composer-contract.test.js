@@ -46,6 +46,8 @@ assert.match(thread, /loading="lazy"/, 'large image history must use lazy image 
 assert.ok(thread.includes('次查看'), 'Telegram view counts must be visible');
 assert.ok(thread.includes('转发自'), 'Telegram forward metadata must be visible');
 assert.match(app, /function applyInstantLabelFilter\(/, 'label selection must filter the loaded conversation list immediately');
+assert.match(app, /function applyInstantConversationFilter\(/, 'platform and account changes must filter the loaded conversation list immediately');
+assert.match(app, /function groupMatchesFilterState\(/, 'instant conversation filtering must honor the active filter state');
 assert.match(app, /groupListCache\.get\(groupFilterCacheKey\(nextBase\)\)/, 'instant label filtering must reuse the unfiltered group snapshot');
 assert.match(app, /writeGroupListCache\(requestKey, nextGroups\)/, 'server results must refresh the exact filter cache');
 assert.match(app, /function primeMessagePreview\(/, 'conversation selection must render the latest list message immediately');

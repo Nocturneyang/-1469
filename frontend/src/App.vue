@@ -396,7 +396,7 @@ watch(
     if (restoringWorkbenchCache) return;
     clearTimeout(searchTimer);
     groupsRequestSeq += 1;
-    applyInstantLabelFilter(nextFilters, previousFilters);
+    applyInstantConversationFilter(nextFilters, previousFilters);
     clearPresence();
     selectedGroup.value = null;
     quoteMessage.value = null;
@@ -586,6 +586,19 @@ function writeGroupListCache(key, nextGroups) {
   }
 }
 
+function applyInstantConversationFilter(nextFilters, previousFilters = {}) {
+  const exact = groupListCache.get(groupFilterCacheKey(nextFilters));
+  if (exact) {
+    groups.value = [...exact];
+    return;
+  }
+  if (String(nextFilters?.labelId || '') !== String(previousFilters?.labelId || '')) {
+    applyInstantLabelFilter(nextFilters, previousFilters);
+    return;
+  }
+  groups.value = groups.value.filter((group) => groupMatchesFilterState(group, nextFilters));
+}
+
 function applyInstantLabelFilter(nextFilters, previousFilters = {}) {
   if (String(nextFilters?.labelId || '') === String(previousFilters?.labelId || '')) return;
   const exact = groupListCache.get(groupFilterCacheKey(nextFilters));
@@ -610,6 +623,31 @@ function applyInstantLabelFilter(nextFilters, previousFilters = {}) {
   groups.value = source.filter((group) => (group.labels || []).some((label) => (
     selectedIds.has(String(label.native_label_id || label.native_group_id || label.id || ''))
   )));
+}
+
+function groupMatchesFilterState(group, filterState = filters.value) {
+  const platformSet = new Set((filterState.platforms || []).filter(Boolean));
+  if (platformSet.size && !platformSet.has(group.platform)) return false;
+  const selectedAccounts = new Set(filterState.accountKeys || []);
+  if (selectedAccounts.size && !selectedAccounts.has(accountKey(group))) return false;
+  if (filterState.scope === 'unread' && Number(group.unread_count || 0) <= 0) return false;
+  if (filterState.labelId) {
+    const selectedIds = expandedLabelFilterIds(filterState.labelId);
+    const matched = (group.labels || []).some((label) => (
+      selectedIds.has(String(label.native_label_id || label.native_group_id || label.id || ''))
+    ));
+    if (!matched) return false;
+  }
+  const search = String(filterState.search || '').trim().toLowerCase();
+  if (!search) return true;
+  return [
+    group.group_name,
+    group.group_id,
+    group.sender_name,
+    group.content,
+    group.account,
+    group.account_display_name,
+  ].some((value) => String(value || '').toLowerCase().includes(search));
 }
 
 function expandedLabelFilterIds(labelId) {
