@@ -820,7 +820,16 @@ function createWorkbenchRouter({ workbenchDb, runtimeDb, rawDbPath = DEFAULT_RAW
       scopedIds: accountData.isolated,
     }));
     const ledgerDurationMs = Date.now() - ledgerStartedAt;
-    const merged = applyMentionDisplayNames(mergeConversationMessages(inbound, outbound));
+    const merged = applyMentionDisplayNames(enrichConversationQuoteTexts(
+      mergeConversationMessages(inbound, outbound),
+      accountData.listQuoteTexts({
+        platform,
+        account,
+        accountScope: visibleAccountScope,
+        groupId,
+        quoteIds: collectMissingQuoteIds([...inbound, ...outbound]),
+      }),
+    ));
     const messages = messageFilters.active ? filterConversationMessages(merged, messageFilters) : merged;
     const totalDurationMs = Date.now() - requestStartedAt;
     res.setHeader('Server-Timing', [
@@ -2440,6 +2449,57 @@ function mergeConversationMessages(rawMessages, outboundMessages) {
   });
 }
 
+function collectMissingQuoteIds(messages) {
+  return [...new Set((messages || [])
+    .filter((message) => message?.quote_msg_id && !String(message.quote_text || '').trim())
+    .map((message) => String(message.quote_msg_id).trim())
+    .filter(Boolean))];
+}
+
+function enrichConversationQuoteTexts(messages, persistedQuoteTexts = new Map()) {
+  const inPageQuoteTexts = buildInPageQuoteTextIndex(messages);
+  return messages.map((message) => {
+    const quoteId = String(message.quote_msg_id || '').trim();
+    if (!quoteId || String(message.quote_text || '').trim()) return message;
+    const quoteText = inPageQuoteTexts.get(quoteId) || persistedQuoteTexts.get(quoteId) || '';
+    return quoteText ? { ...message, quote_text: quoteText } : message;
+  });
+}
+
+function buildInPageQuoteTextIndex(messages) {
+  const index = new Map();
+  (messages || []).forEach((message) => {
+    const text = quoteDisplayText(message);
+    if (!text) return;
+    messageReferenceIds(message).forEach((id) => {
+      if (!index.has(id)) index.set(id, text);
+    });
+  });
+  return index;
+}
+
+function messageReferenceIds(message) {
+  const ids = [
+    message.message_id,
+    message.native_message_id,
+    message.remote_msg_id,
+    message.outbound_id,
+    message.raw_id,
+  ].map((id) => String(id || '').trim()).filter(Boolean);
+  const groupId = String(message.group_id || '').trim();
+  const expanded = [];
+  ids.forEach((id) => {
+    expanded.push(id);
+    if (groupId && id.startsWith(`${groupId}:`)) expanded.push(id.slice(groupId.length + 1));
+  });
+  return [...new Set(expanded)];
+}
+
+function quoteDisplayText(message) {
+  return String(message.display_text || message.text || '').trim() ||
+    ((message.attachments || []).length || message.has_media ? '[媒体消息]' : '');
+}
+
 function mapRawMessage(row) {
   const timestamp = normalizeTimestamp(row.timestamp, row.created_at);
   const direction = inferDirection(row);
@@ -2452,6 +2512,7 @@ function mapRawMessage(row) {
     account: row.account,
     group_id: row.group_id,
     message_id: row.message_id,
+    native_message_id: row.native_message_id || '',
     sender_id: row.sender_id,
     sender_name: row.sender_name,
     sender_username: raw.sender_username || '',

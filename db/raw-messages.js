@@ -587,6 +587,112 @@ function listMessagesPage(options = {}) {
   };
 }
 
+function listQuoteTexts({
+  rawDbPath = DEFAULT_RAW_DB_PATH,
+  platform,
+  account,
+  accountScope,
+  groupId,
+  quoteIds,
+  directAccount = false,
+} = {}) {
+  if (!accountScopeContains(accountScope, platform, account)) return new Map();
+  if (!isWorkbenchPlatform(platform)) return new Map();
+  const originalIds = [...new Set((quoteIds || [])
+    .map((id) => String(id || '').trim())
+    .filter(Boolean))];
+  if (!originalIds.length) return new Map();
+  const db = openRawDb(rawDbPath);
+  if (!db) return new Map();
+  const params = {
+    platform: normalizePlatform(platform),
+    account: String(account || 'default'),
+    groupId: String(groupId || ''),
+  };
+  const candidateIds = [...new Set(originalIds.flatMap((id) => [id, `${params.groupId}:${id}`]))];
+  const idPlaceholders = candidateIds.map((id, index) => {
+    const key = `quoteId${index}`;
+    params[key] = id;
+    return `@${key}`;
+  });
+  const byQuoteId = new Map();
+  const assignMatches = (row) => {
+    const text = String(row.content || '').trim() || quoteMediaFallback(row.raw_data, row.has_media);
+    if (!text) return;
+    const rowIds = new Set([
+      row.message_id,
+      row.native_message_id,
+      String(row.message_id || '').startsWith(`${params.groupId}:`) ? String(row.message_id).slice(params.groupId.length + 1) : '',
+    ].map((id) => String(id || '').trim()).filter(Boolean));
+    originalIds.forEach((quoteId) => {
+      if (byQuoteId.has(quoteId)) return;
+      if (rowIds.has(quoteId) || rowIds.has(`${params.groupId}:${quoteId}`)) byQuoteId.set(quoteId, text);
+    });
+  };
+  try {
+    if (directAccount) {
+      const platformAliases = nativePlatformAliases(params.platform);
+      const aliasPlaceholders = platformAliases.map((alias, index) => {
+        const key = `nativePlatform${index}`;
+        params[key] = alias;
+        return `@${key}`;
+      });
+      db.prepare(`
+        SELECT
+          m.message_id,
+          o.native_message_id,
+          COALESCE(m.content, '') AS content,
+          COALESCE(m.has_media, 0) AS has_media,
+          COALESCE(o.raw_json, m.raw_data) AS raw_data
+        FROM messages m
+        LEFT JOIN message_observations o
+          ON o.platform = m.platform
+         AND o.canonical_message_id = m.message_id
+         AND o.observer_account = @account
+        WHERE m.platform IN (${aliasPlaceholders.join(', ')})
+          AND m.group_id = @groupId
+          AND (
+            m.message_id IN (${idPlaceholders.join(', ')})
+            OR o.native_message_id IN (${idPlaceholders.join(', ')})
+          )
+      `).all(params).forEach(assignMatches);
+    } else {
+      db.prepare(`
+        WITH normalized AS (${normalizedMessagesSql(db)})
+        SELECT message_id, native_message_id, content, has_media, raw_data
+        FROM normalized
+        WHERE platform = @platform
+          AND account = @account
+          AND group_id = @groupId
+          AND (
+            message_id IN (${idPlaceholders.join(', ')})
+            OR native_message_id IN (${idPlaceholders.join(', ')})
+          )
+      `).all(params).forEach(assignMatches);
+    }
+    return byQuoteId;
+  } finally {
+    db.close();
+  }
+}
+
+function quoteMediaFallback(rawData, hasMedia) {
+  if (!hasMedia) return '';
+  const raw = parseRawJson(rawData);
+  const media = raw.media || {};
+  return media.label || media.detail || media.name || '媒体消息';
+}
+
+function parseRawJson(rawData) {
+  if (!rawData) return {};
+  if (typeof rawData === 'object') return rawData;
+  try {
+    return JSON.parse(String(rawData));
+  } catch (_) {
+    return {};
+  }
+}
+
 function countUnread({
   rawDbPath = DEFAULT_RAW_DB_PATH,
   platform,
@@ -712,6 +818,7 @@ module.exports = {
   listLoggedInAccounts,
   listMessages,
   listMessagesPage,
+  listQuoteTexts,
   normalizePlatform,
   normalizeAccountScope,
   normalizePlatformList,

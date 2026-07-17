@@ -118,7 +118,7 @@ async function main() {
     assert.strictEqual(groups.groups.length, 1);
     assert.strictEqual(groups.groups[0].platform, 'wa');
     assert.strictEqual(groups.groups[0].account_display_name, 'Nanya Support');
-    assert.strictEqual(groups.groups[0].unread_count, 2);
+    assert.strictEqual(groups.groups[0].unread_count, 3);
     assert.strictEqual(groups.groups.some((group) => group.platform === 'teams'), false);
 
     const disabledOperator = await createScopedOperator(baseUrl, 'disabled-now', {
@@ -752,6 +752,9 @@ async function main() {
     assert.ok((await attachmentDownload.arrayBuffer()).byteLength > 0);
     const quotedMessage = messages.messages.find((message) => message.outbound_id === firstReply.outbound_id);
     assert.strictEqual(quotedMessage.quote_msg_id, 'm-2');
+    const nativeQuotedMessage = messages.messages.find((message) => message.message_id === 'm-3');
+    assert.strictEqual(nativeQuotedMessage.quote_msg_id, 54);
+    assert.strictEqual(nativeQuotedMessage.quote_text, '谢谢');
     const searchedMessages = await requestJson(`${baseUrl}/groups/group-1/messages?platform=wa&account=nanya_wa&message_search=${encodeURIComponent('谢谢')}`);
     assert.strictEqual(searchedMessages.messages.length, 1);
     assert.strictEqual(searchedMessages.messages[0].message_id, 'm-2');
@@ -760,7 +763,7 @@ async function main() {
     const attachmentMessages = await requestJson(`${baseUrl}/groups/group-1/messages?platform=wa&account=nanya_wa&has_attachment=1`);
     assert.strictEqual(attachmentMessages.messages.some((message) => message.outbound_id === attachmentReply.outbound_id), true);
     const openedGroups = await requestJson(`${baseUrl}/groups?scope=all`);
-    assert.strictEqual(openedGroups.groups.find((group) => group.group_id === 'group-1').unread_count, 2);
+    assert.strictEqual(openedGroups.groups.find((group) => group.group_id === 'group-1').unread_count, 3);
     assert.strictEqual(openedGroups.groups.find((group) => group.group_id === 'group-1').conversation_status, 'resolved');
     assert.strictEqual(openedGroups.groups.find((group) => group.group_id === 'group-1').starred, true);
     assert.strictEqual(openedGroups.groups.find((group) => group.group_id === 'group-1').notes_count, 1);
@@ -842,10 +845,10 @@ async function main() {
     assert.ok(pagedMessages.paging.before_id);
     const olderMessages = await requestJson(`${baseUrl}/groups/group-1/messages?platform=wa&account=nanya_wa&limit=1&before_id=${pagedMessages.paging.before_id}`);
     assert.strictEqual(olderMessages.ok, true);
-    assert.strictEqual(olderMessages.messages.some((message) => message.message_id === 'm-1'), true);
-    assert.strictEqual(olderMessages.messages.some((message) => message.message_id === 'm-2'), false);
+    assert.strictEqual(olderMessages.messages.some((message) => message.message_id === 'm-2'), true);
+    assert.strictEqual(olderMessages.messages.some((message) => message.message_id === 'm-3'), false);
     const afterPagingGroups = await requestJson(`${baseUrl}/groups?scope=all`);
-    assert.strictEqual(afterPagingGroups.groups.find((group) => group.group_id === 'group-1').unread_count, 2);
+    assert.strictEqual(afterPagingGroups.groups.find((group) => group.group_id === 'group-1').unread_count, 3);
 
     const partialRead = await requestJson(`${baseUrl}/messages/read`, {
       method: 'POST',
@@ -856,9 +859,9 @@ async function main() {
         last_read_message_id: 1,
       },
     });
-    assert.strictEqual(partialRead.unread_count, 1);
+    assert.strictEqual(partialRead.unread_count, 2);
     const partiallyReadGroups = await requestJson(`${baseUrl}/groups?scope=all`);
-    assert.strictEqual(partiallyReadGroups.groups.find((group) => group.group_id === 'group-1').unread_count, 1);
+    assert.strictEqual(partiallyReadGroups.groups.find((group) => group.group_id === 'group-1').unread_count, 2);
 
     const fullRead = await requestJson(`${baseUrl}/messages/read`, {
       method: 'POST',
@@ -866,7 +869,7 @@ async function main() {
         platform: 'wa',
         account: 'nanya_wa',
         group_id: 'group-1',
-        last_read_message_id: 2,
+        last_read_message_id: 3,
       },
     });
     assert.strictEqual(fullRead.unread_count, 0);
@@ -954,13 +957,31 @@ function seedRawDb(rawDbPath) {
       group_name TEXT,
       sender_id TEXT,
       sender_name TEXT,
+      direction TEXT,
       content TEXT,
       has_media BOOLEAN DEFAULT 0,
       media_path TEXT,
+      media_name TEXT,
+      media_mime TEXT,
+      media_size INTEGER,
+      media_sha256 TEXT,
       timestamp INTEGER,
       raw_data TEXT,
       created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
       UNIQUE(platform, message_id)
+    );
+    CREATE TABLE message_observations (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      platform TEXT NOT NULL,
+      canonical_message_id TEXT NOT NULL,
+      observer_account TEXT NOT NULL,
+      observer_role TEXT NOT NULL DEFAULT 'service',
+      native_chat_id TEXT,
+      native_message_id TEXT,
+      raw_json TEXT,
+      observed_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(platform, canonical_message_id, observer_account)
     );
     CREATE TABLE accounts (
       id TEXT PRIMARY KEY,
@@ -1030,6 +1051,40 @@ function seedRawDb(rawDbPath) {
     content: '谢谢',
     timestamp: 1782950460,
     rawData: '{}',
+  });
+  insert.run({
+    platform: 'whatsapp',
+    account: 'nanya_wa',
+    messageId: 'm-3',
+    groupId: 'group-1',
+    groupName: 'VIP 支持交流群',
+    senderId: 'customer-2',
+    senderName: '另一个客户',
+    content: '这是引用编号 54 的回复',
+    timestamp: 1782950490,
+    rawData: JSON.stringify({ reply_to_msg_id: 54 }),
+  });
+  const observe = db.prepare(`
+    INSERT INTO message_observations (
+      platform, canonical_message_id, observer_account, native_chat_id, native_message_id, raw_json
+    )
+    VALUES (@platform, @messageId, @account, @groupId, @nativeMessageId, @rawJson)
+  `);
+  observe.run({
+    platform: 'whatsapp',
+    messageId: 'm-2',
+    account: 'nanya_wa',
+    groupId: 'group-1',
+    nativeMessageId: '54',
+    rawJson: '{}',
+  });
+  observe.run({
+    platform: 'whatsapp',
+    messageId: 'm-3',
+    account: 'nanya_wa',
+    groupId: 'group-1',
+    nativeMessageId: '55',
+    rawJson: JSON.stringify({ reply_to_msg_id: 54 }),
   });
   insert.run({
     platform: 'telegram',
