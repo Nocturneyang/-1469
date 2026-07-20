@@ -56,7 +56,11 @@ assert.ok(thread.includes('正在加载完整消息记录'), 'the thread must ex
 assert.match(styles, /\.message-loading-skeleton/, 'an empty first message page must show a loading skeleton');
 assert.match(app, /const requestSeq = preserveExisting \? messageRequestSeq : \+\+messageRequestSeq;/, 'background refreshes must not invalidate the first message response');
 assert.match(app, /if \(loadingMessages\.value\) return;/, 'background polling must yield to the first message request');
-assert.match(app, /loadMessages\(\)[\s\S]*?\.finally\(\(\) => \{[\s\S]*?loadWorkspace\(\)/, 'workspace details must load after the first message request');
+assert.match(app, /loadMessages\(restoredFromCache \? \{ preserve_existing: true \} : \{\}\)[\s\S]*?\.finally\(\(\) => \{[\s\S]*?loadWorkspace\(\)/, 'workspace details must load after the selected conversation message request');
+assert.match(app, /const restoredFromCache = hydrateCachedMessages\(selectedGroup\.value\);/, 'conversation selection must detect a fully loaded cached message page');
+assert.match(app, /loadMessages\(restoredFromCache \? \{ preserve_existing: true \} : \{\}\)/, 'returning to a conversation must preserve previously loaded history');
+assert.match(app, /writeMessageCache\(cacheKey, nextMessages, nextPaging, \{ loaded: true \}\)/, 'successful message pages must mark the conversation cache as fully loaded');
+assert.match(app, /return entry\.loaded === true;/, 'preview-only caches must not suppress the first full message load');
 assert.match(thread, /el\.scrollTop <= TOP_LOAD_THRESHOLD_PX\) requestOlderMessages\(\)/, 'scrolling to the top must request older messages');
 assert.match(thread, /el\.scrollHeight - snapshot\.scrollHeight/, 'prepending history must preserve the current reading position');
 assert.match(thread, /shouldShowDateSeparator\(message, index\)/, 'message history must render a separator for every calendar day');

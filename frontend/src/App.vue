@@ -416,8 +416,15 @@ watch(
     if (selectedGroup.value) {
       const selectedGroupId = selectedGroup.value.id;
       workspaceDetail.value = { profile: null, notes: [], timeline: [], presence: [], notes_paging: {}, timeline_paging: {} };
-      hydrateCachedMessages(selectedGroup.value);
-      loadMessages()
+      const restoredFromCache = hydrateCachedMessages(selectedGroup.value);
+      // Returning to an already loaded conversation should keep its complete history visible.
+      // Start a new request generation so a slower response from the previous conversation
+      // cannot leave a stale loading state or replace the restored cache.
+      if (restoredFromCache) {
+        messageRequestSeq += 1;
+        loadingMessages.value = false;
+      }
+      loadMessages(restoredFromCache ? { preserve_existing: true } : {})
         .catch(() => {})
         .finally(() => {
           if (selectedGroup.value && selectedGroup.value.id === selectedGroupId) {
@@ -846,7 +853,7 @@ async function loadMessages(params = {}) {
     messages.value = nextMessages;
     const nextPaging = preserveExisting ? messagePaging.value : page.paging;
     messagePaging.value = nextPaging;
-    writeMessageCache(cacheKey, nextMessages, nextPaging);
+    writeMessageCache(cacheKey, nextMessages, nextPaging, { loaded: true });
   } catch (err) {
     // 保留已显示的缓存，网络抖动时不让会话窗口退回空白。
   } finally {
@@ -869,12 +876,13 @@ function hydrateCachedMessages(group) {
   if (!entry) {
     messages.value = [];
     messagePaging.value = { has_more: false, before_id: null };
-    return;
+    return false;
   }
   messageCache.delete(key);
   messageCache.set(key, entry);
   messages.value = entry.messages;
   messagePaging.value = entry.paging;
+  return entry.loaded === true;
 }
 
 function primeMessagePreview(group) {
@@ -901,14 +909,17 @@ function primeMessagePreview(group) {
     created_at: new Date(timestamp).toISOString(),
     source: 'group-preview',
     provisional: true,
-  }], { has_more: false, before_id: null });
+  }], { has_more: false, before_id: null }, { loaded: false });
 }
 
-function writeMessageCache(key, nextMessages, paging) {
+function writeMessageCache(key, nextMessages, paging, options = {}) {
+  const previous = messageCache.get(key);
+  const loaded = options.loaded === undefined ? previous?.loaded === true : options.loaded === true;
   messageCache.delete(key);
   messageCache.set(key, {
     messages: Array.isArray(nextMessages) ? [...nextMessages] : [],
     paging: paging || { has_more: false, before_id: null },
+    loaded,
   });
   while (messageCache.size > MESSAGE_CACHE_LIMIT) {
     messageCache.delete(messageCache.keys().next().value);
