@@ -97,6 +97,20 @@ async function main() {
     assert.strictEqual(savedScopes.scopes.length, 1);
     assert.strictEqual(savedScopes.scopes[0].service_account, 'nanya_wa');
 
+    const rejectedEmptyScope = await requestRaw(`${baseUrl}/admin/users/${createdUser.user.id}/scopes`, {
+      method: 'PUT',
+      body: {
+        scopes: [{
+          platform: 'wa',
+          service_account: '',
+          native_group_id: '*',
+          can_view: true,
+        }],
+      },
+    });
+    assert.strictEqual(rejectedEmptyScope.response.status, 400);
+    assert.strictEqual(countRows(workbenchDb, 'operator_service_group_scopes', 'operator_id', createdUser.user.id), 1);
+
     const deniedAdminDelete = await requestRaw(`${baseUrl}/admin/users/1469`, {
       method: 'DELETE',
     });

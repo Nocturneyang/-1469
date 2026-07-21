@@ -405,22 +405,31 @@ async function savePortal() {
   }
 }
 
-function addScope() {
-  const account = access.value.accounts?.[0] || { platform: 'wa', account: '' };
-  scopeDraft.value.push({
+async function addScope() {
+  if (!access.value.accounts?.length) await load();
+  const account = access.value.accounts?.[0];
+  if (!account) {
+    ElMessage.warning('暂无可授权的服务账号，请先完成服务账号接入后刷新权限管理');
+    return;
+  }
+  scopeDraft.value = [...scopeDraft.value, {
     local_id: `${Date.now()}-${Math.random()}`,
-    platform: account.platform || 'wa',
-    service_account: account.account || '',
+    platform: account.platform,
+    service_account: account.account,
     native_group_id: '*',
     can_view: true,
     can_reply: true,
     can_assign: false,
     can_manage: false,
-  });
+  }];
 }
 
 async function saveScopes() {
   if (!selectedUser.value) return;
+  if (scopeDraft.value.some((scope) => !scope.platform || !scope.service_account || !scope.native_group_id)) {
+    ElMessage.warning('请为每条范围选择平台、服务账号和分组后再保存');
+    return;
+  }
   const userId = selectedUser.value.id;
   saving.value = true;
   try {

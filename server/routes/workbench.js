@@ -3506,7 +3506,11 @@ function savePortalAccess(db, operatorId, input = {}) {
 function replaceOperatorScopes(db, operatorId, scopes = []) {
   const id = String(operatorId || '').trim();
   if (!id) throw createHttpError(400, 'operator_id is required');
-  const normalized = (Array.isArray(scopes) ? scopes : []).map(normalizeAdminScope).filter(Boolean);
+  const requestedScopes = Array.isArray(scopes) ? scopes : [];
+  const normalized = requestedScopes.map(normalizeAdminScope);
+  if (normalized.some((scope) => !scope)) {
+    throw createHttpError(400, 'each scope requires a valid platform, service account, and group');
+  }
   const save = db.transaction(() => {
     db.prepare('DELETE FROM operator_service_group_scopes WHERE operator_id = ?').run(id);
     const insert = db.prepare(`

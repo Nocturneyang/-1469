@@ -39,5 +39,7 @@ assert.ok(indexSource.includes('href="/favicon.svg"'), 'site must expose the bra
 assert.match(permissionConfigSource, /const result = await saveAdminUserScopes\(userId,/, 'saving service-account scopes must retain the API response');
 assert.match(permissionConfigSource, /scopeDraft\.value = toScopeDraft\(scopes\);/, 'saved service-account scopes must immediately refresh the displayed count');
 assert.match(permissionConfigSource, /users: users\.value\.map\(\(user\) => \(user\.id === userId \? \{ \.\.\.user, scopes \} : user\)\)/, 'saved service-account scopes must update the selected user state');
+assert.match(permissionConfigSource, /if \(!access\.value\.accounts\?\.length\) await load\(\);/, 'adding a scope must refresh newly connected service accounts');
+assert.match(permissionConfigSource, /请为每条范围选择平台、服务账号和分组后再保存/, 'empty service-account scopes must not be silently discarded');
 
 console.log('[frontend] component registrations and brand contract verified');
