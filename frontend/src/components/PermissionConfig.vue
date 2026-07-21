@@ -277,10 +277,7 @@ onMounted(load);
 watch(selectedUser, (user) => {
   if (!user) return;
   roleDraft.value = [...(user.roles || [])];
-  scopeDraft.value = (user.scopes || []).map((scope) => ({
-    ...scope,
-    local_id: `${Date.now()}-${Math.random()}`,
-  }));
+  scopeDraft.value = toScopeDraft(user.scopes);
   Object.assign(portalDraft, {
     can_monitor: false,
     can_workbench: Boolean(user.portal_access?.can_workbench),
@@ -424,16 +421,29 @@ function addScope() {
 
 async function saveScopes() {
   if (!selectedUser.value) return;
+  const userId = selectedUser.value.id;
   saving.value = true;
   try {
-    await saveAdminUserScopes(selectedUser.value.id, scopeDraft.value.map(({ local_id, ...scope }) => scope));
-    await load();
+    const result = await saveAdminUserScopes(userId, scopeDraft.value.map(({ local_id, ...scope }) => scope));
+    const scopes = result.scopes || [];
+    scopeDraft.value = toScopeDraft(scopes);
+    access.value = {
+      ...access.value,
+      users: users.value.map((user) => (user.id === userId ? { ...user, scopes } : user)),
+    };
     ElMessage.success('服务范围已保存');
   } catch (err) {
     ElMessage.error(err.response?.data?.error || '保存范围失败');
   } finally {
     saving.value = false;
   }
+}
+
+function toScopeDraft(scopes = []) {
+  return scopes.map((scope) => ({
+    ...scope,
+    local_id: `${Date.now()}-${Math.random()}`,
+  }));
 }
 
 async function saveRole(roleCode) {
