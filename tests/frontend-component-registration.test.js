@@ -41,9 +41,14 @@ assert.match(permissionConfigSource, /access\.value\.accounts = refreshed\.accou
 assert.match(permissionConfigSource, /请为每条范围选择平台、服务账号和分组后再保存/, 'empty service-account scopes must not be silently discarded');
 assert.ok(!permissionConfigSource.includes('<h2>入口权限</h2>'), 'entry access must no longer be configured separately');
 assert.ok(permissionConfigSource.includes('默认入口：工作台'), 'permission management must show the fixed default entry');
-assert.ok(permissionConfigSource.includes('保存全部'), 'permission management must expose a global save action');
-assert.match(permissionConfigSource, /const result = await saveAdminUserAccess\(userId,/, 'global save must use the atomic access API');
-assert.match(permissionConfigSource, /role_permissions: Object\.fromEntries/, 'global save must include role permission drafts');
-assert.match(permissionConfigSource, /scopes: scopeDraft\.value\.map/, 'global save must include service-account scopes');
+assert.ok(!permissionConfigSource.includes('保存全部'), 'permission management must not expose a page-level global save action');
+assert.ok(permissionConfigSource.includes('保存当前账户'), 'the selected account card must expose its own save action');
+assert.ok(permissionConfigSource.includes('保存角色权限'), 'global role permissions must expose an independent save action');
+assert.match(permissionConfigSource, /@click="selectUser\(user\.id\)"/, 'account switching must go through the unsaved-change guard');
+assert.ok(permissionConfigSource.includes('当前账户存在未保存修改'), 'account switching must warn before discarding drafts');
+assert.match(permissionConfigSource, /const result = await saveAdminUserAccess\(userId,/, 'account save must use the atomic access API');
+assert.ok(!permissionConfigSource.includes('role_permissions: Object.fromEntries'), 'account save must not include global role permission drafts');
+assert.match(permissionConfigSource, /scopes: scopeDraft\.value\.map/, 'account save must include service-account scopes');
+assert.match(permissionConfigSource, /await saveRolePermissions\(role\.code,/, 'role permissions must save through their dedicated API');
 
 console.log('[frontend] component registrations and brand contract verified');

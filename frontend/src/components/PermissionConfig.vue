@@ -8,7 +8,6 @@
       <div class="permission-header-actions">
         <el-button @click="$emit('back')">返回工作台</el-button>
         <el-button :icon="Refresh" :loading="loading" @click="load">刷新</el-button>
-        <el-button type="primary" :loading="saving" :disabled="!selectedUser" @click="saveAll">保存全部</el-button>
       </div>
     </header>
 
@@ -27,7 +26,7 @@
           type="button"
           class="permission-user"
           :class="{ active: selectedUser && selectedUser.id === user.id }"
-          @click="selectedUserId = user.id"
+          @click="selectUser(user.id)"
         >
           <span class="permission-user-avatar">{{ initialOf(user) }}</span>
           <span class="permission-user-main">
@@ -64,6 +63,14 @@
               </div>
             </div>
             <div class="permission-profile-actions">
+              <el-button
+                type="primary"
+                :loading="saving"
+                :disabled="!hasAccountChanges"
+                @click="saveCurrentUser"
+              >
+                保存当前账户
+              </el-button>
               <el-tag :type="selectedUser.status === 'active' ? 'success' : 'info'">
                 {{ selectedUser.status === 'active' ? '启用' : '停用' }}
               </el-tag>
@@ -170,8 +177,17 @@
           <div class="permission-block-head">
             <div>
               <h2>角色权限项</h2>
-              <span>调整角色包含的功能权限</span>
+              <span>全局配置，调整后会影响所有使用该角色的账户</span>
             </div>
+            <el-button
+              type="primary"
+              plain
+              :loading="savingRolePermissions"
+              :disabled="!hasRolePermissionChanges"
+              @click="saveRolePermissionChanges"
+            >
+              保存角色权限
+            </el-button>
           </div>
           <el-collapse>
             <el-collapse-item v-for="role in roles" :key="role.code" :title="`${role.name} · ${role.code}`" :name="role.code">
@@ -207,17 +223,21 @@ import {
   deleteAdminUser,
   fetchAdminAccess,
   saveAdminUserAccess,
+  saveRolePermissions,
 } from '../api';
 
 defineEmits(['back']);
 
 const loading = ref(false);
 const saving = ref(false);
+const savingRolePermissions = ref(false);
 const access = ref({ users: [], roles: [], permissions: [], accounts: [], service_groups: [], scope_special_groups: [] });
 const selectedUserId = ref('');
 const roleDraft = ref([]);
 const scopeDraft = ref([]);
 const rolePermissionDraft = reactive({});
+const accountBaseline = ref(null);
+const rolePermissionBaseline = ref({});
 const createForm = reactive({
   username: '',
   display_name: '',
@@ -235,22 +255,26 @@ const selectedUser = computed(() => users.value.find((user) => user.id === selec
 const activeUserCount = computed(() => users.value.filter((user) => user.status === 'active').length);
 const selectedRoleText = computed(() => roleLabel(roleDraft.value));
 const canDeleteSelectedUser = computed(() => selectedUser.value && !selectedUser.value.is_super_admin);
+const hasAccountChanges = computed(() => {
+  if (!selectedUser.value || !accountBaseline.value) return false;
+  return JSON.stringify(normalizeAccountPayload(currentAccountPayload())) !== JSON.stringify(accountBaseline.value);
+});
+const hasRolePermissionChanges = computed(() => (
+  JSON.stringify(rolePermissionSnapshot()) !== JSON.stringify(rolePermissionBaseline.value)
+));
 
 onMounted(load);
 
 watch(selectedUser, (user) => {
   if (!user) return;
-  roleDraft.value = [...(user.roles || [])];
-  scopeDraft.value = toScopeDraft(user.scopes);
+  hydrateAccountDrafts(user);
 }, { immediate: true });
 
 async function load() {
   loading.value = true;
   try {
     access.value = await fetchAdminAccess();
-    roles.value.forEach((role) => {
-      rolePermissionDraft[role.code] = [...(role.permissions || [])];
-    });
+    hydrateRolePermissionDrafts();
     if (!users.value.some((user) => user.id === selectedUserId.value)) {
       selectedUserId.value = users.value[0]?.id || '';
     }
@@ -347,7 +371,28 @@ async function refreshScopeOptions() {
   }
 }
 
-async function saveAll() {
+async function selectUser(userId) {
+  if (!userId || userId === selectedUserId.value || saving.value) return;
+  if (hasAccountChanges.value) {
+    try {
+      await ElMessageBox.confirm(
+        '当前账户存在未保存修改，切换账户后这些修改将丢失。',
+        '切换账户',
+        {
+          confirmButtonText: '放弃修改并切换',
+          cancelButtonText: '继续编辑',
+          type: 'warning',
+        },
+      );
+    } catch (_) {
+      return;
+    }
+    restoreAccountBaseline();
+  }
+  selectedUserId.value = userId;
+}
+
+async function saveCurrentUser() {
   if (!selectedUser.value) return;
   if (scopeDraft.value.some((scope) => !scope.platform || !scope.service_account || !scope.native_group_id)) {
     ElMessage.warning('请为每条范围选择平台、服务账号和分组后再保存');
@@ -364,22 +409,113 @@ async function saveAll() {
       },
       roles: [...roleDraft.value],
       scopes: scopeDraft.value.map(({ local_id, ...scope }) => scope),
-      role_permissions: Object.fromEntries(roles.value.map((role) => [
-        role.code,
-        [...(rolePermissionDraft[role.code] || [])],
-      ])),
     });
     access.value = result.access || access.value;
     selectedUserId.value = userId;
-    roles.value.forEach((role) => {
-      rolePermissionDraft[role.code] = [...(role.permissions || [])];
-    });
-    ElMessage.success('当前页面全部修改已保存');
+    hydrateAccountDrafts(users.value.find((user) => user.id === userId));
+    ElMessage.success('当前账户已保存');
   } catch (err) {
-    ElMessage.error(err.response?.data?.error || '保存全部失败');
+    ElMessage.error(err.response?.data?.error || '保存当前账户失败');
   } finally {
     saving.value = false;
   }
+}
+
+async function saveRolePermissionChanges() {
+  const changedRoles = roles.value.filter((role) => (
+    JSON.stringify(normalizeCodes(rolePermissionDraft[role.code]))
+      !== JSON.stringify(rolePermissionBaseline.value[role.code] || [])
+  ));
+  if (!changedRoles.length) return;
+  savingRolePermissions.value = true;
+  try {
+    for (const role of changedRoles) {
+      const result = await saveRolePermissions(role.code, rolePermissionDraft[role.code] || []);
+      const savedRole = result.role || role;
+      const roleIndex = access.value.roles.findIndex((item) => item.code === role.code);
+      if (roleIndex >= 0) access.value.roles[roleIndex] = savedRole;
+      rolePermissionDraft[role.code] = [...(savedRole.permissions || [])];
+      rolePermissionBaseline.value = {
+        ...rolePermissionBaseline.value,
+        [role.code]: normalizeCodes(savedRole.permissions),
+      };
+    }
+    ElMessage.success('角色权限已保存');
+  } catch (err) {
+    ElMessage.error(err.response?.data?.error || '保存角色权限失败');
+  } finally {
+    savingRolePermissions.value = false;
+  }
+}
+
+function hydrateAccountDrafts(user) {
+  if (!user) {
+    accountBaseline.value = null;
+    return;
+  }
+  roleDraft.value = [...(user.roles || [])];
+  scopeDraft.value = toScopeDraft(user.scopes);
+  accountBaseline.value = normalizeAccountPayload(currentAccountPayload(user));
+}
+
+function restoreAccountBaseline() {
+  if (!selectedUser.value || !accountBaseline.value) return;
+  selectedUser.value.display_name = accountBaseline.value.profile.display_name;
+  selectedUser.value.status = accountBaseline.value.profile.status;
+  selectedUser.value.role = accountBaseline.value.profile.role;
+  roleDraft.value = [...accountBaseline.value.roles];
+  scopeDraft.value = toScopeDraft(accountBaseline.value.scopes);
+}
+
+function currentAccountPayload(user = selectedUser.value) {
+  return {
+    profile: {
+      display_name: user?.display_name || '',
+      status: user?.status || 'active',
+      role: user?.role || '',
+    },
+    roles: [...roleDraft.value],
+    scopes: scopeDraft.value.map(({ local_id, ...scope }) => scope),
+  };
+}
+
+function normalizeAccountPayload(payload = {}) {
+  const scopes = (payload.scopes || []).map((scope) => ({
+    platform: scope.platform || '',
+    service_account: scope.service_account || '',
+    native_group_id: scope.native_group_id || '',
+    can_view: Boolean(scope.can_view),
+    can_reply: Boolean(scope.can_reply),
+    can_assign: Boolean(scope.can_assign),
+    can_manage: Boolean(scope.can_manage),
+  })).sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right)));
+  return {
+    profile: {
+      display_name: String(payload.profile?.display_name || ''),
+      status: String(payload.profile?.status || 'active'),
+      role: String(payload.profile?.role || ''),
+    },
+    roles: normalizeCodes(payload.roles),
+    scopes,
+  };
+}
+
+function hydrateRolePermissionDrafts() {
+  Object.keys(rolePermissionDraft).forEach((code) => delete rolePermissionDraft[code]);
+  roles.value.forEach((role) => {
+    rolePermissionDraft[role.code] = [...(role.permissions || [])];
+  });
+  rolePermissionBaseline.value = rolePermissionSnapshot();
+}
+
+function rolePermissionSnapshot() {
+  return Object.fromEntries(roles.value
+    .map((role) => [role.code, normalizeCodes(rolePermissionDraft[role.code])])
+    .sort(([left], [right]) => left.localeCompare(right)));
+}
+
+function normalizeCodes(codes = []) {
+  return [...new Set(codes || [])].sort();
 }
 
 function toScopeDraft(scopes = []) {
