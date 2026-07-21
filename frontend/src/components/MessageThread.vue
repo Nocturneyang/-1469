@@ -12,7 +12,10 @@
         </div>
       </div>
 
-      <div class="thread-label-zone">
+      <div
+        class="thread-label-zone"
+        :class="{ 'is-empty': !visibleHeaderTags.length && !hiddenTagCount && !canManageManualGroups }"
+      >
         <div class="thread-label-row">
           <span v-for="label in visibleHeaderTags" :key="labelKey(label)" class="header-tag" :class="isWorkbenchTag(label) ? 'workbench' : 'channel'" :title="labelTitle(label)">
             {{ headerLabelText(label) }}

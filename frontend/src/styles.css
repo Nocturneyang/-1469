@@ -4341,8 +4341,8 @@ button {
 }
 .thread-title { min-width: 0; gap: 10px; }
 .thread-header .platform-icon.large { width: 32px; height: 32px; font-size: 11px; }
-.thread-name-line { min-width: 0; flex-wrap: nowrap; }
-.thread-title h1 { max-width: min(260px, 22vw); color: var(--text); font-size: 16px; }
+.thread-name-line { min-width: 0; flex: 1 1 auto; flex-wrap: nowrap; }
+.thread-title h1 { flex: 1 1 auto; max-width: none; color: var(--text); font-size: 16px; }
 .thread-separator { flex: 0 0 auto; color: var(--muted-2); font-family: "JetBrains Mono", monospace; }
 .thread-platform-badge {
   flex: 0 0 auto;
@@ -4361,6 +4361,7 @@ button {
 .thread-platform-badge.platform-tg { color: #0088cc; }
 .thread-account { max-width: 150px; overflow: hidden; color: var(--muted); font-family: "JetBrains Mono", monospace; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .thread-label-zone { border-left: 0; }
+.thread-label-zone.is-empty { flex: 0 0 0; min-width: 0; padding-left: 0; }
 .header-tag { height: 24px; border-radius: 2px; }
 .header-tag:not(.workbench):not(.more) { color: #087f3f; border-color: #25d366; background: transparent; }
 .header-tag.workbench { color: #172b4d; border-color: transparent; background: #ebecf0; }
