@@ -10,7 +10,7 @@
 
 - 独立登录：工作台用户身份由工作台自己的鉴权层处理；公网部署可保留 Deploy Hub SSO 网关，但不沿用监控项目登录态。
 - 独立存储：工作台只使用 `/data/db/auth.sqlite`、`workbench.sqlite`、`raw.sqlite`、`runtime.sqlite`。
-- 独立权限：`/admin` 只管理工作台坐席、角色、入口权限、服务账号和分组范围。
+- 独立权限：`/admin` 只管理工作台坐席、角色权限、服务账号和分组范围；页面入口由角色自动派生。
 - 独立前端：工作台不展示监控入口，不复用监控项目路由或页面。
 - 独立服务账号登录：`/service-account-login` 发起 WA/TG 登录任务，状态写入 `runtime.sqlite`，账号档案写入 `raw.sqlite`。
 - 独立 worker：`social-workbench-login-worker` 消费 `outbox/login-worker-*`，持有工作台 WA/TG 登录 session；后续发送/同步 worker 消费 `outbox/worker-*`。
@@ -22,7 +22,7 @@ auth.sqlite
   工作台用户、登录兼容层、登录审计
 
 workbench.sqlite
-  工作台角色、权限、入口权限、服务范围、已读、分配、外发、人工分组
+  工作台角色、权限、服务范围、已读、分配、外发、人工分组
 
 raw.sqlite
   工作台服务账号档案、原始消息、message_observations、channel_account_registry
@@ -68,4 +68,4 @@ runtime.sqlite
 - TG session 目录：`/data/sessions/tg`
 - 平台外层 SSO：`sso: true`
 
-Deploy Hub 的 SSO 是公网网关认证要求，不代表工作台可以复用监控项目登录或权限。工作台应用内仍保持自己的用户、角色、入口权限和服务账号范围。
+Deploy Hub 的 SSO 是公网网关认证要求，不代表工作台可以复用监控项目登录或权限。工作台应用内仍保持自己的用户、角色权限和服务账号范围；默认落点为工作台。

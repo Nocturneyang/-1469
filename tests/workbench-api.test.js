@@ -73,12 +73,14 @@ async function main() {
       method: 'PUT',
       body: {
         can_monitor: false,
-        can_workbench: true,
-        can_admin: false,
-        default_entry: 'workbench',
+        can_workbench: false,
+        can_admin: true,
+        default_entry: 'admin',
       },
     });
     assert.strictEqual(savedPortal.portal_access.can_workbench, true);
+    assert.strictEqual(savedPortal.portal_access.can_admin, false);
+    assert.strictEqual(savedPortal.portal_access.default_entry, 'workbench');
 
     const savedScopes = await requestJson(`${baseUrl}/admin/users/${createdUser.user.id}/scopes`, {
       method: 'PUT',
@@ -96,6 +98,48 @@ async function main() {
     });
     assert.strictEqual(savedScopes.scopes.length, 1);
     assert.strictEqual(savedScopes.scopes[0].service_account, 'nanya_wa');
+
+    const savedAll = await requestJson(`${baseUrl}/admin/users/${createdUser.user.id}/access`, {
+      method: 'PUT',
+      body: {
+        profile: {
+          display_name: '一键保存坐席',
+          status: 'active',
+        },
+        roles: ['agent'],
+        scopes: savedScopes.scopes,
+        role_permissions: {
+          agent: ['workbench:view'],
+        },
+      },
+    });
+    assert.strictEqual(savedAll.user.display_name, '一键保存坐席');
+    assert.deepStrictEqual(savedAll.user.roles, ['agent']);
+    assert.strictEqual(savedAll.user.scopes.length, 1);
+    assert.deepStrictEqual(
+      savedAll.access.roles.find((role) => role.code === 'agent').permissions,
+      ['workbench:view'],
+    );
+
+    const rejectedGlobalSave = await requestRaw(`${baseUrl}/admin/users/${createdUser.user.id}/access`, {
+      method: 'PUT',
+      body: {
+        profile: { display_name: '不应保存' },
+        roles: ['agent'],
+        scopes: [{
+          platform: 'wa',
+          service_account: '',
+          native_group_id: '*',
+          can_view: true,
+        }],
+      },
+    });
+    assert.strictEqual(rejectedGlobalSave.status, 400);
+    const accessAfterRejectedGlobalSave = await requestJson(`${baseUrl}/admin/access`);
+    assert.strictEqual(
+      accessAfterRejectedGlobalSave.users.find((user) => user.id === createdUser.user.id).display_name,
+      '一键保存坐席',
+    );
 
     const rejectedEmptyScope = await requestRaw(`${baseUrl}/admin/users/${createdUser.user.id}/scopes`, {
       method: 'PUT',
@@ -142,11 +186,16 @@ async function main() {
     });
     assert.strictEqual((await requestRaw(`${baseUrl}/groups`, { headers: { 'x-operator-id': disabledOperator.id } })).status, 403);
 
-    const deniedOperator = await createScopedOperator(baseUrl, 'portal-denied', {
+    const legacyPortalOverride = await createScopedOperator(baseUrl, 'portal-denied', {
       portal: { can_workbench: false, can_admin: false },
       scope: { can_view: true, can_reply: true, can_manage: true },
     });
-    assert.strictEqual((await requestRaw(`${baseUrl}/groups`, { headers: { 'x-operator-id': deniedOperator.id } })).status, 403);
+    assert.strictEqual((await requestRaw(`${baseUrl}/groups`, { headers: { 'x-operator-id': legacyPortalOverride.id } })).status, 200);
+    await requestJson(`${baseUrl}/admin/users/${legacyPortalOverride.id}/roles`, {
+      method: 'PUT',
+      body: { roles: [] },
+    });
+    assert.strictEqual((await requestRaw(`${baseUrl}/groups`, { headers: { 'x-operator-id': legacyPortalOverride.id } })).status, 403);
 
     const readOnlyOperator = await createScopedOperator(baseUrl, 'read-only-note', {
       portal: { can_workbench: true, can_admin: false },

@@ -26,7 +26,7 @@ domain: social-workbench.tyhark.com
 sso: true
 ```
 
-`sso: true` 是 Deploy Hub 公网服务合规要求。工作台应用内的用户、角色、入口权限、服务账号授权范围、会话数据和运行态仍由工作台自己的 SQLite 管理，不与监控项目共用登录、权限、数据库或 worker。
+`sso: true` 是 Deploy Hub 公网服务合规要求。工作台应用内的用户、角色权限、服务账号授权范围、会话数据和运行态仍由工作台自己的 SQLite 管理，不与监控项目共用登录、权限、数据库或 worker。页面入口由角色自动派生，默认进入工作台。
 
 ## 部署前检查
 

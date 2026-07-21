@@ -25,7 +25,7 @@
 - `/token/userinfo`
 - `/api/auth/me`
 
-公网入口统一经过 skyline-ark-sso 网关，工作台应用内的坐席身份、角色、入口权限和服务账号范围写入 `workbench.sqlite`。`1469` 工号默认是工作台超级管理员。服务账号登录入口位于 `/service-account-login`，登录任务写入 `runtime.sqlite`，账号档案写入 `raw.sqlite`。`JWT_SECRET`、SSO 配置和后续渠道密钥必须放在 K8s/Deploy Hub Secret 或工作台 runtime worker 的独立安全存储中。
+公网入口统一经过 skyline-ark-sso 网关，工作台应用内的坐席身份、角色权限和服务账号范围写入 `workbench.sqlite`。角色自动决定可访问页面，同时具备多个入口时默认进入工作台。`1469` 工号默认是工作台超级管理员。服务账号登录入口位于 `/service-account-login`，登录任务写入 `runtime.sqlite`，账号档案写入 `raw.sqlite`。`JWT_SECRET`、SSO 配置和后续渠道密钥必须放在 K8s/Deploy Hub Secret 或工作台 runtime worker 的独立安全存储中。
 
 ## 服务账号登录 worker
 
@@ -62,7 +62,7 @@ WORKBENCH_WORKER_PLATFORM=wa|tg
 WORKBENCH_WORKER_ACCOUNT=<account>
 ```
 
-账号隔离模式下，登录任务写入 `/data/accounts/{platform}/{account}/runtime.sqlite`，账号档案和 raw 消息写入 `/data/accounts/{platform}/{account}/raw.sqlite`，已读、认领/释放、人工分组、渠道分组映射、外发账本和发送熔断写入 `/data/accounts/{platform}/{account}/workbench.sqlite`，session 写入 `/data/accounts/{platform}/{account}/session/`。总控 `workbench.sqlite` 保留工作台用户、角色、入口权限和服务账号/分组授权范围。
+账号隔离模式下，登录任务写入 `/data/accounts/{platform}/{account}/runtime.sqlite`，账号档案和 raw 消息写入 `/data/accounts/{platform}/{account}/raw.sqlite`，已读、认领/释放、人工分组、渠道分组映射、外发账本和发送熔断写入 `/data/accounts/{platform}/{account}/workbench.sqlite`，session 写入 `/data/accounts/{platform}/{account}/session/`。总控 `workbench.sqlite` 保留工作台用户、角色权限和服务账号/分组授权范围。
 
 API/UI 在隔离模式下负责跨账号聚合读取：账号列表、会话列表、消息线程、渠道分组和人工分组从各账号库聚合；写入类业务动作只写对应账号库。隔离模式下外发 API 对前端返回 `platform:account:id` 形式的作用域外发 ID，避免多个账号本地自增 ID 冲突。
 

@@ -3,11 +3,12 @@
     <header class="permission-header">
       <div>
         <h1>权限管理</h1>
-        <p>工作台坐席身份、入口权限与服务账号范围</p>
+        <p>工作台坐席身份、角色权限与服务账号范围</p>
       </div>
       <div class="permission-header-actions">
         <el-button @click="$emit('back')">返回工作台</el-button>
-        <el-button type="primary" :icon="Refresh" :loading="loading" @click="load">刷新</el-button>
+        <el-button :icon="Refresh" :loading="loading" @click="load">刷新</el-button>
+        <el-button type="primary" :loading="saving" :disabled="!selectedUser" @click="saveAll">保存全部</el-button>
       </div>
     </header>
 
@@ -81,7 +82,7 @@
 
           <div class="permission-meta-strip">
             <span>角色：{{ selectedRoleText }}</span>
-            <span>入口：{{ entryLabel(portalDraft.default_entry) }}</span>
+            <span>默认入口：工作台</span>
             <span>范围：{{ scopeDraft.length }}</span>
           </div>
 
@@ -92,49 +93,26 @@
             <el-form-item label="账号状态">
               <el-segmented v-model="selectedUser.status" :options="statusOptions" />
             </el-form-item>
-            <el-button type="primary" :loading="saving" @click="saveProfile">保存坐席</el-button>
           </el-form>
         </div>
 
-        <div class="permission-two-column">
-          <div class="permission-block">
-            <div class="permission-block-head">
-              <div>
-                <h2>角色</h2>
-                <span>基础功能权限</span>
-              </div>
-              <el-button type="primary" :loading="saving" @click="saveRoles">保存角色</el-button>
-            </div>
-            <el-checkbox-group v-model="roleDraft" class="role-checks">
-              <el-checkbox
-                v-for="role in roles"
-                :key="role.code"
-                :label="role.code"
-                border
-              >
-                {{ role.name }}
-              </el-checkbox>
-            </el-checkbox-group>
-          </div>
-
-          <div class="permission-block">
-            <div class="permission-block-head">
-              <div>
-                <h2>入口权限</h2>
-                <span>入口与默认位置</span>
-              </div>
-              <el-button type="primary" :loading="saving" @click="savePortal">保存入口</el-button>
-            </div>
-            <div class="portal-access-grid">
-              <el-checkbox v-model="portalDraft.can_workbench" border>工作台</el-checkbox>
-              <el-checkbox v-model="portalDraft.can_admin" border>权限管理</el-checkbox>
-              <el-select v-model="portalDraft.default_entry" placeholder="默认入口">
-                <el-option label="自动" value="auto" />
-                <el-option label="工作台" value="workbench" />
-                <el-option label="权限管理" value="admin" />
-              </el-select>
+        <div class="permission-block">
+          <div class="permission-block-head">
+            <div>
+              <h2>角色</h2>
+              <span>角色自动决定可访问页面，登录后默认进入工作台</span>
             </div>
           </div>
+          <el-checkbox-group v-model="roleDraft" class="role-checks">
+            <el-checkbox
+              v-for="role in roles"
+              :key="role.code"
+              :value="role.code"
+              border
+            >
+              {{ role.name }}
+            </el-checkbox>
+          </el-checkbox-group>
         </div>
 
         <div class="permission-block">
@@ -145,7 +123,6 @@
             </div>
             <div>
               <el-button :icon="Plus" @click="addScope">添加范围</el-button>
-              <el-button type="primary" :loading="saving" @click="saveScopes">保存范围</el-button>
             </div>
           </div>
 
@@ -202,15 +179,12 @@
                 <el-checkbox
                   v-for="permission in permissions"
                   :key="permission.code"
-                  :label="permission.code"
+                  :value="permission.code"
                   border
                 >
                   {{ permission.name }}
                 </el-checkbox>
               </el-checkbox-group>
-              <el-button class="role-save-button" type="primary" :loading="saving" @click="saveRole(role.code)">
-                保存 {{ role.name }}
-              </el-button>
             </el-collapse-item>
           </el-collapse>
         </div>
@@ -232,11 +206,7 @@ import {
   createAdminUser,
   deleteAdminUser,
   fetchAdminAccess,
-  saveAdminUserPortalAccess,
-  saveAdminUserRoles,
-  saveAdminUserScopes,
-  saveRolePermissions,
-  updateAdminUser,
+  saveAdminUserAccess,
 } from '../api';
 
 defineEmits(['back']);
@@ -247,12 +217,6 @@ const access = ref({ users: [], roles: [], permissions: [], accounts: [], servic
 const selectedUserId = ref('');
 const roleDraft = ref([]);
 const scopeDraft = ref([]);
-const portalDraft = reactive({
-  can_monitor: false,
-  can_workbench: true,
-  can_admin: false,
-  default_entry: 'workbench',
-});
 const rolePermissionDraft = reactive({});
 const createForm = reactive({
   username: '',
@@ -278,12 +242,6 @@ watch(selectedUser, (user) => {
   if (!user) return;
   roleDraft.value = [...(user.roles || [])];
   scopeDraft.value = toScopeDraft(user.scopes);
-  Object.assign(portalDraft, {
-    can_monitor: false,
-    can_workbench: Boolean(user.portal_access?.can_workbench),
-    can_admin: Boolean(user.portal_access?.can_admin),
-    default_entry: user.portal_access?.default_entry || 'workbench',
-  });
 }, { immediate: true });
 
 async function load() {
@@ -328,24 +286,6 @@ async function createUser() {
   }
 }
 
-async function saveProfile() {
-  if (!selectedUser.value) return;
-  saving.value = true;
-  try {
-    await updateAdminUser(selectedUser.value.id, {
-      display_name: selectedUser.value.display_name,
-      status: selectedUser.value.status,
-      role: selectedUser.value.role,
-    });
-    await load();
-    ElMessage.success('坐席已保存');
-  } catch (err) {
-    ElMessage.error(err.response?.data?.error || '保存坐席失败');
-  } finally {
-    saving.value = false;
-  }
-}
-
 async function confirmDeleteUser() {
   if (!selectedUser.value || !canDeleteSelectedUser.value) return;
   const user = selectedUser.value;
@@ -377,36 +317,8 @@ async function confirmDeleteUser() {
   }
 }
 
-async function saveRoles() {
-  if (!selectedUser.value) return;
-  saving.value = true;
-  try {
-    await saveAdminUserRoles(selectedUser.value.id, roleDraft.value);
-    await load();
-    ElMessage.success('角色已保存');
-  } catch (err) {
-    ElMessage.error(err.response?.data?.error || '保存角色失败');
-  } finally {
-    saving.value = false;
-  }
-}
-
-async function savePortal() {
-  if (!selectedUser.value) return;
-  saving.value = true;
-  try {
-    await saveAdminUserPortalAccess(selectedUser.value.id, { ...portalDraft });
-    await load();
-    ElMessage.success('入口权限已保存');
-  } catch (err) {
-    ElMessage.error(err.response?.data?.error || '保存入口失败');
-  } finally {
-    saving.value = false;
-  }
-}
-
 async function addScope() {
-  if (!access.value.accounts?.length) await load();
+  if (!access.value.accounts?.length) await refreshScopeOptions();
   const account = access.value.accounts?.[0];
   if (!account) {
     ElMessage.warning('暂无可授权的服务账号，请先完成服务账号接入后刷新权限管理');
@@ -424,7 +336,18 @@ async function addScope() {
   }];
 }
 
-async function saveScopes() {
+async function refreshScopeOptions() {
+  try {
+    const refreshed = await fetchAdminAccess();
+    access.value.accounts = refreshed.accounts || [];
+    access.value.service_groups = refreshed.service_groups || [];
+    access.value.scope_special_groups = refreshed.scope_special_groups || [];
+  } catch (err) {
+    ElMessage.error(err.response?.data?.error || '刷新服务账号失败');
+  }
+}
+
+async function saveAll() {
   if (!selectedUser.value) return;
   if (scopeDraft.value.some((scope) => !scope.platform || !scope.service_account || !scope.native_group_id)) {
     ElMessage.warning('请为每条范围选择平台、服务账号和分组后再保存');
@@ -433,16 +356,27 @@ async function saveScopes() {
   const userId = selectedUser.value.id;
   saving.value = true;
   try {
-    const result = await saveAdminUserScopes(userId, scopeDraft.value.map(({ local_id, ...scope }) => scope));
-    const scopes = result.scopes || [];
-    scopeDraft.value = toScopeDraft(scopes);
-    access.value = {
-      ...access.value,
-      users: users.value.map((user) => (user.id === userId ? { ...user, scopes } : user)),
-    };
-    ElMessage.success('服务范围已保存');
+    const result = await saveAdminUserAccess(userId, {
+      profile: {
+        display_name: selectedUser.value.display_name,
+        status: selectedUser.value.status,
+        role: selectedUser.value.role,
+      },
+      roles: [...roleDraft.value],
+      scopes: scopeDraft.value.map(({ local_id, ...scope }) => scope),
+      role_permissions: Object.fromEntries(roles.value.map((role) => [
+        role.code,
+        [...(rolePermissionDraft[role.code] || [])],
+      ])),
+    });
+    access.value = result.access || access.value;
+    selectedUserId.value = userId;
+    roles.value.forEach((role) => {
+      rolePermissionDraft[role.code] = [...(role.permissions || [])];
+    });
+    ElMessage.success('当前页面全部修改已保存');
   } catch (err) {
-    ElMessage.error(err.response?.data?.error || '保存范围失败');
+    ElMessage.error(err.response?.data?.error || '保存全部失败');
   } finally {
     saving.value = false;
   }
@@ -453,19 +387,6 @@ function toScopeDraft(scopes = []) {
     ...scope,
     local_id: `${Date.now()}-${Math.random()}`,
   }));
-}
-
-async function saveRole(roleCode) {
-  saving.value = true;
-  try {
-    await saveRolePermissions(roleCode, rolePermissionDraft[roleCode] || []);
-    await load();
-    ElMessage.success('角色权限已保存');
-  } catch (err) {
-    ElMessage.error(err.response?.data?.error || '保存角色权限失败');
-  } finally {
-    saving.value = false;
-  }
 }
 
 function accountsForPlatform(platform) {
@@ -491,9 +412,4 @@ function initialOf(user = {}) {
   return text.slice(0, 1).toUpperCase();
 }
 
-function entryLabel(value) {
-  if (value === 'admin') return '权限管理';
-  if (value === 'workbench') return '工作台';
-  return '自动';
-}
 </script>

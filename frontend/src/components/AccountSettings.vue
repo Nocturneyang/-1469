@@ -3,7 +3,7 @@
     <header class="account-header">
       <div>
         <h1>我的账户</h1>
-        <p>当前登录身份、入口权限与服务账号范围</p>
+        <p>当前登录身份、角色权限与服务账号范围</p>
       </div>
       <div class="account-header-actions">
         <el-button @click="$emit('back')">返回工作台</el-button>

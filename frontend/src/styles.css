@@ -307,15 +307,9 @@ button {
 
 .permission-profile {
   display: grid;
-  grid-template-columns: minmax(240px, 1fr) 180px auto;
+  grid-template-columns: minmax(240px, 1fr) 180px;
   gap: 12px;
   align-items: end;
-}
-
-.permission-two-column {
-  display: grid;
-  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
-  gap: 12px;
 }
 
 .role-checks,
@@ -323,12 +317,6 @@ button {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-}
-
-.portal-access-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(120px, 1fr)) minmax(160px, 1.2fr);
-  gap: 10px;
 }
 
 .scope-row {
@@ -361,10 +349,6 @@ button {
   border: 1px dashed var(--line);
   border-radius: 8px;
   background: var(--surface-soft);
-}
-
-.role-save-button {
-  margin-top: 12px;
 }
 
 .account-page {
@@ -3571,13 +3555,8 @@ button {
     grid-template-columns: 280px minmax(0, 1fr);
   }
 
-  .permission-two-column,
   .permission-profile {
     grid-template-columns: 1fr;
-  }
-
-  .portal-access-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .scope-row {
@@ -3675,7 +3654,6 @@ button {
     flex-direction: column;
   }
 
-  .portal-access-grid,
   .scope-row {
     grid-template-columns: 1fr;
   }

@@ -466,6 +466,11 @@ export async function saveAdminUserScopes(userId, scopes) {
   return data;
 }
 
+export async function saveAdminUserAccess(userId, payload) {
+  const { data } = await api.put(`/admin/users/${encodeURIComponent(userId)}/access`, payload);
+  return data;
+}
+
 export async function saveRolePermissions(roleCode, permissions) {
   const { data } = await api.put(`/admin/roles/${encodeURIComponent(roleCode)}/permissions`, { permissions });
   return data;

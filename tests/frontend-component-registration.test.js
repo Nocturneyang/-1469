@@ -36,10 +36,14 @@ for (const source of [indexSource, railSource, topFiltersSource]) {
 assert.ok(railSource.includes('<ChatLineSquare />'), 'brand must use the service conversation mark');
 assert.match(stylesSource, /\.brand-presence-dot\s*\{/, 'brand must expose the online service status motif');
 assert.ok(indexSource.includes('href="/favicon.svg"'), 'site must expose the branded favicon');
-assert.match(permissionConfigSource, /const result = await saveAdminUserScopes\(userId,/, 'saving service-account scopes must retain the API response');
-assert.match(permissionConfigSource, /scopeDraft\.value = toScopeDraft\(scopes\);/, 'saved service-account scopes must immediately refresh the displayed count');
-assert.match(permissionConfigSource, /users: users\.value\.map\(\(user\) => \(user\.id === userId \? \{ \.\.\.user, scopes \} : user\)\)/, 'saved service-account scopes must update the selected user state');
-assert.match(permissionConfigSource, /if \(!access\.value\.accounts\?\.length\) await load\(\);/, 'adding a scope must refresh newly connected service accounts');
+assert.match(permissionConfigSource, /if \(!access\.value\.accounts\?\.length\) await refreshScopeOptions\(\);/, 'adding a scope must refresh newly connected service accounts without replacing user drafts');
+assert.match(permissionConfigSource, /access\.value\.accounts = refreshed\.accounts \|\| \[\];/, 'scope-option refresh must preserve the selected user object');
 assert.match(permissionConfigSource, /请为每条范围选择平台、服务账号和分组后再保存/, 'empty service-account scopes must not be silently discarded');
+assert.ok(!permissionConfigSource.includes('<h2>入口权限</h2>'), 'entry access must no longer be configured separately');
+assert.ok(permissionConfigSource.includes('默认入口：工作台'), 'permission management must show the fixed default entry');
+assert.ok(permissionConfigSource.includes('保存全部'), 'permission management must expose a global save action');
+assert.match(permissionConfigSource, /const result = await saveAdminUserAccess\(userId,/, 'global save must use the atomic access API');
+assert.match(permissionConfigSource, /role_permissions: Object\.fromEntries/, 'global save must include role permission drafts');
+assert.match(permissionConfigSource, /scopes: scopeDraft\.value\.map/, 'global save must include service-account scopes');
 
 console.log('[frontend] component registrations and brand contract verified');

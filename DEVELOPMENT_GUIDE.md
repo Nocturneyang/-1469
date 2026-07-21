@@ -8,7 +8,7 @@
 
 - 独立登录：工作台有自己的用户身份、登录兼容层和账户设置；公网部署仍可经过 Deploy Hub / skyline-ark-sso 网关，但不沿用监控项目登录。
 - 独立存储：工作台只使用自己的 `auth.sqlite`、`workbench.sqlite`、`raw.sqlite`、`runtime.sqlite`，不得读取或写入监控项目 SQLite。
-- 独立权限：工作台自己的 `/admin` 管理工作台坐席、角色、入口权限、服务账号和分组范围。
+- 独立权限：工作台自己的 `/admin` 管理工作台坐席、角色权限、服务账号和分组范围；页面入口由角色自动派生，默认进入工作台。
 - 独立前端：工作台前端不挂监控系统入口，不复用监控系统页面、路由或权限矩阵。
 - 独立服务账号登录：`/service-account-login` 从工作台发起 WA/TG 登录任务，任务写入工作台 `runtime.sqlite` 和工作台 outbox，由工作台 runtime worker 执行。
 - 独立 worker：工作台 runtime worker 持有工作台服务账号 session，写工作台 `raw.sqlite` / `runtime.sqlite`，不依赖监控项目 worker。

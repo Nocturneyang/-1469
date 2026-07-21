@@ -250,6 +250,34 @@ function createWorkbenchRouter({ workbenchDb, runtimeDb, rawDbPath = DEFAULT_RAW
     res.json({ ok: true, operator_id: userId, scopes });
   });
 
+  router.put('/admin/users/:id/access', requireAdmin, (req, res) => {
+    const userId = requireText(req.params.id, 'id');
+    const body = req.body || {};
+    const profile = body.profile && typeof body.profile === 'object' ? body.profile : {};
+    const roles = Array.isArray(body.roles) ? body.roles : [];
+    const scopes = Array.isArray(body.scopes) ? body.scopes : [];
+    const rolePermissions = body.role_permissions && typeof body.role_permissions === 'object'
+      ? body.role_permissions
+      : {};
+
+    const saveAccess = workbenchDb.transaction(() => {
+      updateAdminOperator(workbenchDb, userId, profile);
+      setOperatorRoles(workbenchDb, userId, roles, currentAdminId(req));
+      replaceOperatorScopes(workbenchDb, userId, scopes);
+      Object.entries(rolePermissions).forEach(([roleCode, permissionCodes]) => {
+        setRolePermissions(workbenchDb, roleCode, Array.isArray(permissionCodes) ? permissionCodes : []);
+      });
+    });
+    saveAccess();
+
+    const operator = getAdminOperator(workbenchDb, userId);
+    res.json({
+      ok: true,
+      user: enrichOperatorAccess(workbenchDb, operator),
+      access: buildAdminAccessPayload({ workbenchDb, rawDbPath, accountScope: getAccountScope(), accountData }),
+    });
+  });
+
   router.put('/admin/roles/:code/permissions', requireAdmin, (req, res) => {
     const role = setRolePermissions(workbenchDb, req.params.code, req.body?.permissions || []);
     res.json({ ok: true, role });
@@ -3465,17 +3493,18 @@ function enrichOperatorAccess(db, operator) {
 }
 
 function loadEditablePortalAccess(db, operatorId, operatorContext = null) {
-  const row = db.prepare(`
-    SELECT can_monitor, can_workbench, can_admin, default_entry
-    FROM operator_portal_access
-    WHERE operator_id = ?
-  `).get(String(operatorId));
-  const derived = operatorContext ? loadPortalAccess(db, operatorContext) : {};
+  const stored = operatorContext || getAdminOperator(db, operatorId);
+  const context = stored ? {
+    ...stored,
+    id: String(stored.id || operatorId),
+    identities: [stored.id, stored.username, stored.display_name].filter(Boolean).map(String),
+  } : null;
+  const derived = context ? loadPortalAccess(db, context) : {};
   return {
     can_monitor: false,
-    can_workbench: Boolean(row ? Number(row.can_workbench) : derived.can_workbench),
-    can_admin: Boolean(row ? Number(row.can_admin) : derived.can_admin),
-    default_entry: normalizeAdminDefaultEntry(row ? row.default_entry : derived.default_entry),
+    can_workbench: Boolean(derived.can_workbench),
+    can_admin: Boolean(derived.can_admin),
+    default_entry: 'workbench',
     landing: derived.landing || '/',
   };
 }
