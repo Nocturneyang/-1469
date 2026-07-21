@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630" role="img" aria-labelledby="title desc">
+  <title id="title">社媒服务工作台</title>
+  <desc id="desc">社媒服务工作台品牌分享图</desc>
+  <defs>
+    <linearGradient id="background" x1="70" y1="40" x2="1130" y2="590" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#2f6bdf"/>
+      <stop offset=".55" stop-color="#1747c7"/>
+      <stop offset="1" stop-color="#0c329d"/>
+    </linearGradient>
+    <linearGradient id="panel" x1="780" y1="110" x2="1040" y2="470" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#ffffff" stop-opacity=".19"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity=".05"/>
+    </linearGradient>
+  </defs>
+  <rect width="1200" height="630" fill="url(#background)"/>
+  <circle cx="1050" cy="80" r="290" fill="#7fb4ff" fill-opacity=".18"/>
+  <circle cx="130" cy="660" r="315" fill="#051f76" fill-opacity=".24"/>
+  <rect x="750" y="96" width="322" height="438" rx="42" fill="url(#panel)" stroke="#fff" stroke-opacity=".22"/>
+  <rect x="818" y="165" width="184" height="184" rx="48" fill="#fff" fill-opacity=".96"/>
+  <path fill="#1747c7" d="M859 305.5 881 287h74c6.7 0 12-5.4 12-12v-49c0-6.6-5.3-12-12-12h-94c-6.6 0-12 5.4-12 12v86.7l10-7.2Zm16.3-2.4-21.6 18.2a10.5 10.5 0 0 1-17.2-8.1V226c0-13.6 11-24.7 24.5-24.7h94c13.6 0 24.7 11 24.7 24.7v49c0 13.6-11.1 24.7-24.7 24.7h-75.2l-4.5 3.4Z"/>
+  <path fill="#1747c7" d="M876 239h63a5.4 5.4 0 1 1 0 10.8h-63a5.4 5.4 0 1 1 0-10.8Zm0 21.2h45.5a5.4 5.4 0 1 1 0 10.8H876a5.4 5.4 0 1 1 0-10.8Z"/>
+  <circle cx="986" cy="333" r="24" fill="#35c978" stroke="#fff" stroke-width="7"/>
+  <text x="116" y="246" fill="#fff" font-family="Inter, PingFang SC, Microsoft YaHei, sans-serif" font-size="31" font-weight="600" letter-spacing="5">SOCIAL WORKBENCH</text>
+  <text x="112" y="340" fill="#fff" font-family="Inter, PingFang SC, Microsoft YaHei, sans-serif" font-size="70" font-weight="700">社媒服务工作台</text>
+  <text x="116" y="405" fill="#dbe8ff" font-family="Inter, PingFang SC, Microsoft YaHei, sans-serif" font-size="31">集中处理 WhatsApp 与 Telegram 会话</text>
+  <rect x="116" y="469" width="192" height="51" rx="25.5" fill="#fff" fill-opacity=".17"/>
+  <text x="147" y="503" fill="#fff" font-family="Inter, PingFang SC, Microsoft YaHei, sans-serif" font-size="24" font-weight="600">人工服务协作</text>
+</svg>

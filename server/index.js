@@ -113,6 +113,7 @@ function createApp(options = {}) {
   });
 
   const distDir = path.join(__dirname, '..', 'frontend', 'dist');
+  app.get('/', (req, res, next) => sendShareableIndex(req, res, next, distDir));
   app.use(express.static(distDir));
   app.get(/.*/, (req, res, next) => {
     if (req.path.startsWith('/api/')) return next();
@@ -122,6 +123,36 @@ function createApp(options = {}) {
   });
 
   return app;
+}
+
+function sendShareableIndex(req, res, next, distDir) {
+  const indexPath = path.join(distDir, 'index.html');
+  fs.readFile(indexPath, 'utf8', (err, html) => {
+    if (err) return next(err);
+    const origin = shareOrigin(req);
+    const imageUrl = `${origin}/share-preview.png`;
+    const pageUrl = `${origin}/`;
+    const shareHtml = html
+      .replaceAll('content="/share-preview.png"', `content="${escapeHtmlAttribute(imageUrl)}"`)
+      .replace('content="/"', `content="${escapeHtmlAttribute(pageUrl)}"`);
+    res.type('html').send(shareHtml);
+  });
+}
+
+function shareOrigin(req) {
+  const configured = String(process.env.WORKBENCH_PUBLIC_ORIGIN || '').trim();
+  const candidate = configured || requestOrigin(req);
+  try {
+    const url = new URL(candidate);
+    if (url.protocol === 'http:' || url.protocol === 'https:') return url.origin;
+  } catch (_) {
+    // Fall through to the request origin, which is also used by the SSO flow.
+  }
+  return requestOrigin(req);
+}
+
+function escapeHtmlAttribute(value) {
+  return String(value).replaceAll('&', '&amp;').replaceAll('"', '&quot;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
 }
 
 function buildPrometheusMetrics({ workbenchDb, runtimeDb }) {

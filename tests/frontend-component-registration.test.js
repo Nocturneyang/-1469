@@ -36,6 +36,8 @@ for (const source of [indexSource, railSource, topFiltersSource]) {
 assert.ok(railSource.includes('<ChatLineSquare />'), 'brand must use the service conversation mark');
 assert.match(stylesSource, /\.brand-presence-dot\s*\{/, 'brand must expose the online service status motif');
 assert.ok(indexSource.includes('href="/favicon.svg"'), 'site must expose the branded favicon');
+assert.ok(indexSource.includes('property="og:image" content="/share-preview.png"'), 'shared links must expose a branded Open Graph image');
+assert.ok(fs.existsSync(path.join(root, 'frontend/public/share-preview.png')), 'shared-link preview image must be a committed public asset');
 assert.match(permissionConfigSource, /if \(!access\.value\.accounts\?\.length\) await refreshScopeOptions\(\);/, 'adding a scope must refresh newly connected service accounts without replacing user drafts');
 assert.match(permissionConfigSource, /access\.value\.accounts = refreshed\.accounts \|\| \[\];/, 'scope-option refresh must preserve the selected user object');
 assert.match(permissionConfigSource, /请为每条范围选择平台、服务账号和分组后再保存/, 'empty service-account scopes must not be silently discarded');
