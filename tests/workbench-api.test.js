@@ -889,7 +889,27 @@ async function main() {
     const inboundMediaBytes = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
     fs.mkdirSync(path.dirname(inboundMediaPath), { recursive: true });
     fs.writeFileSync(inboundMediaPath, inboundMediaBytes);
+    const inboundDocumentFixtures = [
+      {
+        messageId: 'wa-document-word-1',
+        relativePath: path.join('media', '2026-07', 'contract.docx'),
+        name: 'contract.docx',
+        mime: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        bytes: Buffer.from('word-document-test'),
+      },
+      {
+        messageId: 'wa-document-excel-1',
+        relativePath: path.join('media', '2026-07', 'report.xlsx'),
+        name: 'report.xlsx',
+        mime: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        bytes: Buffer.from('excel-document-test'),
+      },
+    ];
+    inboundDocumentFixtures.forEach((fixture) => {
+      fs.writeFileSync(path.join(API_TEST_DATA_DIR, fixture.relativePath), fixture.bytes);
+    });
     let inboundMediaRowId;
+    const inboundDocumentRowIds = [];
     const mediaDb = new Database(rawDbPath);
     try {
       mediaDb.prepare(`
@@ -918,6 +938,28 @@ async function main() {
         mediaSize: inboundMediaBytes.length,
         rawData: JSON.stringify({ fromMe: false, media: { kind: 'image', name: 'inbound-preview.png', mime: 'image/png', size: inboundMediaBytes.length } }),
       }).lastInsertRowid;
+      const insertDocument = mediaDb.prepare(`
+        INSERT INTO messages (
+          platform, receiver_account, message_id, group_id, group_name,
+          sender_id, sender_name, direction, content, has_media,
+          media_path, media_name, media_mime, media_size, timestamp, raw_data
+        ) VALUES (
+          'whatsapp', 'nanya_wa', @messageId, 'group-1', 'VIP 支持交流群',
+          'customer-1', '客户', 'inbound', '文件', 1,
+          @mediaPath, @mediaName, @mediaMime, @mediaSize, @timestamp, @rawData
+        )
+      `);
+      inboundDocumentFixtures.forEach((fixture, index) => {
+        inboundDocumentRowIds.push(insertDocument.run({
+          messageId: fixture.messageId,
+          mediaPath: fixture.relativePath,
+          mediaName: fixture.name,
+          mediaMime: fixture.mime,
+          mediaSize: fixture.bytes.length,
+          timestamp: 1782950422 + index,
+          rawData: JSON.stringify({ fromMe: false, media: { kind: 'document', name: fixture.name, mime: fixture.mime, size: fixture.bytes.length } }),
+        }).lastInsertRowid);
+      });
     } finally {
       mediaDb.close();
     }
@@ -939,9 +981,23 @@ async function main() {
     assert.match(inboundMediaResponse.headers.get('content-disposition'), /^inline;/);
     assert.strictEqual(Number(inboundMediaRowId) > 0, true);
     assert.deepStrictEqual(Buffer.from(await inboundMediaResponse.arrayBuffer()), inboundMediaBytes);
+    for (const fixture of inboundDocumentFixtures) {
+      const documentMessage = messages.messages.find((message) => message.message_id === fixture.messageId);
+      assert.ok(documentMessage.attachments[0].media_url);
+      const documentResponse = await fetch(`http://127.0.0.1:${port}${documentMessage.attachments[0].media_url}`, {
+        headers: { 'x-operator-id': '1469' },
+      });
+      assert.strictEqual(documentResponse.status, 200);
+      assert.strictEqual(documentResponse.headers.get('content-type'), fixture.mime);
+      assert.match(documentResponse.headers.get('content-disposition'), /^attachment;/);
+      assert.match(documentResponse.headers.get('content-disposition'), new RegExp(`filename="${fixture.name.replace('.', '\\.')}"`));
+      assert.deepStrictEqual(Buffer.from(await documentResponse.arrayBuffer()), fixture.bytes);
+    }
     const cleanupMediaDb = new Database(rawDbPath);
     try {
       cleanupMediaDb.prepare('DELETE FROM messages WHERE id = ?').run(inboundMediaRowId);
+      const deleteMedia = cleanupMediaDb.prepare('DELETE FROM messages WHERE id = ?');
+      inboundDocumentRowIds.forEach((rowId) => deleteMedia.run(rowId));
     } finally {
       cleanupMediaDb.close();
     }

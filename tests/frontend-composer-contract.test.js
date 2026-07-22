@@ -45,6 +45,9 @@ assert.match(thread, /\['sent', 'delivered', 'read'\]/, 'the message thread must
 assert.match(styles, /\.delivery-receipt\.receipt-read\s*\{[^}]*color:/s, 'read receipts must expose a blue double-check state');
 assert.match(app, /preserve_existing/, 'realtime refreshes must preserve already-loaded history');
 assert.match(thread, /attachment\.media_url/, 'downloaded inbound media must be rendered from the authenticated media endpoint');
+assert.ok(thread.includes('class="attachment-download"'), 'non-image attachments must expose a visible download action');
+assert.ok(thread.includes('<Download />'), 'the attachment download action must include a recognizable icon');
+assert.match(styles, /\.attachment-download\s*\{[^}]*display:\s*inline-flex;/s, 'the attachment download action must remain visible in the file card');
 assert.match(thread, /loading="lazy"/, 'large image history must use lazy image decoding/loading');
 assert.ok(thread.includes('次查看'), 'Telegram view counts must be visible');
 assert.ok(thread.includes('转发自'), 'Telegram forward metadata must be visible');

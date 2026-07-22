@@ -91,6 +91,14 @@
                     <span v-else class="attachment-name" :title="attachment.name || '附件'">{{ attachment.name || '附件' }}</span>
                     <small>{{ attachmentMeta(attachment) }}</small>
                   </div>
+                  <a
+                    v-if="attachment.media_url && !attachmentPreview(attachment)"
+                    class="attachment-download"
+                    :href="attachment.media_url"
+                    :download="attachment.name || '附件'"
+                    :aria-label="`下载 ${attachment.name || '附件'}`"
+                    :title="`下载 ${attachment.name || '附件'}`"
+                  ><el-icon><Download /></el-icon><span>下载</span></a>
                 </div>
               </div>
               <div class="message-metadata">
@@ -125,7 +133,7 @@
 
 <script setup>
 import { computed, nextTick, reactive, ref, watch } from 'vue';
-import { Document, EditPen } from '@element-plus/icons-vue';
+import { Document, Download, EditPen } from '@element-plus/icons-vue';
 import { formatMessageDateLabel, formatMessageTime, messageDayKey, platformClass, statusText } from '../utils/format';
 
 const props = defineProps({
