@@ -741,7 +741,9 @@ async function downloadWhatsAppMedia(message, messageId, descriptor = whatsappMe
 }
 
 async function downloadWhatsAppMediaWithCompatAdapter(message) {
-  const page = channelClient?.pupPage;
+  // Message owns the authoritative client reference. The outer worker client
+  // can be a wrapper in tests and in some reconnect paths.
+  const page = message?.client?.pupPage || channelClient?.pupPage;
   const serializedId = String(message?.id?._serialized || '').trim();
   if (!page || !serializedId) throw new Error('WA compatibility media download is unavailable: message/page missing');
 
