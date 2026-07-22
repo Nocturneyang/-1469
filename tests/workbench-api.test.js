@@ -604,6 +604,35 @@ async function main() {
     assert.strictEqual(note.note.body, '客户催发货，已备注仓库。');
     assert.strictEqual(note.note.actor_name, '1469');
 
+    const noteOwner = await createScopedOperator(baseUrl, 'note-owner', {
+      portal: { can_workbench: true, can_admin: false },
+      scope: { can_view: true, can_reply: true, can_manage: false },
+    });
+    const ownedNote = await requestJson(`${baseUrl}/groups/group-1/notes`, {
+      method: 'POST',
+      headers: { 'x-operator-id': noteOwner.id },
+      body: { platform: 'wa', account: 'nanya_wa', body: '待删除的坐席备注' },
+    });
+    assert.strictEqual((await requestRaw(`${baseUrl}/groups/group-1/notes/${ownedNote.note.id}?platform=wa&account=nanya_wa`, {
+      method: 'DELETE',
+      headers: { 'x-operator-id': readOnlyOperator.id },
+    })).status, 403);
+    const deletedOwnedNote = await requestJson(`${baseUrl}/groups/group-1/notes/${ownedNote.note.id}?platform=wa&account=nanya_wa`, {
+      method: 'DELETE',
+      headers: { 'x-operator-id': noteOwner.id },
+    });
+    assert.strictEqual(deletedOwnedNote.deleted_note_id, ownedNote.note.id);
+    const managerDeleteTarget = await requestJson(`${baseUrl}/groups/group-1/notes`, {
+      method: 'POST',
+      headers: { 'x-operator-id': noteOwner.id },
+      body: { platform: 'wa', account: 'nanya_wa', body: '管理员删除验证' },
+    });
+    const managerDeletedNote = await requestJson(`${baseUrl}/groups/group-1/notes/${managerDeleteTarget.note.id}?platform=wa&account=nanya_wa`, {
+      method: 'DELETE',
+    });
+    assert.strictEqual(managerDeletedNote.deleted_note_id, managerDeleteTarget.note.id);
+    assert.strictEqual((await requestJson(`${baseUrl}/groups/group-1/notes?platform=wa&account=nanya_wa`)).notes.some((item) => item.id === ownedNote.note.id), false);
+
     const presencePeer = await createScopedOperator(baseUrl, 'presence-peer', {
       portal: { can_workbench: true, can_admin: false },
       scope: { can_view: true, can_reply: false, can_manage: false },

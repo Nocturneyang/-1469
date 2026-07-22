@@ -7,6 +7,7 @@ const path = require('path');
 const root = path.resolve(__dirname, '..');
 const composer = fs.readFileSync(path.join(root, 'frontend/src/components/Composer.vue'), 'utf8');
 const thread = fs.readFileSync(path.join(root, 'frontend/src/components/MessageThread.vue'), 'utf8');
+const inspector = fs.readFileSync(path.join(root, 'frontend/src/components/ConversationInspector.vue'), 'utf8');
 const conversationList = fs.readFileSync(path.join(root, 'frontend/src/components/ConversationList.vue'), 'utf8');
 const app = fs.readFileSync(path.join(root, 'frontend/src/App.vue'), 'utf8');
 const api = fs.readFileSync(path.join(root, 'frontend/src/api.js'), 'utf8');
@@ -45,6 +46,9 @@ assert.match(thread, /\['sent', 'delivered', 'read'\]/, 'the message thread must
 assert.match(styles, /\.delivery-receipt\.receipt-read\s*\{[^}]*color:/s, 'read receipts must expose a blue double-check state');
 assert.match(app, /preserve_existing/, 'realtime refreshes must preserve already-loaded history');
 assert.match(thread, /attachment\.media_url/, 'downloaded inbound media must be rendered from the authenticated media endpoint');
+assert.match(thread, /attachmentPreview\(attachment\).*attachment\.media_url/s, 'WA image attachments with stored media must render an inline preview');
+assert.match(inspector, /confirmDeleteNote\(note\)/, 'internal notes must expose a confirmed delete action');
+assert.match(inspector, /canDeleteNote\(note\)/, 'internal note deletion must remain permission-aware');
 assert.ok(thread.includes('class="attachment-download"'), 'non-image attachments must expose a visible download action');
 assert.ok(thread.includes('<Download />'), 'the attachment download action must include a recognizable icon');
 assert.match(styles, /\.attachment-download\s*\{[^}]*display:\s*inline-flex;/s, 'the attachment download action must remain visible in the file card');

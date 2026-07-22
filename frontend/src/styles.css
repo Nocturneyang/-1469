@@ -4154,6 +4154,8 @@ button {
 .note-item, .timeline-list article { padding: 12px 14px; border: 1px solid var(--line-soft); border-radius: 10px; background: var(--bg); transition: all 0.2s ease; }
 .note-item:hover, .timeline-list article:hover { border-color: var(--line); box-shadow: 0 2px 6px rgba(15, 23, 42, 0.02); }
 .note-item strong, .timeline-list article strong { color: var(--text); font-size: 12px; font-weight: 600; }
+.note-item-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.note-item-heading .el-button { min-height: 22px; padding: 0 4px; font-size: 11px; }
 .note-item p { margin: 4px 0 0; color: var(--text); font-size: 12.5px; line-height: 1.5; display: -webkit-box; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 3; }
 .note-item time, .timeline-list article span { display: block; margin-top: 6px; color: var(--muted); font-size: 10px; }
 .notes-section textarea { min-height: 80px; margin-top: 10px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; background: #ffffff; font-size: 13px; line-height: 1.4; transition: border-color 0.2s; }

@@ -105,8 +105,10 @@
         <ConversationInspector
           :group="selectedGroup"
           :workspace-detail="workspaceDetail"
+          :operator-id="currentOperator?.id || currentUser?.id || ''"
           @workspace-save="handleWorkspaceSave"
           @note-create="handleNoteCreate"
+          @note-delete="handleNoteDelete"
           @load-more-notes="handleLoadMoreNotes"
           @load-more-timeline="handleLoadMoreTimeline"
         />
@@ -144,6 +146,7 @@ import {
   cancelOutbound,
   createClientMsgId,
   createGroupNote,
+  deleteGroupNote,
   createManualGroup,
   createReply,
   fetchAccounts,
@@ -1226,6 +1229,24 @@ async function handleNoteCreate(body) {
     ElMessage.success('内部备注已添加');
   } catch (err) {
     ElMessage.error('内部备注添加失败');
+  }
+}
+
+async function handleNoteDelete(note) {
+  if (!selectedGroup.value || !note?.id) return;
+  const groupId = selectedGroup.value.id;
+  try {
+    await deleteGroupNote(selectedGroup.value, note.id);
+    if (!selectedGroup.value || selectedGroup.value.id !== groupId) return;
+    workspaceDetail.value = {
+      ...workspaceDetail.value,
+      notes: (workspaceDetail.value.notes || []).filter((item) => String(item.id) !== String(note.id)),
+    };
+    await loadWorkspace({ silent: true });
+    await loadGroups({ silent: true });
+    ElMessage.success('内部备注已删除');
+  } catch (err) {
+    ElMessage.error(err?.response?.status === 403 ? '只能删除自己创建的备注' : '内部备注删除失败');
   }
 }
 

@@ -20,7 +20,13 @@
       <section class="inspector-section notes-section">
         <div class="section-heading"><div class="section-title">内部备注</div><el-button v-if="workspaceDetail.notes_paging?.has_more" text @click="$emit('load-more-notes')">查看全部</el-button></div>
         <div v-if="notes.length" class="note-list">
-          <article v-for="note in notes.slice(0, 3)" :key="note.id" class="note-item"><strong>{{ note.actor_name || note.created_by }}</strong><p>{{ note.body }}</p><time>{{ formatTime(note.created_at) }}</time></article>
+          <article v-for="note in notes.slice(0, 3)" :key="note.id" class="note-item">
+            <div class="note-item-heading">
+              <strong>{{ note.actor_name || note.created_by }}</strong>
+              <el-button v-if="canDeleteNote(note)" text type="danger" size="small" :icon="Delete" :aria-label="`删除 ${note.actor_name || note.created_by} 的备注`" @click="confirmDeleteNote(note)">删除</el-button>
+            </div>
+            <p>{{ note.body }}</p><time>{{ formatTime(note.created_at) }}</time>
+          </article>
         </div>
         <div v-else class="empty-mini">暂无备注</div>
         <textarea v-model="noteDraft" rows="4" maxlength="2000" :disabled="!canWriteNote" placeholder="记录沟通背景、待办或交接信息…"></textarea>
@@ -52,10 +58,12 @@
 
 <script setup>
 import { computed, reactive, ref, watch } from 'vue';
+import ElMessageBox from 'element-plus/es/components/message-box/index.mjs';
+import { Delete } from '@element-plus/icons-vue';
 import { formatTime, platformClass } from '../utils/format';
 
-const props = defineProps({ group: { type: Object, default: null }, workspaceDetail: { type: Object, default: () => ({ profile: null, notes: [], timeline: [], presence: [] }) } });
-const emit = defineEmits(['workspace-save', 'note-create', 'load-more-notes', 'load-more-timeline']);
+const props = defineProps({ group: { type: Object, default: null }, workspaceDetail: { type: Object, default: () => ({ profile: null, notes: [], timeline: [], presence: [] }) }, operatorId: { type: [String, Number], default: '' } });
+const emit = defineEmits(['workspace-save', 'note-create', 'note-delete', 'load-more-notes', 'load-more-timeline']);
 const noteDraft = ref('');
 const profileDraft = reactive({ status: 'pending' });
 const profile = computed(() => props.workspaceDetail?.profile || props.group || {});
@@ -76,8 +84,16 @@ watch(() => props.workspaceDetail?.profile, syncDraft, { immediate: true, deep: 
 function syncDraft() { profileDraft.status = profile.value?.status || profile.value?.conversation_status || 'pending'; }
 function saveField(patch) { if (canManage.value) emit('workspace-save', patch); }
 function submitNote() { const body = noteDraft.value.trim(); if (!body || !canWriteNote.value) return; emit('note-create', body); noteDraft.value = ''; }
+function canDeleteNote(note) { return canManage.value || (canWriteNote.value && String(note?.created_by || '') === String(props.operatorId || '')); }
+async function confirmDeleteNote(note) {
+  if (!canDeleteNote(note)) return;
+  try {
+    await ElMessageBox.confirm('删除后不可恢复，是否继续？', '删除内部备注', { confirmButtonText: '删除', cancelButtonText: '取消', type: 'warning' });
+    emit('note-delete', note);
+  } catch (_) {}
+}
 function platformShort(platform) { return platform === 'wa' ? 'W' : platform === 'tg' ? 'T' : '?'; }
 function statusClass(value) { return value ? 'status-ok' : 'status-warn'; }
 function presenceModeText(mode) { return mode === 'typing' ? '正在输入' : mode === 'replying' ? '正在回复' : '正在查看'; }
-function timelineText(event) { return ({ 'conversation.profile.update': '更新会话状态', 'conversation.note.create': '添加内部备注', 'conversation.manual_groups.update': '更新工作台标签', 'conversation.read': '标记已读', 'reply.create': '创建外发回复', 'outbound.cancel': '取消外发', 'outbound.retry': '重试外发' })[event.action_type] || event.action_type || '操作'; }
+function timelineText(event) { return ({ 'conversation.profile.update': '更新会话状态', 'conversation.note.create': '添加内部备注', 'conversation.note.delete': '删除内部备注', 'conversation.manual_groups.update': '更新工作台标签', 'conversation.read': '标记已读', 'reply.create': '创建外发回复', 'outbound.cancel': '取消外发', 'outbound.retry': '重试外发' })[event.action_type] || event.action_type || '操作'; }
 </script>

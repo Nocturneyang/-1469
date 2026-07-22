@@ -1085,6 +1085,49 @@ function createWorkbenchRouter({ workbenchDb, runtimeDb, rawDbPath = DEFAULT_RAW
     res.status(201).json({ ok: true, note });
   });
 
+  router.delete('/groups/:groupId/notes/:noteId', (req, res) => {
+    const accountScope = getAccountScope();
+    const operator = currentOperatorContext(workbenchDb, req);
+    const visibleAccountScope = allowedAccountScope(workbenchDb, operator, accountScope, 'can_view');
+    const replyAccountScope = allowedAccountScope(workbenchDb, operator, accountScope, 'can_reply');
+    const manageAccountScope = allowedAccountScope(workbenchDb, operator, accountScope, 'can_manage');
+    const platform = requirePlatform(req.query.platform);
+    const account = requireText(req.query.account, 'account');
+    requireVisibleAccount(visibleAccountScope, platform, account);
+    const groupId = req.params.groupId;
+    const noteId = Math.max(0, Number(req.params.noteId) || 0);
+    if (!noteId) throw createHttpError(400, 'note id is required');
+    requireConversationCapability(workbenchDb, operator, platform, account, groupId, 'can_view');
+    const mayManage = accountScopeContains(manageAccountScope, platform, account) &&
+      conversationHasCapability(workbenchDb, operator, platform, account, groupId, 'can_manage');
+    const mayWriteNote = accountScopeContains(replyAccountScope, platform, account) &&
+      conversationHasCapability(workbenchDb, operator, platform, account, groupId, 'can_reply');
+    const deletedNoteId = accountData.withWorkbenchDb(platform, account, { create: true }, (accountDb) => {
+      const note = accountDb.prepare(`
+        SELECT * FROM conversation_notes
+        WHERE id = ? AND platform = ? AND account = ? AND group_id = ?
+      `).get(noteId, platform, account, groupId);
+      if (!note) throw createHttpError(404, 'note not found');
+      if (!mayManage && (!mayWriteNote || String(note.created_by) !== String(operator.id))) {
+        throw createHttpError(403, 'operator cannot delete this note');
+      }
+      accountDb.transaction(() => {
+        accountDb.prepare('DELETE FROM conversation_notes WHERE id = ?').run(note.id);
+        writeConversationTimeline(accountDb, operator.id, 'conversation.note.delete', platform, account, groupId, {
+          note_id: note.id,
+          note_length: note.body.length,
+          created_by: note.created_by,
+        });
+        writeAction(accountDb, operator.id, 'conversation.note.delete', platform, account, groupId, note.id, {
+          note_length: note.body.length,
+          created_by: note.created_by,
+        });
+      })();
+      return note.id;
+    });
+    res.json({ ok: true, deleted_note_id: deletedNoteId });
+  });
+
   router.get('/groups/:groupId/notes', (req, res) => {
     const accountScope = getAccountScope();
     const operator = currentOperatorContext(workbenchDb, req);
@@ -1094,7 +1137,7 @@ function createWorkbenchRouter({ workbenchDb, runtimeDb, rawDbPath = DEFAULT_RAW
     requireVisibleAccount(visibleAccountScope, platform, account);
     const groupId = req.params.groupId;
     requireConversationCapability(workbenchDb, operator, platform, account, groupId, 'can_view');
-    const limit = boundedNumber(req.query.limit, 20, 1, 50);
+    const limit = Math.max(1, Math.min(Number(req.query.limit) || 20, 50));
     const beforeId = Math.max(0, Number(req.query.before_id) || 0);
     const result = accountData.withWorkbenchDb(platform, account, { readonly: accountData.isolated }, (accountDb) => (
       loadConversationNotesPage(accountDb, workbenchDb, platform, account, groupId, { limit, beforeId })

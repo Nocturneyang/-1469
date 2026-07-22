@@ -371,6 +371,13 @@ export async function createGroupNote(group, body) {
   return data.note || null;
 }
 
+export async function deleteGroupNote(group, noteId) {
+  const { data } = await api.delete(`/groups/${encodeURIComponent(group.group_id)}/notes/${encodeURIComponent(noteId)}`, {
+    params: { platform: group.platform, account: group.account },
+  });
+  return data.deleted_note_id ?? noteId;
+}
+
 export async function updateGroupPresence(group, mode = 'viewing', active = true) {
   const { data } = await api.post(`/groups/${encodeURIComponent(group.group_id)}/presence`, {
     platform: group.platform,
