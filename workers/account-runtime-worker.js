@@ -34,6 +34,11 @@ const {
 const { channelSyncRetryDelay } = require('../lib/channel-sync-retry');
 const { readWhatsAppChatSnapshot, whatsappDisplayName } = require('../lib/wa-chat-snapshot');
 const {
+  whatsappMediaDescriptor,
+  whatsappMessageMetadata,
+  whatsappMessageText,
+} = require('../lib/whatsapp-message');
+const {
   detectImageMime,
   imageExtensionForMime,
   telegramEntityName,
@@ -518,39 +523,38 @@ async function handleWaMessage(message) {
   const chatId = chat?.id?._serialized || message.from || message.to || '';
   const nativeMessageId = message.id?._serialized || message.id?.id || `${chatId}:${message.timestamp || Date.now()}`;
   const messageId = nativeMessageId.includes(chatId) ? nativeMessageId : `${chatId}:${nativeMessageId}`;
-  const raw = {
-    platform: 'wa',
-    id: message.id,
-    from: message.from,
-    to: message.to,
-    author: message.author,
-    fromMe: Boolean(message.fromMe),
-    type: message.type,
-    timestamp: message.timestamp,
-    hasMedia: Boolean(message.hasMedia),
-    direction: message.fromMe ? 'outbound' : 'inbound',
-  };
-  const media = message.hasMedia ? await downloadWhatsAppMedia(message, messageId) : null;
-  const rowId = upsertRawMessage({
+  const mediaDescriptor = whatsappMediaDescriptor(message);
+  const raw = whatsappMessageMetadata(message, mediaDescriptor);
+  const contactForName = chatContact || contact;
+  const senderName = whatsappDisplayName(null, contactForName, message.author || message.from || '');
+  const commonRow = {
     db: rawDb,
     platform: 'wa',
     account: ACCOUNT,
     messageId,
     groupId: chatId,
-    groupName: whatsappDisplayName(chat, chatContact || contact, chatId),
+    groupName: whatsappDisplayName(chat, contactForName, chatId),
     senderId: message.author || message.from || '',
-    senderName: contact?.pushname || contact?.name || contact?.number || '',
-    content: message.body || '',
-    hasMedia: message.hasMedia ? 1 : 0,
-    ...mapStoredMedia(media),
+    senderName,
+    content: whatsappMessageText(message, mediaDescriptor),
+    hasMedia: mediaDescriptor ? 1 : 0,
+    mediaName: mediaDescriptor?.name || null,
+    mediaMime: mediaDescriptor?.mime || null,
+    mediaSize: mediaDescriptor?.size || null,
     timestamp: message.timestamp,
     rawData: raw,
     nativeChatId: chatId,
     nativeMessageId,
-  });
+  };
+  const rowId = upsertRawMessage(commonRow);
   lastMessageAt = new Date().toISOString();
   reportHeartbeat('ready', 'message', `WA message ${rowId}`);
   recordMessageEvent(chatId, message.fromMe ? 'outbound_message' : 'inbound');
+
+  if (mediaDescriptor?.downloadable) {
+    const media = await downloadWhatsAppMedia(message, messageId, mediaDescriptor);
+    if (media) upsertRawMessage({ ...commonRow, ...mapStoredMedia(media) });
+  }
 }
 
 async function handleTgBotMessage(message) {
@@ -656,14 +660,14 @@ async function resolveTelegramMessageEntities(message) {
   return { chat, sender };
 }
 
-async function downloadWhatsAppMedia(message, messageId) {
+async function downloadWhatsAppMedia(message, messageId, descriptor = whatsappMediaDescriptor(message)) {
   try {
     const media = await message.downloadMedia();
     if (!media?.data) return null;
     return storeInboundMedia(Buffer.from(media.data, 'base64'), {
       messageId,
-      name: media.filename || `wa-${Date.now()}`,
-      mime: media.mimetype || 'application/octet-stream',
+      name: media.filename || descriptor?.name || `wa-${Date.now()}`,
+      mime: media.mimetype || descriptor?.mime || 'application/octet-stream',
     });
   } catch (err) {
     reportError('wa_media_download_failed', err, { fatal: false });

@@ -16,8 +16,14 @@ const {
   toWhatsAppGroup,
   whatsappDisplayName,
   isWhatsAppInternalId,
+  isWhatsAppPhoneDisplay,
   whatsappChatId,
 } = require('../lib/wa-chat-snapshot');
+const {
+  whatsappMediaDescriptor,
+  whatsappMessageMetadata,
+  whatsappMessageText,
+} = require('../lib/whatsapp-message');
 const {
   detectImageMime,
   imageExtensionForMime,
@@ -54,10 +60,33 @@ async function main() {
     assert.strictEqual(whatsappChatId({ user: '123', server: 'g.us' }), '123@g.us');
     assert.strictEqual(isWhatsAppInternalId('77408698953978@lid'), true);
     assert.strictEqual(isWhatsAppInternalId('真实客户'), false);
+    assert.strictEqual(isWhatsAppPhoneDisplay('+234 906 781 7414'), true);
+    assert.strictEqual(isWhatsAppPhoneDisplay('1087060-PT Generasi XT'), false);
     assert.strictEqual(whatsappDisplayName(
       { id: { _serialized: '77408698953978@lid' }, name: '77408698953978@lid' },
       { name: '真实客户' },
     ), '真实客户');
+    assert.strictEqual(whatsappDisplayName(
+      { id: { _serialized: '2349067817414@c.us' }, name: '+234 906 781 7414' },
+      { pushname: 'Chris Laco', number: '2349067817414' },
+    ), 'Chris Laco');
+    const waImageMessage = {
+      id: { id: 'WA-42' },
+      type: 'image',
+      body: '',
+      hasMedia: true,
+      from: 'customer@c.us',
+      timestamp: 1783500000,
+      _data: { mimetype: 'image/png', size: 2048 },
+      downloadMedia() {},
+    };
+    const waImageDescriptor = whatsappMediaDescriptor(waImageMessage);
+    assert.strictEqual(waImageDescriptor.name, 'wa-WA-42.png');
+    assert.strictEqual(waImageDescriptor.mime, 'image/png');
+    assert.strictEqual(waImageDescriptor.size, 2048);
+    assert.strictEqual(waImageDescriptor.downloadable, true);
+    assert.strictEqual(whatsappMessageText(waImageMessage, waImageDescriptor), '图片');
+    assert.strictEqual(whatsappMessageMetadata(waImageMessage, waImageDescriptor).media.kind, 'image');
     assert.deepStrictEqual(toWhatsAppGroup({
       id: { _serialized: '123@g.us' },
       formattedTitle: 'WA 群',

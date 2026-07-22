@@ -179,6 +179,26 @@ async function main() {
     assert.strictEqual(groups.groups[0].unread_count, 3);
     assert.strictEqual(groups.groups.some((group) => group.platform === 'teams'), false);
 
+    insertRawMessage(rawDbPath, {
+      platform: 'whatsapp',
+      account: 'nanya_wa',
+      messageId: 'wa-phone-name-1',
+      groupId: '2349067817414@c.us',
+      groupName: '+234 906 781 7414',
+      senderId: '2349067817414@c.us',
+      senderName: 'Chris Laco',
+      content: '媒体资料已收到',
+      timestamp: 1782950461,
+      rawData: '{}',
+    });
+    workbenchDb.prepare(`
+      INSERT INTO channel_groups (platform, account, group_id, group_name, kind, raw_json)
+      VALUES ('wa', 'nanya_wa', '2349067817414@c.us', '+234 906 781 7414', 'chat', '{}')
+    `).run();
+    const phoneNamedGroups = await requestJson(`${baseUrl}/groups?scope=all&search=${encodeURIComponent('Chris Laco')}`);
+    assert.strictEqual(phoneNamedGroups.groups.length, 1);
+    assert.strictEqual(phoneNamedGroups.groups[0].group_name, 'Chris Laco');
+
     const disabledOperator = await createScopedOperator(baseUrl, 'disabled-now', {
       status: 'disabled',
       portal: { can_workbench: true, can_admin: false },
@@ -215,7 +235,7 @@ async function main() {
       scope: { can_view: true, can_reply: true, can_manage: false },
     });
     const visibleBeforeRevoke = await requestJson(`${baseUrl}/groups`, { headers: { 'x-operator-id': revokedOperator.id } });
-    assert.strictEqual(visibleBeforeRevoke.groups.length, 1);
+    assert.strictEqual(visibleBeforeRevoke.groups.length, 2);
     await requestJson(`${baseUrl}/admin/users/${revokedOperator.id}/scopes`, { method: 'PUT', body: { scopes: [] } });
     const visibleAfterRevoke = await requestJson(`${baseUrl}/groups`, { headers: { 'x-operator-id': revokedOperator.id } });
     assert.strictEqual(visibleAfterRevoke.groups.length, 0);
@@ -545,6 +565,15 @@ async function main() {
     assert.strictEqual(savedWorkspace.profile.priority, 'high');
     assert.strictEqual(savedWorkspace.profile.starred, true);
     assert.strictEqual(savedWorkspace.profile.internal_display_name, '重点 VIP 群');
+    const isolatedStatusGroups = await requestJson(`${baseUrl}/groups?scope=all`);
+    assert.strictEqual(
+      isolatedStatusGroups.groups.find((group) => group.group_id === 'group-1').conversation_status,
+      'in_progress',
+    );
+    assert.strictEqual(
+      isolatedStatusGroups.groups.find((group) => group.group_id === '2349067817414@c.us').conversation_status,
+      'pending',
+    );
 
     const note = await requestJson(`${baseUrl}/groups/group-1/notes`, {
       method: 'POST',
@@ -558,6 +587,20 @@ async function main() {
     assert.strictEqual(note.note.body, '客户催发货，已备注仓库。');
     assert.strictEqual(note.note.actor_name, '1469');
 
+    const presencePeer = await createScopedOperator(baseUrl, 'presence-peer', {
+      portal: { can_workbench: true, can_admin: false },
+      scope: { can_view: true, can_reply: false, can_manage: false },
+    });
+    await requestJson(`${baseUrl}/groups/group-1/presence`, {
+      method: 'POST',
+      headers: { 'x-operator-id': presencePeer.id },
+      body: {
+        platform: 'wa',
+        account: 'nanya_wa',
+        mode: 'viewing',
+        active: true,
+      },
+    });
     const presence = await requestJson(`${baseUrl}/groups/group-1/presence`, {
       method: 'POST',
       body: {
@@ -569,6 +612,7 @@ async function main() {
     });
     assert.strictEqual(presence.ok, true);
     assert.strictEqual(presence.presence.some((item) => item.operator_id === '1469' && item.mode === 'viewing'), true);
+    assert.strictEqual(presence.presence.some((item) => item.operator_id === presencePeer.id && item.actor_name === 'presence-peer'), true);
 
     const workspace = await requestJson(`${baseUrl}/groups/group-1/workspace?platform=wa&account=nanya_wa`);
     assert.strictEqual(workspace.profile.customer_type, 'VIP');
@@ -802,9 +846,30 @@ async function main() {
     const readOutboundUnreadGroups = await requestJson(`${baseUrl}/groups?scope=all&search=${encodeURIComponent('自己消息未读测试群')}`);
     assert.strictEqual(readOutboundUnreadGroups.groups[0].unread_count, 0);
 
+    const mediaDb = new Database(rawDbPath);
+    try {
+      mediaDb.prepare(`
+        INSERT INTO messages (
+          platform, receiver_account, message_id, group_id, group_name,
+          sender_id, sender_name, direction, content, has_media,
+          media_name, media_mime, media_size, timestamp, raw_data
+        ) VALUES (
+          'whatsapp', 'nanya_wa', 'wa-media-pending-1', 'group-1', 'VIP 支持交流群',
+          'nanya_wa', 'Nanya Support', 'outbound', '图片', 1,
+          'wa-media-1.png', 'image/png', 2048, 1782950420, @rawData
+        )
+      `).run({ rawData: JSON.stringify({ fromMe: true, media: { kind: 'image', name: 'wa-media-1.png', mime: 'image/png', size: 2048 } }) });
+    } finally {
+      mediaDb.close();
+    }
     const messages = await requestJson(`${baseUrl}/groups/group-1/messages?platform=wa&account=nanya_wa`);
     assert.strictEqual(messages.ok, true);
     assert.strictEqual(messages.messages.some((message) => message.source === 'workbench'), true);
+    const pendingWaMedia = messages.messages.find((message) => message.message_id === 'wa-media-pending-1');
+    assert.strictEqual(pendingWaMedia.attachments[0].name, 'wa-media-1.png');
+    assert.strictEqual(pendingWaMedia.attachments[0].type, 'image/png');
+    assert.strictEqual(pendingWaMedia.attachments[0].size, 2048);
+    assert.strictEqual(pendingWaMedia.attachments[0].media_url, null);
     const realtimeReady = await readFirstServerEvent(`${baseUrl}/groups/group-1/events?platform=wa&account=nanya_wa`);
     assert.strictEqual(realtimeReady.status, 200);
     assert.match(realtimeReady.contentType, /^text\/event-stream/);

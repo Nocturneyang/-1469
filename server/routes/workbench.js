@@ -47,6 +47,7 @@ const { writeLoginVerificationDoorbell } = require('../../lib/service-account-lo
 const { listAccountRefs, resolveAccountPaths } = require('../../db/account-db');
 const { resolveDataDir } = require('../../db/paths');
 const { latestChannelEventId, listChannelEvents, recordChannelEvent } = require('../../lib/channel-events');
+const { isWhatsAppInternalId, isWhatsAppPhoneDisplay } = require('../../lib/wa-chat-snapshot');
 
 const ALLOWED_PLATFORMS = new Set(WORKBENCH_PLATFORMS);
 const OUTBOUND_STATUSES = new Set(['pending', 'sending', 'sent', 'delivered', 'read', 'failed', 'dead', 'paused', 'canceled']);
@@ -1776,9 +1777,10 @@ function mergeGroupSources(rawGroups, syncedGroups) {
   const rawKeys = new Set(rawGroups.map((group) => groupKey(group.platform, group.account, group.group_id)));
   return [
     ...rawGroups.map((group) => {
+      const resolvedRaw = resolveRawGroupDisplayName(group);
       const synced = syncedByKey.get(groupKey(group.platform, group.account, group.group_id));
-      if (!synced || isPlaceholderChannelGroupName(synced)) return group;
-      return { ...group, group_name: synced.group_name };
+      if (!synced || isPlaceholderChannelGroupName(synced)) return resolvedRaw;
+      return { ...resolvedRaw, group_name: synced.group_name };
     }),
     ...syncedGroups.filter((group) => !rawKeys.has(groupKey(group.platform, group.account, group.group_id))),
   ];
@@ -1789,7 +1791,16 @@ function isPlaceholderChannelGroupName(group) {
   const groupId = String(group?.group_id || '').trim();
   if (!name || name === groupId) return true;
   if (normalizePlatform(group?.platform) !== 'wa') return false;
-  return /^[^@\s]+@(lid|g\.us|c\.us|s\.whatsapp\.net|broadcast|newsletter)$/i.test(name);
+  return isWhatsAppInternalId(name) || isWhatsAppPhoneDisplay(name);
+}
+
+function resolveRawGroupDisplayName(group) {
+  if (normalizePlatform(group?.platform) !== 'wa') return group;
+  const currentName = String(group?.group_name || '').trim();
+  const senderName = String(group?.sender_name || '').trim();
+  const currentIsPlaceholder = !currentName || isWhatsAppInternalId(currentName) || isWhatsAppPhoneDisplay(currentName);
+  const senderIsUseful = senderName && senderName !== '未知成员' && !isWhatsAppInternalId(senderName) && !isWhatsAppPhoneDisplay(senderName);
+  return currentIsPlaceholder && senderIsUseful ? { ...group, group_name: senderName } : group;
 }
 
 function listSyncedGroups(db, {

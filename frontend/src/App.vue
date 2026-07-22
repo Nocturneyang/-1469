@@ -1144,10 +1144,10 @@ async function persistManualGroups(manualGroupIds) {
 
 async function handleWorkspaceSave(payload) {
   if (!selectedGroup.value) return;
-  const groupId = selectedGroup.value.id;
+  const targetGroup = selectedGroup.value;
   try {
-    const profile = await saveGroupWorkspace(selectedGroup.value, payload);
-    if (!selectedGroup.value || selectedGroup.value.id !== groupId) return;
+    const profile = await saveGroupWorkspace(targetGroup, payload);
+    if (!sameConversation(selectedGroup.value, targetGroup)) return;
     workspaceDetail.value = {
       ...workspaceDetail.value,
       profile,
@@ -1156,7 +1156,7 @@ async function handleWorkspaceSave(payload) {
     await loadWorkspace({ silent: true });
     await loadGroups({ silent: true, clearSelectionOnMissing: true });
   } catch (err) {
-    if (!selectedGroup.value || selectedGroup.value.id !== groupId) return;
+    if (!sameConversation(selectedGroup.value, targetGroup)) return;
     await loadWorkspace({ silent: true });
     ElMessage.error('会话资料保存失败');
   }
@@ -1392,8 +1392,15 @@ function patchSelectedGroup(patch) {
   const nextGroup = { ...selectedGroup.value, ...patch };
   selectedGroup.value = nextGroup;
   groups.value = groups.value
-    .map((group) => (group.id === nextGroup.id ? { ...group, ...patch } : group))
+    .map((group) => (sameConversation(group, nextGroup) ? { ...group, ...patch } : group))
     .filter(groupMatchesActiveScope);
+}
+
+function sameConversation(left, right) {
+  return Boolean(left && right &&
+    String(left.platform || '') === String(right.platform || '') &&
+    String(left.account || '') === String(right.account || '') &&
+    String(left.group_id || '') === String(right.group_id || ''));
 }
 
 function selectedManualGroupIds(group) {
