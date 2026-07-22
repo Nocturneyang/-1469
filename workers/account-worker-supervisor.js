@@ -28,7 +28,10 @@ const MAX_WA_WORKERS = boundedNumber(process.env.WORKBENCH_ACCOUNT_WORKER_MAX_WA
 const MAX_TG_WORKERS = boundedNumber(process.env.WORKBENCH_ACCOUNT_WORKER_MAX_TG, 4, 0, 100);
 const START_ALL = process.env.WORKBENCH_ACCOUNT_WORKER_START_ALL === '1';
 const EXPLICIT_WORKERS = parseExplicitWorkers(process.env.WORKBENCH_ACCOUNT_WORKERS || '');
-const RUNNABLE_STATUSES = new Set(['authenticated', 'ready', 'monitoring', 'warmup', 'connected']);
+// A worker writes `starting` before the WA Web client reaches `ready`. Keep it
+// scheduled through that potentially slow browser bootstrap; otherwise the
+// next discovery pass terminates the worker before media sync can run.
+const RUNNABLE_STATUSES = new Set(['starting', 'authenticated', 'ready', 'monitoring', 'warmup', 'connected']);
 
 const workerScript = path.join(__dirname, 'account-runtime-worker.js');
 const workers = new Map();

@@ -480,6 +480,11 @@ async function main() {
       workbench_visible: 1,
     }), true);
     assert.strictEqual(shouldRunAccountWorker({
+      status: 'starting',
+      collect_enabled: 1,
+      workbench_visible: 1,
+    }), true, 'a booting WA worker must survive discovery until the browser is ready');
+    assert.strictEqual(shouldRunAccountWorker({
       status: 'authenticated',
       collect_enabled: 0,
       workbench_visible: 1,
