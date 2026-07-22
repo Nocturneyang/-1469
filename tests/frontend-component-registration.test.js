@@ -6,6 +6,7 @@ const path = require('path');
 
 const root = path.resolve(__dirname, '..');
 const mainSource = fs.readFileSync(path.join(root, 'frontend/src/main.js'), 'utf8');
+const appSource = fs.readFileSync(path.join(root, 'frontend/src/App.vue'), 'utf8');
 const indexSource = fs.readFileSync(path.join(root, 'frontend/index.html'), 'utf8');
 const railSource = fs.readFileSync(path.join(root, 'frontend/src/components/ServiceAccountRail.vue'), 'utf8');
 const topFiltersSource = fs.readFileSync(path.join(root, 'frontend/src/components/TopFilters.vue'), 'utf8');
@@ -36,6 +37,7 @@ for (const source of [indexSource, railSource, topFiltersSource]) {
 }
 assert.ok(railSource.includes('<ChatLineSquare />'), 'brand must use the service conversation mark');
 assert.match(stylesSource, /\.brand-presence-dot\s*\{/, 'brand must expose the online service status motif');
+assert.doesNotMatch(railSource, /href="\/admin"/, 'permission navigation must stay inside the mounted application');
 assert.ok(indexSource.includes('href="/favicon.svg"'), 'site must expose the branded favicon');
 assert.ok(indexSource.includes('property="og:image" content="/share-preview.png"'), 'shared links must expose a branded Open Graph image');
 assert.ok(fs.existsSync(path.join(root, 'frontend/public/share-preview.png')), 'shared-link preview image must be a committed public asset');
@@ -58,5 +60,8 @@ assert.ok(serviceAccountAccessSource.includes('彻底删除'), 'service accounts
 assert.match(serviceAccountAccessSource, /await ElMessageBox\.confirm\([\s\S]*await ElMessageBox\.confirm\(/, 'permanent account deletion must require two confirmations');
 assert.ok(serviceAccountAccessSource.includes('所有历史消息及配置都会永久删除且无法恢复'), 'permanent deletion must name the full destructive scope');
 assert.match(serviceAccountAccessSource, /confirm_delete_history:\s*true/, 'permanent deletion must send the backend confirmation guard');
+assert.match(appSource, /import PermissionConfig from '\.\/components\/PermissionConfig\.vue'/, 'permission management must be eagerly available during navigation');
+assert.doesNotMatch(appSource, /defineAsyncComponent\(\(\) => import\('\.\/components\/PermissionConfig\.vue'\)\)/, 'permission navigation must not wait on a lazy chunk');
+assert.match(permissionConfigSource, /permission-initial-loading/, 'permission management must show meaningful initial loading feedback');
 
 console.log('[frontend] component registrations and brand contract verified');

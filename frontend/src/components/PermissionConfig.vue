@@ -1,5 +1,5 @@
 <template>
-  <main class="permission-page">
+  <main class="permission-page" :aria-busy="loading ? 'true' : 'false'">
     <header class="permission-header">
       <div>
         <h1>权限管理</h1>
@@ -11,7 +11,18 @@
       </div>
     </header>
 
-    <section class="permission-layout">
+    <section v-if="loading && !users.length" class="permission-initial-loading" role="status" aria-live="polite">
+      <span class="permission-loading-spinner" aria-hidden="true"></span>
+      <div>
+        <strong>正在打开权限管理</strong>
+        <p>正在读取坐席、角色和服务账号范围…</p>
+      </div>
+      <div class="permission-loading-skeleton" aria-hidden="true">
+        <span></span><span></span>
+      </div>
+    </section>
+
+    <section v-else class="permission-layout">
       <aside class="permission-users">
         <div class="permission-users-head">
           <div>

@@ -133,10 +133,10 @@ import ConversationList from './components/ConversationList.vue';
 import MessageThread from './components/MessageThread.vue';
 import Composer from './components/Composer.vue';
 import ConversationInspector from './components/ConversationInspector.vue';
+import PermissionConfig from './components/PermissionConfig.vue';
 import { useNotifier } from './composables/useNotifier';
 
 const AccountSettings = defineAsyncComponent(() => import('./components/AccountSettings.vue'));
-const PermissionConfig = defineAsyncComponent(() => import('./components/PermissionConfig.vue'));
 const ServiceAccountAccess = defineAsyncComponent(() => import('./components/ServiceAccountAccess.vue'));
 const ServiceAccountLogin = defineAsyncComponent(() => import('./components/ServiceAccountLogin.vue'));
 import {

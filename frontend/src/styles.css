@@ -107,6 +107,53 @@ button {
   align-items: center;
 }
 
+.permission-initial-loading {
+  min-height: 0;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-content: start;
+  align-items: center;
+  gap: 14px;
+  padding: 28px;
+  overflow: hidden;
+  color: var(--text);
+}
+
+.permission-initial-loading p {
+  margin: 5px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.permission-loading-spinner {
+  width: 22px;
+  height: 22px;
+  border: 2px solid var(--line);
+  border-top-color: var(--accent-strong);
+  border-radius: 50%;
+  animation: permission-loading-spin .7s linear infinite;
+}
+
+.permission-loading-skeleton {
+  grid-column: 1 / -1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(210px, 0.32fr) minmax(0, 1fr);
+  gap: 18px;
+  margin-top: 10px;
+}
+
+.permission-loading-skeleton span {
+  min-height: 440px;
+  border-radius: 12px;
+  background: linear-gradient(100deg, var(--surface-soft) 20%, var(--line-soft) 38%, var(--surface-soft) 56%);
+  background-size: 220% 100%;
+  animation: permission-loading-shimmer 1.15s ease-in-out infinite;
+}
+
+@keyframes permission-loading-spin { to { transform: rotate(360deg); } }
+@keyframes permission-loading-shimmer { to { background-position: -220% 0; } }
+
 .permission-layout {
   min-height: 0;
   display: grid;
@@ -3644,6 +3691,20 @@ button {
     overflow: visible;
   }
 
+  .permission-initial-loading {
+    min-height: 520px;
+    padding: 20px 14px;
+    overflow: visible;
+  }
+
+  .permission-loading-skeleton {
+    grid-template-columns: 1fr;
+  }
+
+  .permission-loading-skeleton span {
+    min-height: 180px;
+  }
+
   .permission-users {
     max-height: none;
     border-right: 0;
@@ -4403,7 +4464,9 @@ button {
 @keyframes message-loading-shimmer { to { background-position: -220% 0; } }
 @media (prefers-reduced-motion: reduce) {
   .message-loading-spinner,
-  .message-loading-skeleton span { animation: none; }
+  .message-loading-skeleton span,
+  .permission-loading-spinner,
+  .permission-loading-skeleton span { animation: none; }
 }
 .message-date { display: flex; justify-content: center; margin: 2px 0 18px; }
 .message-date span { padding: 4px 10px; color: var(--muted); background: #ededf8; border-radius: 2px; font-size: 10px; }

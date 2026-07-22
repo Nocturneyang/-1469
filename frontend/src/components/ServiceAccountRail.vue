@@ -37,16 +37,16 @@
         <span><el-icon><Connection /></el-icon></span>
         <strong>服务账号</strong>
       </button>
-      <a
+      <button
         v-if="canOpenAdmin"
+        type="button"
         class="portal-shortcut"
-        href="/admin"
         title="坐席权限管理"
-        @click.prevent="$emit('open-permissions')"
+        @click="$emit('open-permissions')"
       >
         <span><el-icon><UserFilled /></el-icon></span>
         <strong>权限管理</strong>
-      </a>
+      </button>
     </div>
 
     <button
