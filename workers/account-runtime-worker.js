@@ -32,7 +32,7 @@ const {
   prepareWaChromeProfile,
 } = require('../lib/chrome-launch');
 const { channelSyncRetryDelay } = require('../lib/channel-sync-retry');
-const { readWhatsAppChatSnapshot } = require('../lib/wa-chat-snapshot');
+const { readWhatsAppChatSnapshot, whatsappDisplayName } = require('../lib/wa-chat-snapshot');
 const {
   detectImageMime,
   imageExtensionForMime,
@@ -512,6 +512,9 @@ async function handleWaMessage(message) {
   if (!message || !message.id) return;
   const chat = await message.getChat().catch(() => null);
   const contact = await message.getContact().catch(() => null);
+  const chatContact = !chat?.isGroup && typeof chat?.getContact === 'function'
+    ? await chat.getContact().catch(() => null)
+    : null;
   const chatId = chat?.id?._serialized || message.from || message.to || '';
   const nativeMessageId = message.id?._serialized || message.id?.id || `${chatId}:${message.timestamp || Date.now()}`;
   const messageId = nativeMessageId.includes(chatId) ? nativeMessageId : `${chatId}:${nativeMessageId}`;
@@ -534,7 +537,7 @@ async function handleWaMessage(message) {
     account: ACCOUNT,
     messageId,
     groupId: chatId,
-    groupName: chat?.name || chat?.formattedTitle || chatId,
+    groupName: whatsappDisplayName(chat, chatContact || contact, chatId),
     senderId: message.author || message.from || '',
     senderName: contact?.pushname || contact?.name || contact?.number || '',
     content: message.body || '',

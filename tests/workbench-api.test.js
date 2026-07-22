@@ -444,7 +444,23 @@ async function main() {
     assert.strictEqual(emptyServiceAccount.message_count, 0);
     assert.strictEqual(emptyServiceAccount.is_connected, true);
 
+    insertRawMessage(rawDbPath, {
+      platform: 'whatsapp',
+      account: 'nanya_wa',
+      messageId: 'lid-name-message-1',
+      groupId: '77408698953978@lid',
+      groupName: '77408698953978@lid',
+      senderId: '77408698953978@lid',
+      senderName: '',
+      content: 'LID name resolution test',
+      timestamp: 1782950455,
+      rawData: '{}',
+    });
     seedSyncedChannelMetadata(workbenchDb);
+    const resolvedLidGroups = await requestJson(`${baseUrl}/groups?platforms=wa&scope=all&search=${encodeURIComponent('真实客户名称')}`);
+    assert.strictEqual(resolvedLidGroups.groups.length, 1);
+    assert.strictEqual(resolvedLidGroups.groups[0].group_id, '77408698953978@lid');
+    assert.strictEqual(resolvedLidGroups.groups[0].group_name, '真实客户名称');
     const labelList = await requestJson(`${baseUrl}/channel-labels?platform=wa`);
     assert.strictEqual(labelList.ok, true);
     assert.strictEqual(labelList.labels.some((label) => label.native_label_id === 'vip-sync'), true);
@@ -1223,6 +1239,10 @@ function seedSyncedChannelMetadata(db) {
   db.prepare(`
     INSERT INTO channel_groups (platform, account, group_id, group_name, kind, raw_json)
     VALUES ('wa', 'nanya_wa', 'group-synced-only', '仅同步群', 'group', '{}')
+  `).run();
+  db.prepare(`
+    INSERT INTO channel_groups (platform, account, group_id, group_name, kind, raw_json)
+    VALUES ('wa', 'nanya_wa', '77408698953978@lid', '真实客户名称', 'chat', '{}')
   `).run();
   db.prepare(`
     INSERT INTO channel_labels (platform, account, native_label_id, name, color, kind, raw_json)

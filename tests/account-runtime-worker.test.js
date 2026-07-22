@@ -14,6 +14,8 @@ const {
   readWhatsAppChatSnapshot,
   readNativeWhatsAppChatSnapshot,
   toWhatsAppGroup,
+  whatsappDisplayName,
+  isWhatsAppInternalId,
   whatsappChatId,
 } = require('../lib/wa-chat-snapshot');
 const {
@@ -50,6 +52,12 @@ async function main() {
     assert.strictEqual(channelSyncRetryDelay(3, { baseMs: 5000, maxMs: 15000 }), 15000);
     assert.strictEqual(whatsappChatId({ _serialized: '123@g.us' }), '123@g.us');
     assert.strictEqual(whatsappChatId({ user: '123', server: 'g.us' }), '123@g.us');
+    assert.strictEqual(isWhatsAppInternalId('77408698953978@lid'), true);
+    assert.strictEqual(isWhatsAppInternalId('真实客户'), false);
+    assert.strictEqual(whatsappDisplayName(
+      { id: { _serialized: '77408698953978@lid' }, name: '77408698953978@lid' },
+      { name: '真实客户' },
+    ), '真实客户');
     assert.deepStrictEqual(toWhatsAppGroup({
       id: { _serialized: '123@g.us' },
       formattedTitle: 'WA 群',
@@ -87,12 +95,30 @@ async function main() {
         return {
           Chat: {
             getModelsArray() {
+              return [
+                {
+                  id: { _serialized: 'native@g.us', user: 'native', server: 'g.us' },
+                  formattedTitle: 'native@g.us',
+                  groupMetadata: { subject: '原生群' },
+                  unreadCount: 4,
+                  labels: ['1'],
+                },
+                {
+                  id: { _serialized: '77408698953978@lid', user: '77408698953978', server: 'lid' },
+                  formattedTitle: '77408698953978@lid',
+                  unreadCount: 1,
+                  labels: [],
+                },
+              ];
+            },
+          },
+          Contact: {
+            get() { return null; },
+            getModelsArray() {
               return [{
-                id: { _serialized: 'native@g.us', user: 'native', server: 'g.us' },
-                formattedTitle: '原生群',
-                groupMetadata: {},
-                unreadCount: 4,
-                labels: ['1'],
+                id: { _serialized: '77408698953978@lid', user: '77408698953978', server: 'lid' },
+                name: '真实客户',
+                phoneNumber: { _serialized: '15551234567@c.us', user: '15551234567', server: 'c.us' },
               }];
             },
           },
@@ -110,6 +136,8 @@ async function main() {
       });
       assert.strictEqual(nativeSnapshot.available, true);
       assert.strictEqual(nativeSnapshot.models[0].id._serialized, 'native@g.us');
+      assert.strictEqual(nativeSnapshot.models[0].formattedTitle, '原生群');
+      assert.strictEqual(nativeSnapshot.models[1].formattedTitle, '真实客户');
       assert.deepStrictEqual(nativeSnapshot.labelSnapshot, {
         labels: [{
           native_label_id: '1',
@@ -127,6 +155,7 @@ async function main() {
       assert.strictEqual(preferredSnapshot.degraded, false);
       assert.strictEqual(preferredSnapshot.snapshotMode, 'native');
       assert.strictEqual(preferredSnapshot.groups[0].group_id, 'native@g.us');
+      assert.strictEqual(preferredSnapshot.groups[1].group_name, '真实客户');
     } finally {
       global.window = originalWindow;
     }

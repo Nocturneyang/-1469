@@ -1769,11 +1769,27 @@ function mergePresenceMaps(maps) {
 }
 
 function mergeGroupSources(rawGroups, syncedGroups) {
+  const syncedByKey = new Map(syncedGroups.map((group) => [
+    groupKey(group.platform, group.account, group.group_id),
+    group,
+  ]));
   const rawKeys = new Set(rawGroups.map((group) => groupKey(group.platform, group.account, group.group_id)));
   return [
-    ...rawGroups,
+    ...rawGroups.map((group) => {
+      const synced = syncedByKey.get(groupKey(group.platform, group.account, group.group_id));
+      if (!synced || isPlaceholderChannelGroupName(synced)) return group;
+      return { ...group, group_name: synced.group_name };
+    }),
     ...syncedGroups.filter((group) => !rawKeys.has(groupKey(group.platform, group.account, group.group_id))),
   ];
+}
+
+function isPlaceholderChannelGroupName(group) {
+  const name = String(group?.group_name || '').trim();
+  const groupId = String(group?.group_id || '').trim();
+  if (!name || name === groupId) return true;
+  if (normalizePlatform(group?.platform) !== 'wa') return false;
+  return /^[^@\s]+@(lid|g\.us|c\.us|s\.whatsapp\.net|broadcast|newsletter)$/i.test(name);
 }
 
 function listSyncedGroups(db, {

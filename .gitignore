@@ -8,3 +8,4 @@ sessions/
 *.sqlite-wal
 .env
 *.log
+.DS_Store

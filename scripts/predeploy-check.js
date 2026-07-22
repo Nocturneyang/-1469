@@ -13,7 +13,7 @@ const SYNC_PATHS = [
   '.dockerignore', '.gitignore', 'AGENTS.md', 'DEVELOPMENT_GUIDE.md', 'Dockerfile', 'README.md',
   'docker-entrypoint.sh', 'ecosystem.cloud.config.js', 'package.json', 'package-lock.json',
 ];
-const IGNORED = new Set(['dist', 'node_modules', '.local-data', '.git', '.deploy-worktree']);
+const IGNORED = new Set(['dist', 'node_modules', '.local-data', '.git', '.deploy-worktree', '.DS_Store']);
 
 function main() {
   assertDatabaseBoundaries();
