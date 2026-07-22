@@ -585,7 +585,7 @@ async function handleWaMessage(message) {
   recordMessageEvent(chatId, message.fromMe ? 'outbound_message' : 'inbound');
 
   if (mediaDescriptor?.downloadable) {
-    const media = await downloadWhatsAppMedia(message, messageId, mediaDescriptor);
+        const media = await downloadWhatsAppMedia(message, messageId, mediaDescriptor, nativeMessageId);
     if (media) {
       upsertRawMessage({ ...commonRow, ...mapStoredMedia(media) });
       recordMessageEvent(chatId, message.fromMe ? 'outbound_message' : 'inbound');
@@ -698,7 +698,7 @@ async function resolveTelegramMessageEntities(message) {
   return { chat, sender };
 }
 
-async function downloadWhatsAppMedia(message, messageId, descriptor = whatsappMediaDescriptor(message)) {
+async function downloadWhatsAppMedia(message, messageId, descriptor = whatsappMediaDescriptor(message), nativeMessageId = '') {
   let lastError = null;
   for (let attempt = 1; attempt <= 3; attempt += 1) {
     let libraryError = null;
@@ -722,7 +722,7 @@ async function downloadWhatsAppMedia(message, messageId, descriptor = whatsappMe
       // manager with a forwards-compatible no-op QPL adapter before treating
       // the media as unavailable.
       try {
-        const media = await downloadWhatsAppMediaWithCompatAdapter(message);
+        const media = await downloadWhatsAppMediaWithCompatAdapter(message, nativeMessageId);
         const normalized = normalizeWhatsAppDownloadedMedia(media, descriptor);
         if (!normalized) throw new Error('WA compatibility media payload is empty');
         return storeInboundMedia(normalized.buffer, {
@@ -740,12 +740,13 @@ async function downloadWhatsAppMedia(message, messageId, descriptor = whatsappMe
   return null;
 }
 
-async function downloadWhatsAppMediaWithCompatAdapter(message) {
+async function downloadWhatsAppMediaWithCompatAdapter(message, nativeMessageId = '') {
   // Message owns the authoritative client reference. The outer worker client
   // can be a wrapper in tests and in some reconnect paths.
   const page = message?.client?.pupPage || channelClient?.pupPage;
-  const serializedId = String(message?.id?._serialized || '').trim();
-  if (!page || !serializedId) throw new Error('WA compatibility media download is unavailable: message/page missing');
+  const serializedId = whatsappSerializedMessageId(message, nativeMessageId);
+  if (!page) throw new Error('WA compatibility media download is unavailable: page missing');
+  if (!serializedId) throw new Error('WA compatibility media download is unavailable: serialized message id missing');
 
   const result = await page.evaluate(async (messageId) => {
     const describeError = (error) => ({
@@ -809,6 +810,19 @@ async function downloadWhatsAppMediaWithCompatAdapter(message) {
   const error = new Error(`WA compatibility media unavailable: ${unavailable}`);
   error.code = unavailable;
   throw error;
+}
+
+function whatsappSerializedMessageId(message, nativeMessageId = '') {
+  const id = message?.id || {};
+  const direct = String(id?._serialized || nativeMessageId || '').trim();
+  if (direct.split('_').length >= 3) return direct;
+  const remote = typeof id.remote === 'object' ? id.remote?._serialized : id.remote;
+  const messagePart = String(id.id || '').trim();
+  if (!remote || !messagePart || typeof id.fromMe !== 'boolean') return '';
+  const parts = [String(id.fromMe), String(remote), messagePart];
+  const participant = typeof id.participant === 'object' ? id.participant?._serialized : id.participant;
+  if (participant) parts.push(String(participant));
+  return parts.join('_');
 }
 
 function combineWhatsAppMediaErrors(libraryError, compatError) {
@@ -875,7 +889,7 @@ async function repairMissingWhatsAppMedia() {
       name: row.media_name,
       mime: row.media_mime,
     };
-    const media = await downloadWhatsAppMedia(message, row.message_id, descriptor);
+    const media = await downloadWhatsAppMedia(message, row.message_id, descriptor, row.native_message_id);
     if (!media) continue;
     const stored = mapStoredMedia(media);
     update.run({
