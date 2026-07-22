@@ -11,7 +11,7 @@
 
 WA worker 收到消息后先调用 `whatsappMediaDescriptor` 生成安全的媒体摘要，并立即写入 `raw.sqlite.messages`。页面可以先展示“图片、视频、语音、文件或贴纸”及文件元信息。可下载媒体随后写入该账号的 `media/YYYY-MM/`，第二次幂等更新同一条消息的 `media_path`、大小和哈希。
 
-WA Web 偶尔会在消息事件触发时暂时无法返回媒体正文，因此媒体补偿不能只在账号 `ready` 时执行一次。账号 worker 会周期扫描仍缺少 `media_path` 的最近媒体消息，并通过原生消息 ID 重试下载；下载失败后会先刷新 WhatsApp Web 中的消息模型，再使用更新后的媒体密钥重试。事件阶段首次下载失败时会缩短下一次补偿间隔。补回文件后 worker 会发送会话更新事件，让已经打开的消息线程自动重新拉取并显示媒体。
+WA Web 偶尔会在消息事件触发时暂时无法返回媒体正文，因此媒体补偿不能只在账号 `ready` 时执行一次。账号 worker 会周期扫描仍缺少 `media_path` 的最近媒体消息，并通过原生消息 ID 重试下载；下载失败后会先刷新 WhatsApp Web 中的消息模型，再使用更新后的媒体密钥重试。若 `whatsapp-web.js` 的内置 `downloadMedia()` 因 WhatsApp Web 内部 QPL 遥测接口变更而抛出不透明浏览器异常，worker 会改用同一官方下载/解密管理器，并提供前向兼容的无操作 QPL 适配器。该兜底适用于图片、PDF、Office 文件、视频、语音和其他可下载 WA 媒体；不会绕过 WhatsApp 的权限或伪造文件。事件阶段首次下载失败时会缩短下一次补偿间隔。补回文件后 worker 会发送会话更新事件，让已经打开的消息线程自动重新拉取并显示媒体。
 
 下载结果如果被 WA 标记为 `application/octet-stream`，worker 会根据文件头识别 JPEG、PNG、GIF 或 WebP，并修正 MIME 与文件扩展名，避免真实图片被浏览器当成普通附件。已过期且 WA 已无法再次下载的历史媒体仍会保留占位信息，不伪造文件内容。
 

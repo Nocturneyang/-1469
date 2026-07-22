@@ -701,6 +701,7 @@ async function resolveTelegramMessageEntities(message) {
 async function downloadWhatsAppMedia(message, messageId, descriptor = whatsappMediaDescriptor(message)) {
   let lastError = null;
   for (let attempt = 1; attempt <= 3; attempt += 1) {
+    let libraryError = null;
     try {
       if (attempt > 1 && typeof message.reload === 'function') {
         await message.reload().catch(() => null);
@@ -714,12 +715,112 @@ async function downloadWhatsAppMedia(message, messageId, descriptor = whatsappMe
         mime: normalized.mime,
       });
     } catch (err) {
-      lastError = err;
+      libraryError = err;
+      // WhatsApp Web changes its internal QPL telemetry object regularly. The
+      // upstream helper can then fail before returning bytes with an opaque
+      // browser error (often just "r: r"). Retry the same supported download
+      // manager with a forwards-compatible no-op QPL adapter before treating
+      // the media as unavailable.
+      try {
+        const media = await downloadWhatsAppMediaWithCompatAdapter(message);
+        const normalized = normalizeWhatsAppDownloadedMedia(media, descriptor);
+        if (!normalized) throw new Error('WA compatibility media payload is empty');
+        return storeInboundMedia(normalized.buffer, {
+          messageId,
+          name: normalized.name,
+          mime: normalized.mime,
+        });
+      } catch (compatError) {
+        lastError = combineWhatsAppMediaErrors(libraryError, compatError);
+      }
       if (attempt < 3) await waitForRetry(attempt * 500);
     }
   }
   reportError('wa_media_download_failed', lastError || new Error('WA media download failed'), { fatal: false });
   return null;
+}
+
+async function downloadWhatsAppMediaWithCompatAdapter(message) {
+  const page = channelClient?.pupPage;
+  const serializedId = String(message?.id?._serialized || '').trim();
+  if (!page || !serializedId) throw new Error('WA compatibility media download is unavailable: message/page missing');
+
+  const result = await page.evaluate(async (messageId) => {
+    const describeError = (error) => ({
+      name: String(error?.name || 'Error'),
+      message: String(error?.message || error || 'unknown browser error'),
+      status: Number(error?.status || error?.response?.status || 0) || null,
+    });
+    try {
+      const collections = window.require('WAWebCollections');
+      const msg = collections.Msg.get(messageId) || (
+        await collections.Msg.getMessagesById([messageId])
+      )?.messages?.[0];
+      if (!msg?.mediaData) return { unavailable: 'message_or_media_missing' };
+      if (msg.mediaData.mediaStage === 'REUPLOADING') return { unavailable: 'media_reuploading' };
+      if (msg.mediaData.mediaStage !== 'RESOLVED') {
+        await msg.downloadMedia({ downloadEvenIfExpensive: true, rmrReason: 1 });
+      }
+      const stage = String(msg.mediaData.mediaStage || 'unknown');
+      if (stage.includes('ERROR') || stage === 'FETCHING') return { unavailable: `media_stage_${stage}` };
+
+      // The Web app has added QPL methods across releases. A Proxy preserves
+      // chainability for new optional telemetry calls without suppressing the
+      // actual download/decryption result or errors.
+      const target = {};
+      const qpl = new Proxy(target, {
+        get(_value, property) {
+          if (property === 'then') return undefined;
+          return () => qpl;
+        },
+      });
+      const manager = window.require('WAWebDownloadManager')?.downloadManager;
+      if (!manager?.downloadAndMaybeDecrypt) return { unavailable: 'download_manager_missing' };
+      const decrypted = await manager.downloadAndMaybeDecrypt({
+        directPath: msg.directPath,
+        encFilehash: msg.encFilehash,
+        filehash: msg.filehash,
+        mediaKey: msg.mediaKey,
+        mediaKeyTimestamp: msg.mediaKeyTimestamp,
+        type: msg.type,
+        signal: new AbortController().signal,
+        downloadQpl: qpl,
+      });
+      return {
+        data: await window.WWebJS.arrayBufferToBase64Async(decrypted),
+        mimetype: msg.mimetype,
+        filename: msg.filename,
+        filesize: msg.size,
+      };
+    } catch (error) {
+      return { error: describeError(error) };
+    }
+  }, serializedId);
+
+  if (result?.data) return result;
+  if (result?.error) {
+    const error = new Error(`WA compatibility media download failed: ${result.error.name}: ${result.error.message}`);
+    error.status = result.error.status;
+    throw error;
+  }
+  const unavailable = String(result?.unavailable || 'unknown');
+  const error = new Error(`WA compatibility media unavailable: ${unavailable}`);
+  error.code = unavailable;
+  throw error;
+}
+
+function combineWhatsAppMediaErrors(libraryError, compatError) {
+  const libraryMessage = String(libraryError?.message || libraryError || 'unknown library error');
+  const compatMessage = String(compatError?.message || compatError || 'unknown compatibility error');
+  const error = new Error(`WA media download failed (library: ${libraryMessage}; compatibility: ${compatMessage})`);
+  error.stack = [
+    error.stack,
+    '--- whatsapp-web.js downloadMedia ---',
+    libraryError?.stack || libraryMessage,
+    '--- WA compatibility adapter ---',
+    compatError?.stack || compatMessage,
+  ].filter(Boolean).join('\n');
+  return error;
 }
 
 async function repairMissingWhatsAppMedia() {

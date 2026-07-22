@@ -112,6 +112,9 @@ async function main() {
     assert.match(workerSource, /scheduleMissingWhatsAppMediaRepair\('periodic'\)/);
     assert.match(workerSource, /WORKBENCH_WA_MEDIA_REPAIR_RETRY_MS/);
     assert.match(workerSource, /typeof message\.reload === 'function'/);
+    assert.match(workerSource, /downloadWhatsAppMediaWithCompatAdapter\(message\)/, 'WA downloads must fall back when the upstream Web helper changes');
+    assert.match(workerSource, /downloadQpl:\s*qpl/, 'the WA compatibility adapter must supply a forwards-compatible download telemetry object');
+    assert.match(workerSource, /downloadAndMaybeDecrypt/, 'the compatibility path must retrieve and decrypt every downloadable WA media type');
     assert.deepStrictEqual(toWhatsAppGroup({
       id: { _serialized: '123@g.us' },
       formattedTitle: 'WA 群',
