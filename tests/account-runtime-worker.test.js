@@ -111,6 +111,7 @@ async function main() {
     const workerSource = fs.readFileSync(path.join(__dirname, '..', 'workers', 'account-runtime-worker.js'), 'utf8');
     assert.match(workerSource, /scheduleMissingWhatsAppMediaRepair\('periodic'\)/);
     assert.match(workerSource, /WORKBENCH_WA_MEDIA_REPAIR_RETRY_MS/);
+    assert.match(workerSource, /typeof message\.reload === 'function'/);
     assert.deepStrictEqual(toWhatsAppGroup({
       id: { _serialized: '123@g.us' },
       formattedTitle: 'WA 群',

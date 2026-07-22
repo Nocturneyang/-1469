@@ -702,6 +702,9 @@ async function downloadWhatsAppMedia(message, messageId, descriptor = whatsappMe
   let lastError = null;
   for (let attempt = 1; attempt <= 3; attempt += 1) {
     try {
+      if (attempt > 1 && typeof message.reload === 'function') {
+        await message.reload().catch(() => null);
+      }
       const media = await message.downloadMedia();
       const normalized = normalizeWhatsAppDownloadedMedia(media, descriptor);
       if (!normalized) throw new Error('WA media payload is empty');
@@ -764,6 +767,7 @@ async function repairMissingWhatsAppMedia() {
     if (!message || typeof message.downloadMedia !== 'function') {
       continue;
     }
+    if (typeof message.reload === 'function') await message.reload().catch(() => null);
     const descriptor = whatsappMediaDescriptor(message) || {
       name: row.media_name,
       mime: row.media_mime,
