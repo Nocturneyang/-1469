@@ -7,6 +7,7 @@ const path = require('path');
 const root = path.resolve(__dirname, '..');
 const composer = fs.readFileSync(path.join(root, 'frontend/src/components/Composer.vue'), 'utf8');
 const thread = fs.readFileSync(path.join(root, 'frontend/src/components/MessageThread.vue'), 'utf8');
+const conversationList = fs.readFileSync(path.join(root, 'frontend/src/components/ConversationList.vue'), 'utf8');
 const app = fs.readFileSync(path.join(root, 'frontend/src/App.vue'), 'utf8');
 const api = fs.readFileSync(path.join(root, 'frontend/src/api.js'), 'utf8');
 const styles = fs.readFileSync(path.join(root, 'frontend/src/styles.css'), 'utf8');
@@ -53,6 +54,8 @@ assert.match(app, /function groupMatchesFilterState\(/, 'instant conversation fi
 assert.match(app, /groupListCache\.get\(groupFilterCacheKey\(nextBase\)\)/, 'instant label filtering must reuse the unfiltered group snapshot');
 assert.match(app, /writeGroupListCache\(requestKey, nextGroups\)/, 'server results must refresh the exact filter cache');
 assert.match(app, /function primeMessagePreview\(/, 'conversation selection must render the latest list message immediately');
+assert.match(app, /function prefetchMessages\(/, 'conversation hover must prefetch the first message page');
+assert.match(conversationList, /@mouseenter="schedulePrefetch\(group\)"/, 'conversation rows must schedule message prefetch on hover');
 assert.match(app, /:loading-messages="loadingMessages"/, 'message loading progress must be visible in the thread');
 assert.ok(thread.includes('正在加载完整消息记录'), 'the thread must explain that full history is still loading');
 assert.match(styles, /\.message-loading-skeleton/, 'an empty first message page must show a loading skeleton');

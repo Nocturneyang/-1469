@@ -66,6 +66,7 @@
           :scope-label="scopeLabel"
           :search="filters.search"
           @select="selectGroup"
+          @prefetch="prefetchMessages"
           @refresh="loadGroups"
           @search-change="(search) => filters = { ...filters, search }"
         />
@@ -260,6 +261,7 @@ let workspaceRequestSeq = 0;
 let groupsRequestSeq = 0;
 let messageRequestSeq = 0;
 const messageCache = new Map();
+const messagePrefetches = new Map();
 const groupListCache = new Map();
 let bootstrapRetryTimer = null;
 let bootstrapRetryCount = 0;
@@ -831,11 +833,12 @@ async function loadMessages(params = {}) {
   if (showInitialLoading) loadingMessages.value = true;
   if (!params.before_id) hydrateCachedMessages(group);
   try {
-    const page = await fetchMessages(group, {
+    const prefetched = !requestParams.before_id ? messagePrefetches.get(cacheKey) : null;
+    const page = await (prefetched || fetchMessages(group, {
       ...activeMessageFilterParams(),
       limit: MESSAGE_PAGE_LIMIT,
       ...requestParams,
-    });
+    }));
     if (
       requestSeq !== messageRequestSeq ||
       !selectedGroup.value ||
@@ -858,6 +861,24 @@ async function loadMessages(params = {}) {
       selectedGroup.value.id === group.id
     ) loadingMessages.value = false;
   }
+}
+
+function prefetchMessages(group) {
+  if (!group) return;
+  const cacheKey = messageCacheKey(group);
+  if (messageCache.get(cacheKey)?.loaded === true || messagePrefetches.has(cacheKey)) return;
+  const request = fetchMessages(group, {
+    ...activeMessageFilterParams(),
+    limit: MESSAGE_PAGE_LIMIT,
+  }).then((page) => {
+    if (messageCache.get(cacheKey)?.loaded !== true) {
+      writeMessageCache(cacheKey, page.messages, page.paging, { loaded: true });
+    }
+    return page;
+  }).finally(() => {
+    if (messagePrefetches.get(cacheKey) === request) messagePrefetches.delete(cacheKey);
+  });
+  messagePrefetches.set(cacheKey, request);
 }
 
 function messageCacheKey(group) {

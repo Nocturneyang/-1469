@@ -34,6 +34,7 @@ const {
 const { channelSyncRetryDelay } = require('../lib/channel-sync-retry');
 const { readWhatsAppChatSnapshot, whatsappDisplayName } = require('../lib/wa-chat-snapshot');
 const {
+  normalizeWhatsAppDownloadedMedia,
   whatsappMediaDescriptor,
   whatsappMessageMetadata,
   whatsappMessageText,
@@ -72,6 +73,8 @@ const SEND_POLL_MS = boundedNumber(process.env.WORKBENCH_ACCOUNT_WORKER_SEND_POL
 const HEARTBEAT_MS = boundedNumber(process.env.WORKBENCH_ACCOUNT_WORKER_HEARTBEAT_MS, 10000, 1000, 120000);
 const LEASE_TTL_MS = boundedNumber(process.env.WORKBENCH_WORKER_LEASE_TTL_MS, 45000, 15000, 300000);
 const CHAT_SYNC_MS = boundedNumber(process.env.WORKBENCH_ACCOUNT_WORKER_CHAT_SYNC_MS, 10 * 60 * 1000, 30000, 60 * 60 * 1000);
+const WA_MEDIA_REPAIR_MS = boundedNumber(process.env.WORKBENCH_WA_MEDIA_REPAIR_MS, 2 * 60 * 1000, 30000, 30 * 60 * 1000);
+const WA_MEDIA_REPAIR_RETRY_MS = boundedNumber(process.env.WORKBENCH_WA_MEDIA_REPAIR_RETRY_MS, 15000, 5000, 5 * 60 * 1000);
 const CHANNEL_SYNC_RETRY_BASE_MS = boundedNumber(
   process.env.WORKBENCH_CHANNEL_SYNC_RETRY_BASE_MS,
   30000,
@@ -120,6 +123,8 @@ let syncInFlight = false;
 let outboundDrainInFlight = false;
 let outboundDrainRequested = false;
 let outboundDrainTimer = null;
+let waMediaRepairInFlight = false;
+let nextWaMediaRepairAt = 0;
 const immediateOutboundIds = [];
 const immediateOutboundIdSet = new Set();
 
@@ -187,7 +192,32 @@ async function tick() {
   if (channelReady && Date.now() >= nextSyncAt) {
     await syncChannelSnapshot('periodic');
   }
+  scheduleMissingWhatsAppMediaRepair('periodic');
   reportHeartbeat(channelReady ? 'ready' : 'starting', channelReady ? 'monitoring' : 'starting', '');
+}
+
+function scheduleMissingWhatsAppMediaRepair(reason, { force = false } = {}) {
+  if (stopping || PLATFORM !== 'wa' || !channelReady || typeof channelClient?.getMessageById !== 'function') return;
+  const now = Date.now();
+  if (waMediaRepairInFlight || (!force && now < nextWaMediaRepairAt)) return;
+  waMediaRepairInFlight = true;
+  nextWaMediaRepairAt = now + WA_MEDIA_REPAIR_MS;
+  repairMissingWhatsAppMedia()
+    .then((repaired) => {
+      if (repaired > 0) log(`WA media repair (${reason}) restored ${repaired} message(s)`);
+    })
+    .catch((err) => {
+      requestMissingWhatsAppMediaRepair();
+      reportError('wa_media_repair_failed', err, { fatal: false });
+    })
+    .finally(() => {
+      waMediaRepairInFlight = false;
+    });
+}
+
+function requestMissingWhatsAppMediaRepair() {
+  const retryAt = Date.now() + WA_MEDIA_REPAIR_RETRY_MS;
+  nextWaMediaRepairAt = nextWaMediaRepairAt ? Math.min(nextWaMediaRepairAt, retryAt) : retryAt;
 }
 
 async function drainOutbound() {
@@ -346,7 +376,7 @@ async function startWhatsAppRuntime() {
     }
     scheduleOutboundDrain(0);
     await syncChannelSnapshot('ready').catch((err) => reportError('wa_sync_failed', err, { fatal: false }));
-    repairMissingWhatsAppMedia().catch((err) => reportError('wa_media_repair_failed', err, { fatal: false }));
+    scheduleMissingWhatsAppMediaRepair('ready', { force: true });
   });
 
   client.on('message', (message) => {
@@ -556,7 +586,12 @@ async function handleWaMessage(message) {
 
   if (mediaDescriptor?.downloadable) {
     const media = await downloadWhatsAppMedia(message, messageId, mediaDescriptor);
-    if (media) upsertRawMessage({ ...commonRow, ...mapStoredMedia(media) });
+    if (media) {
+      upsertRawMessage({ ...commonRow, ...mapStoredMedia(media) });
+      recordMessageEvent(chatId, message.fromMe ? 'outbound_message' : 'inbound');
+    } else {
+      requestMissingWhatsAppMediaRepair();
+    }
   }
 }
 
@@ -668,11 +703,12 @@ async function downloadWhatsAppMedia(message, messageId, descriptor = whatsappMe
   for (let attempt = 1; attempt <= 3; attempt += 1) {
     try {
       const media = await message.downloadMedia();
-      if (!media?.data) throw new Error('WA media payload is empty');
-      return storeInboundMedia(Buffer.from(media.data, 'base64'), {
+      const normalized = normalizeWhatsAppDownloadedMedia(media, descriptor);
+      if (!normalized) throw new Error('WA media payload is empty');
+      return storeInboundMedia(normalized.buffer, {
         messageId,
-        name: media.filename || descriptor?.name || `wa-${Date.now()}`,
-        mime: media.mimetype || descriptor?.mime || 'application/octet-stream',
+        name: normalized.name,
+        mime: normalized.mime,
       });
     } catch (err) {
       lastError = err;
@@ -686,7 +722,7 @@ async function downloadWhatsAppMedia(message, messageId, descriptor = whatsappMe
 async function repairMissingWhatsAppMedia() {
   if (PLATFORM !== 'wa' || typeof channelClient?.getMessageById !== 'function') return 0;
   const rows = rawDb.prepare(`
-    SELECT m.id, m.message_id,
+    SELECT m.id, m.message_id, m.group_id, m.direction,
            COALESCE(NULLIF(o.native_message_id, ''), m.message_id) AS native_message_id,
            m.media_name, m.media_mime
     FROM messages m
@@ -713,8 +749,21 @@ async function repairMissingWhatsAppMedia() {
   `);
   let repaired = 0;
   for (const row of rows) {
-    const message = await channelClient.getMessageById(String(row.native_message_id || row.message_id)).catch(() => null);
-    if (!message?.hasMedia || typeof message.downloadMedia !== 'function') continue;
+    const candidateIds = [...new Set([
+      row.native_message_id,
+      row.message_id,
+      String(row.message_id || '').startsWith(`${row.group_id}:`)
+        ? String(row.message_id).slice(String(row.group_id).length + 1)
+        : '',
+    ].filter(Boolean).map(String))];
+    let message = null;
+    for (const candidateId of candidateIds) {
+      message = await channelClient.getMessageById(candidateId).catch(() => null);
+      if (message) break;
+    }
+    if (!message || typeof message.downloadMedia !== 'function') {
+      continue;
+    }
     const descriptor = whatsappMediaDescriptor(message) || {
       name: row.media_name,
       mime: row.media_mime,
@@ -730,6 +779,7 @@ async function repairMissingWhatsAppMedia() {
       mediaSize: stored.mediaSize,
       mediaSha256: stored.mediaSha256,
     });
+    recordMessageEvent(row.group_id, row.direction === 'outbound' ? 'outbound_message' : 'inbound');
     repaired += 1;
   }
   if (repaired) recordRuntimeEvent('wa_media_repaired', 'info', `已补回 ${repaired} 条 WA 历史媒体文件`);

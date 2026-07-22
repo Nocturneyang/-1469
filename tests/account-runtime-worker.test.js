@@ -20,6 +20,7 @@ const {
   whatsappChatId,
 } = require('../lib/wa-chat-snapshot');
 const {
+  normalizeWhatsAppDownloadedMedia,
   whatsappMediaDescriptor,
   whatsappMessageMetadata,
   whatsappMessageText,
@@ -99,6 +100,17 @@ async function main() {
     assert.strictEqual(waImageDescriptor.downloadable, true);
     assert.strictEqual(whatsappMessageText(waImageMessage, waImageDescriptor), '图片');
     assert.strictEqual(whatsappMessageMetadata(waImageMessage, waImageDescriptor).media.kind, 'image');
+    const normalizedWaImage = normalizeWhatsAppDownloadedMedia({
+      data: Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).toString('base64'),
+      mimetype: 'application/octet-stream',
+      filename: 'wa-image.bin',
+    });
+    assert.strictEqual(normalizedWaImage.mime, 'image/png');
+    assert.strictEqual(normalizedWaImage.name, 'wa-image.png');
+    assert.deepStrictEqual([...normalizedWaImage.buffer], [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    const workerSource = fs.readFileSync(path.join(__dirname, '..', 'workers', 'account-runtime-worker.js'), 'utf8');
+    assert.match(workerSource, /scheduleMissingWhatsAppMediaRepair\('periodic'\)/);
+    assert.match(workerSource, /WORKBENCH_WA_MEDIA_REPAIR_RETRY_MS/);
     assert.deepStrictEqual(toWhatsAppGroup({
       id: { _serialized: '123@g.us' },
       formattedTitle: 'WA 群',
@@ -132,6 +144,22 @@ async function main() {
     const originalWindow = global.window;
     global.window = {
       require(name) {
+        if (name === 'WAWebWidFactory') {
+          return {
+            createWid(value) {
+              return { _serialized: value, user: String(value).split('@')[0], server: String(value).split('@')[1] };
+            },
+          };
+        }
+        if (name === 'WAWebApiContact') {
+          return {
+            getPhoneNumber(value) {
+              return value?._serialized === '77408698953978@lid'
+                ? { _serialized: '15551234567@c.us', user: '15551234567', server: 'c.us' }
+                : null;
+            },
+          };
+        }
         assert.strictEqual(name, 'WAWebCollections');
         return {
           Chat: {
@@ -156,7 +184,7 @@ async function main() {
             get() { return null; },
             getModelsArray() {
               return [{
-                id: { _serialized: '77408698953978@lid', user: '77408698953978', server: 'lid' },
+                id: { _serialized: '15551234567@c.us', user: '15551234567', server: 'c.us' },
                 name: '真实客户',
                 phoneNumber: { _serialized: '15551234567@c.us', user: '15551234567', server: 'c.us' },
               }];

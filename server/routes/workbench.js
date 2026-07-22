@@ -880,6 +880,7 @@ function createWorkbenchRouter({ workbenchDb, runtimeDb, rawDbPath = DEFAULT_RAW
       platform,
       account,
       groupId,
+      limit: requestedLimit,
       scopedIds: accountData.isolated,
     }));
     const ledgerDurationMs = Date.now() - ledgerStartedAt;
@@ -924,7 +925,15 @@ function createWorkbenchRouter({ workbenchDb, runtimeDb, rawDbPath = DEFAULT_RAW
     try {
       row = rawDb.prepare(`
         SELECT * FROM messages
-        WHERE id = @id AND platform = @platform AND group_id = @groupId
+        WHERE id = @id
+          AND CASE LOWER(platform)
+            WHEN 'whatsapp' THEN 'wa'
+            WHEN 'telegram' THEN 'tg'
+            WHEN 'telegram-user' THEN 'tg'
+            WHEN 'tg-user' THEN 'tg'
+            ELSE LOWER(platform)
+          END = @platform
+          AND group_id = @groupId
       `).get({ id: Number(req.params.messageId), platform, groupId });
     } finally {
       rawDb.close();
@@ -2500,14 +2509,18 @@ function attachActorName(row, actorNames, fieldName) {
   };
 }
 
-function listOutboundMessages(db, { platform, account, groupId, scopedIds = false }) {
+function listOutboundMessages(db, { platform, account, groupId, limit = 80, scopedIds = false }) {
+  const boundedLimit = Math.max(1, Math.min(Number(limit) || 80, 200));
   return db.prepare(`
-    SELECT *
-    FROM outbound_messages
-    WHERE platform = @platform AND account = @account AND group_id = @groupId
+    SELECT * FROM (
+      SELECT *
+      FROM outbound_messages
+      WHERE platform = @platform AND account = @account AND group_id = @groupId
+      ORDER BY created_at DESC, id DESC
+      LIMIT @limit
+    )
     ORDER BY created_at ASC, id ASC
-    LIMIT 200
-  `).all({ platform, account, groupId }).map((row) => mapOutboundRow(row, { scopedIds }));
+  `).all({ platform, account, groupId, limit: boundedLimit }).map((row) => mapOutboundRow(row, { scopedIds }));
 }
 
 function mergeConversationMessages(rawMessages, outboundMessages) {

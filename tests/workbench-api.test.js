@@ -6,6 +6,8 @@ const assert = require('assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const API_TEST_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'workbench-api-data-'));
+process.env.DATA_DIR = API_TEST_DATA_DIR;
 const Database = require('better-sqlite3');
 const { createApp } = require('../server/index');
 const { openWorkbenchDb } = require('../db/workbench-db');
@@ -882,6 +884,12 @@ async function main() {
     const readOutboundUnreadGroups = await requestJson(`${baseUrl}/groups?scope=all&search=${encodeURIComponent('自己消息未读测试群')}`);
     assert.strictEqual(readOutboundUnreadGroups.groups[0].unread_count, 0);
 
+    const inboundMediaRelativePath = path.join('media', '2026-07', 'inbound-preview.png');
+    const inboundMediaPath = path.join(API_TEST_DATA_DIR, inboundMediaRelativePath);
+    const inboundMediaBytes = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    fs.mkdirSync(path.dirname(inboundMediaPath), { recursive: true });
+    fs.writeFileSync(inboundMediaPath, inboundMediaBytes);
+    let inboundMediaRowId;
     const mediaDb = new Database(rawDbPath);
     try {
       mediaDb.prepare(`
@@ -895,6 +903,21 @@ async function main() {
           'wa-media-1.png', 'image/png', 2048, 1782950420, @rawData
         )
       `).run({ rawData: JSON.stringify({ fromMe: true, media: { kind: 'image', name: 'wa-media-1.png', mime: 'image/png', size: 2048 } }) });
+      inboundMediaRowId = mediaDb.prepare(`
+        INSERT INTO messages (
+          platform, receiver_account, message_id, group_id, group_name,
+          sender_id, sender_name, direction, content, has_media,
+          media_path, media_name, media_mime, media_size, timestamp, raw_data
+        ) VALUES (
+          'whatsapp', 'nanya_wa', 'wa-media-stored-1', 'group-1', 'VIP 支持交流群',
+          'customer-1', '客户', 'inbound', '图片', 1,
+          @mediaPath, 'inbound-preview.png', 'image/png', @mediaSize, 1782950421, @rawData
+        )
+      `).run({
+        mediaPath: inboundMediaRelativePath,
+        mediaSize: inboundMediaBytes.length,
+        rawData: JSON.stringify({ fromMe: false, media: { kind: 'image', name: 'inbound-preview.png', mime: 'image/png', size: inboundMediaBytes.length } }),
+      }).lastInsertRowid;
     } finally {
       mediaDb.close();
     }
@@ -906,6 +929,22 @@ async function main() {
     assert.strictEqual(pendingWaMedia.attachments[0].type, 'image/png');
     assert.strictEqual(pendingWaMedia.attachments[0].size, 2048);
     assert.strictEqual(pendingWaMedia.attachments[0].media_url, null);
+    const storedWaMedia = messages.messages.find((message) => message.message_id === 'wa-media-stored-1');
+    assert.ok(storedWaMedia.attachments[0].media_url);
+    const inboundMediaResponse = await fetch(`http://127.0.0.1:${port}${storedWaMedia.attachments[0].media_url}`, {
+      headers: { 'x-operator-id': '1469' },
+    });
+    assert.strictEqual(inboundMediaResponse.status, 200);
+    assert.strictEqual(inboundMediaResponse.headers.get('content-type'), 'image/png');
+    assert.match(inboundMediaResponse.headers.get('content-disposition'), /^inline;/);
+    assert.strictEqual(Number(inboundMediaRowId) > 0, true);
+    assert.deepStrictEqual(Buffer.from(await inboundMediaResponse.arrayBuffer()), inboundMediaBytes);
+    const cleanupMediaDb = new Database(rawDbPath);
+    try {
+      cleanupMediaDb.prepare('DELETE FROM messages WHERE id = ?').run(inboundMediaRowId);
+    } finally {
+      cleanupMediaDb.close();
+    }
     const realtimeReady = await readFirstServerEvent(`${baseUrl}/groups/group-1/events?platform=wa&account=nanya_wa`);
     assert.strictEqual(realtimeReady.status, 200);
     assert.match(realtimeReady.contentType, /^text\/event-stream/);
@@ -1020,6 +1059,21 @@ async function main() {
     assert.strictEqual(mergedRawOutbound.status, 'sent');
     assert.strictEqual(mergedMessages.messages.at(-1).message_id, 'raw-inbound-latest');
 
+    const insertPagedOutbound = workbenchDb.prepare(`
+      INSERT INTO outbound_messages (
+        client_msg_id, platform, account, group_id, chat_id, text, status, created_by, created_at
+      ) VALUES (?, 'wa', 'nanya_wa', 'outbound-page', 'outbound-page', ?, 'sent', 'demo-operator', ?)
+    `);
+    for (let index = 1; index <= 5; index += 1) {
+      insertPagedOutbound.run(
+        `outbound-page-${index}`,
+        `外发分页 ${index}`,
+        `2026-07-02 08:00:0${index}`,
+      );
+    }
+    const latestOutboundPage = await requestJson(`${baseUrl}/groups/outbound-page/messages?platform=wa&account=nanya_wa&limit=2`);
+    assert.deepStrictEqual(latestOutboundPage.messages.map((message) => message.text), ['外发分页 4', '外发分页 5']);
+
     const pagedMessages = await requestJson(`${baseUrl}/groups/group-1/messages?platform=wa&account=nanya_wa&limit=1`);
     assert.strictEqual(pagedMessages.ok, true);
     assert.strictEqual(pagedMessages.paging.has_more, true);
@@ -1123,6 +1177,7 @@ async function main() {
     await close(server);
     workbenchDb.close();
     fs.rmSync(tmpDir, { recursive: true, force: true });
+    fs.rmSync(API_TEST_DATA_DIR, { recursive: true, force: true });
   }
 }
 

@@ -8,7 +8,19 @@
     <div v-if="loading" class="list-state">加载中...</div>
     <div v-else-if="!groups.length" class="list-state">暂无会话</div>
     <template v-else>
-      <button v-for="group in groups" :key="conversationKey(group)" type="button" class="conversation-row" :class="{ selected: selectedId === group.id }" @click="$emit('select', group)">
+      <button
+        v-for="group in groups"
+        :key="conversationKey(group)"
+        type="button"
+        class="conversation-row"
+        :class="{ selected: selectedId === group.id }"
+        @mouseenter="schedulePrefetch(group)"
+        @mouseleave="cancelPrefetch"
+        @focus="schedulePrefetch(group)"
+        @blur="cancelPrefetch"
+        @pointerdown="$emit('prefetch', group)"
+        @click="$emit('select', group)"
+      >
         <div class="platform-icon" :class="platformClass(group.platform)">{{ platformShort(group.platform) }}</div>
         <div class="conversation-copy">
           <div class="row-head"><strong :title="displayName(group)">{{ displayName(group) }}</strong><time>{{ formatTime(group.last_message_time) }}</time></div>
@@ -30,7 +42,8 @@ import { Refresh } from '@element-plus/icons-vue';
 import { formatTime, platformClass } from '../utils/format';
 
 defineProps({ groups: { type: Array, default: () => [] }, loading: { type: Boolean, default: false }, selectedId: { type: String, default: '' }, scopeLabel: { type: String, default: '全部' }, search: { type: String, default: '' } });
-defineEmits(['select', 'refresh', 'search-change']);
+const emit = defineEmits(['select', 'prefetch', 'refresh', 'search-change']);
+let prefetchTimer = null;
 function platformShort(platform) { return platform === 'wa' ? 'W' : platform === 'tg' ? 'T' : '?'; }
 function conversationKey(group) { return JSON.stringify([group.platform || '', group.account || '', group.group_id || '']); }
 function preview(group) { const sender = group.last_sender_name ? `${group.last_sender_name}: ` : ''; return `${sender}${group.last_content || (group.has_media ? '[媒体消息]' : '')}`.trim() || '[空消息]'; }
@@ -42,4 +55,12 @@ function isWorkbenchTag(label) { return Number(label?.is_manual) === 1 || String
 function tagClass(label) { return isWorkbenchTag(label) ? 'workbench' : 'channel'; }
 function labelText(label) { const name = label?.name || label?.native_label_id || label?.native_group_id || ''; return isWorkbenchTag(label) && label?.parent_name ? `${label.parent_name}/${name}` : name; }
 function statusText(status) { return ({ pending: '待处理', in_progress: '跟进中', resolved: '已解决', paused: '暂停' })[status] || '待处理'; }
+function schedulePrefetch(group) {
+  cancelPrefetch();
+  prefetchTimer = window.setTimeout(() => emit('prefetch', group), 120);
+}
+function cancelPrefetch() {
+  if (prefetchTimer) window.clearTimeout(prefetchTimer);
+  prefetchTimer = null;
+}
 </script>
