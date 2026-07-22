@@ -102,7 +102,7 @@ spec:
             - name: WORKBENCH_ACCOUNT_WORKER_MAX_WORKERS
               value: "5"
             - name: WORKBENCH_ACCOUNT_WORKER_MAX_WA
-              value: "1"
+              value: "2"
             - name: WORKBENCH_ACCOUNT_WORKER_MAX_TG
               value: "4"
             - name: WORKBENCH_CHANNEL_RUNTIME_REQUIRED
