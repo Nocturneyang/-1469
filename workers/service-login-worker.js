@@ -26,6 +26,7 @@ const {
   updateServiceAccountLoginRequest,
 } = require('../lib/service-account-login-store');
 const { installProcessGuards, logEvent } = require('../lib/runtime-observability');
+const { boundedLoginConcurrency, hasLoginCapacity } = require('../lib/login-capacity');
 
 const DATA_DIR = resolveDataDir();
 const WORKER_PLATFORM = normalizeAccountPlatform(process.env.WORKBENCH_WORKER_PLATFORM);
@@ -53,6 +54,8 @@ const TG_SESSION_DIR = ACCOUNT_SCOPED && WORKER_PLATFORM === 'tg'
 const TERMINAL_STATUSES = new Set(['authenticated', 'failed', 'expired', 'canceled']);
 const LEASE_TTL_MS = Number(process.env.WORKBENCH_WORKER_LEASE_TTL_MS || 45000);
 const WA_LOGIN_HANDOFF_DELAY_MS = Number(process.env.WORKBENCH_LOGIN_HANDOFF_DELAY_MS || 5000);
+const MAX_CONCURRENT_WA_LOGINS = boundedLoginConcurrency(process.env.WORKBENCH_LOGIN_MAX_CONCURRENT_WA, 1);
+const MAX_CONCURRENT_TG_LOGINS = boundedLoginConcurrency(process.env.WORKBENCH_LOGIN_MAX_CONCURRENT_TG, 1);
 const WORKER_HOLDER_ID = process.env.HOSTNAME || `${process.pid}`;
 const WORKER_RUN_ID = `${Date.now()}-${process.pid}`;
 
@@ -61,6 +64,7 @@ const runtimeDb = openRuntimeDb(ACCOUNT_SCOPED
   : path.resolve(process.env.WORKBENCH_RUNTIME_DB_PATH || DEFAULT_RUNTIME_DB_PATH));
 let pollTimer = null;
 let stopping = false;
+let tickInFlight = false;
 installProcessGuards({
   processName: 'service-login-worker',
   runtimeDb,
@@ -74,10 +78,10 @@ fs.mkdirSync(OUTBOX_DIR, { recursive: true });
 fs.mkdirSync(WA_AUTH_DATA_PATH, { recursive: true });
 fs.mkdirSync(TG_SESSION_DIR, { recursive: true });
 
-log(`started, outbox=${OUTBOX_DIR}${ACCOUNT_SCOPED ? `, account=${WORKER_PLATFORM}:${WORKER_ACCOUNT}` : ''}${ACCOUNT_DB_MODE ? ', account-db-mode=isolated' : ''}`);
-tick().catch((err) => log(`initial tick failed: ${err.stack || err.message}`));
+log(`started, outbox=${OUTBOX_DIR}${ACCOUNT_SCOPED ? `, account=${WORKER_PLATFORM}:${WORKER_ACCOUNT}` : ''}${ACCOUNT_DB_MODE ? ', account-db-mode=isolated' : ''}, loginConcurrency=wa:${MAX_CONCURRENT_WA_LOGINS}/tg:${MAX_CONCURRENT_TG_LOGINS}`);
+runTick().catch((err) => log(`initial tick failed: ${err.stack || err.message}`));
 pollTimer = setInterval(() => {
-  tick().catch((err) => log(`tick failed: ${err.stack || err.message}`));
+  runTick().catch((err) => log(`tick failed: ${err.stack || err.message}`));
 }, POLL_INTERVAL_MS);
 
 process.on('SIGTERM', shutdown);
@@ -89,6 +93,16 @@ async function tick() {
   expireRequests();
   await processDoorbells();
   resumeWaitingWaRequests();
+}
+
+async function runTick() {
+  if (stopping || tickInFlight) return;
+  tickInFlight = true;
+  try {
+    await tick();
+  } finally {
+    tickInFlight = false;
+  }
 }
 
 function reportProcessHeartbeat(status) {
@@ -244,6 +258,23 @@ function startWaLogin(request) {
   const previous = activeWaByAccount.get(request.account);
   if (previous && previous.requestId !== request.request_id) {
     stopWaRequest(previous.requestId);
+    patchRequest(request.request_id, {
+      status: 'waiting_qr',
+      qr_payload: '',
+      error_message: '',
+      worker_message: '正在释放该账号上一条 WA 登录任务，释放后自动继续',
+    }, request);
+    return;
+  }
+
+  if (!hasLoginCapacity(activeWaByRequest.size, MAX_CONCURRENT_WA_LOGINS)) {
+    patchRequest(request.request_id, {
+      status: 'waiting_qr',
+      qr_payload: '',
+      error_message: '',
+      worker_message: `WA 登录并发已达上限 ${MAX_CONCURRENT_WA_LOGINS}，正在排队`,
+    }, request);
+    return;
   }
 
   if (waitForAccountRuntimeRelease(request)) return;
@@ -1149,13 +1180,24 @@ function mapRequestRow(row) {
 async function stopWaRequest(requestId) {
   const state = activeWaByRequest.get(requestId);
   if (!state) return;
-  activeWaByRequest.delete(requestId);
-  if (activeWaByAccount.get(state.account)?.requestId === requestId) {
-    activeWaByAccount.delete(state.account);
-  }
+  if (state.stopPromise) return state.stopPromise;
+  state.stopPromise = (async () => {
+    try {
+      await state.client.destroy();
+    } catch (_) {
+      // The login slot is released even if Chromium has already exited.
+    } finally {
+      activeWaByRequest.delete(requestId);
+      if (activeWaByAccount.get(state.account)?.requestId === requestId) {
+        activeWaByAccount.delete(state.account);
+      }
+    }
+  })();
   try {
-    await state.client.destroy();
-  } catch (_) {}
+    await state.stopPromise;
+  } finally {
+    state.stopPromise = null;
+  }
 }
 
 function archiveDoorbell(filePath, bucket) {

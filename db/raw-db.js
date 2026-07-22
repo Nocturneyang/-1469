@@ -221,6 +221,43 @@ function setServiceAccountSendEnabled({ dbPath = DEFAULT_RAW_DB_PATH, platform, 
   }
 }
 
+function setServiceAccountStatus({ dbPath = DEFAULT_RAW_DB_PATH, platform, account, status } = {}) {
+  const normalizedPlatform = normalizePlatform(platform);
+  const normalizedAccount = String(account || '').trim();
+  const normalizedStatus = String(status || '').trim().toLowerCase();
+  if (!['wa', 'tg'].includes(normalizedPlatform)) throw new Error('platform must be one of wa, tg');
+  if (!normalizedAccount) throw new Error('account is required');
+  if (!normalizedStatus) throw new Error('status is required');
+  const db = ensureRawDb(dbPath);
+  try {
+    const result = db.transaction(() => {
+      const accountResult = db.prepare(`
+        UPDATE accounts
+        SET status = @status, session_status = @status, updated_at = CURRENT_TIMESTAMP
+        WHERE id = @account AND platform = @platform
+      `).run({ platform: normalizedPlatform, account: normalizedAccount, status: normalizedStatus });
+      const registryResult = db.prepare(`
+        UPDATE channel_account_registry
+        SET status = @status, updated_at = CURRENT_TIMESTAMP
+        WHERE account = @account AND platform = @platform
+      `).run({ platform: normalizedPlatform, account: normalizedAccount, status: normalizedStatus });
+      return {
+        updated_account_rows: accountResult.changes,
+        updated_registry_rows: registryResult.changes,
+      };
+    })();
+    if (!result.updated_account_rows && !result.updated_registry_rows) return null;
+    return {
+      platform: normalizedPlatform,
+      account: normalizedAccount,
+      status: normalizedStatus,
+      ...result,
+    };
+  } finally {
+    db.close();
+  }
+}
+
 function deleteServiceAccountProfile({
   dbPath = DEFAULT_RAW_DB_PATH,
   platform,
@@ -428,6 +465,7 @@ module.exports = {
   DEFAULT_RAW_DB_PATH,
   deleteServiceAccountProfile,
   ensureRawDb,
+  setServiceAccountStatus,
   upsertRawMessage,
   upsertServiceAccountProfile,
   setServiceAccountSendEnabled,

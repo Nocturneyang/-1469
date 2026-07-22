@@ -93,11 +93,24 @@
           <el-button v-if="account.send_breaker_active" size="small" type="danger" @click="releaseBreaker(account)">
             人工解除熔断
           </el-button>
-        </div>
-
-        <div v-if="!isReady(account)" class="service-access-card-actions">
-          <el-button type="danger" plain size="small" @click="$emit('delete-account', account)">
-            删除残留账号
+          <el-button
+            size="small"
+            plain
+            :loading="isLifecycleBusy(account, 'logout')"
+            :disabled="!canLogout(account) || isAnyLifecycleBusy(account)"
+            @click="logoutAccount(account)"
+          >
+            {{ accountStatus(account) === 'logout_requested' ? '退出中' : '退出登录' }}
+          </el-button>
+          <el-button
+            type="danger"
+            plain
+            size="small"
+            :loading="isLifecycleBusy(account, 'delete')"
+            :disabled="isAnyLifecycleBusy(account)"
+            @click="deleteAccount(account)"
+          >
+            彻底删除
           </el-button>
         </div>
       </article>
@@ -112,8 +125,14 @@
 <script setup>
 import { computed, ref } from 'vue';
 import ElMessage from 'element-plus/es/components/message/index.mjs';
+import ElMessageBox from 'element-plus/es/components/message-box/index.mjs';
 import { platformClass } from '../utils/format';
-import { releaseServiceAccountBreaker, updateServiceAccountSettings } from '../api';
+import {
+  deleteServiceAccount,
+  logoutServiceAccount,
+  releaseServiceAccountBreaker,
+  updateServiceAccountSettings,
+} from '../api';
 
 const props = defineProps({
   accounts: {
@@ -130,10 +149,12 @@ const props = defineProps({
   },
 });
 
-const emit = defineEmits(['back', 'open-login', 'delete-account', 'settings-change']);
+const emit = defineEmits(['back', 'open-login', 'account-deleted', 'settings-change', 'refresh-accounts']);
 
 const readyStatuses = new Set(['online', 'authenticated', 'ready', 'monitoring', 'healthy']);
+const deletableStatuses = new Set(['logged_out', 'disconnected', 'requires_login', 'auth_failed', 'failed', 'logout_failed']);
 const savingTypes = ref(false);
+const lifecycleBusy = ref(new Set());
 
 const readyCount = computed(() => props.accounts.filter((account) => isReady(account)).length);
 const sendEnabledCount = computed(() => props.accounts.filter((account) => canSend(account)).length);
@@ -162,9 +183,105 @@ function statusType(account) {
 }
 
 function statusText(account) {
+  if (accountStatus(account) === 'logout_requested') return '退出中';
+  if (accountStatus(account) === 'logged_out') return '已退出';
   if (isReady(account)) return '已接入';
   if (account.account_status) return account.account_status;
   return '待接入';
+}
+
+function accountStatus(account) {
+  return String(account?.account_status || '').trim().toLowerCase();
+}
+
+function canLogout(account) {
+  const status = accountStatus(account);
+  return status !== 'logout_requested' && status !== 'logged_out' && status !== 'deleted';
+}
+
+function canPermanentlyDelete(account) {
+  const status = accountStatus(account);
+  return deletableStatuses.has(status) || (!status && !isReady(account));
+}
+
+function lifecycleKey(account, action) {
+  return `${account.platform}:${account.account}:${action}`;
+}
+
+function isLifecycleBusy(account, action) {
+  return lifecycleBusy.value.has(lifecycleKey(account, action));
+}
+
+function isAnyLifecycleBusy(account) {
+  return isLifecycleBusy(account, 'logout') || isLifecycleBusy(account, 'delete');
+}
+
+function setLifecycleBusy(account, action, busy) {
+  const next = new Set(lifecycleBusy.value);
+  const key = lifecycleKey(account, action);
+  if (busy) next.add(key);
+  else next.delete(key);
+  lifecycleBusy.value = next;
+}
+
+async function logoutAccount(account) {
+  const label = account.account_display_name || account.account;
+  try {
+    await ElMessageBox.confirm(
+      `退出 ${label} 的渠道登录？历史消息、分组和账号配置都会保留，之后可重新扫码登录。`,
+      '退出登录',
+      { confirmButtonText: '确认退出', cancelButtonText: '取消', type: 'warning' },
+    );
+    setLifecycleBusy(account, 'logout', true);
+    const result = await logoutServiceAccount(account.platform, account.account);
+    emit('settings-change', {
+      ...account,
+      account_status: result.status,
+      is_connected: false,
+      can_send: false,
+    });
+    ElMessage.success(result.worker_active ? '已提交退出请求，账号正在安全退出' : '账号已退出，历史消息和配置已保留');
+    if (result.worker_active) {
+      window.setTimeout(() => emit('refresh-accounts'), 12000);
+    }
+  } catch (err) {
+    if (err === 'cancel' || err === 'close') return;
+    ElMessage.error(err.response?.data?.error || '退出登录失败');
+  } finally {
+    setLifecycleBusy(account, 'logout', false);
+  }
+}
+
+async function deleteAccount(account) {
+  const label = account.account_display_name || account.account;
+  if (!canPermanentlyDelete(account)) {
+    ElMessage.warning(accountStatus(account) === 'logout_requested' ? '账号仍在退出中，请稍后再删除' : '请先退出登录，再彻底删除账号');
+    return;
+  }
+  try {
+    await ElMessageBox.confirm(
+      `彻底删除 ${label}（${account.account}）？这会删除该账号的所有历史消息、媒体、分组、配置、登录任务和 session。`,
+      '彻底删除账号',
+      { confirmButtonText: '继续删除', cancelButtonText: '取消', type: 'error' },
+    );
+    await ElMessageBox.confirm(
+      '再次确认：所有历史消息及配置都会永久删除且无法恢复。是否继续？',
+      '最终确认',
+      { confirmButtonText: '永久删除全部数据', cancelButtonText: '取消', type: 'error' },
+    );
+    setLifecycleBusy(account, 'delete', true);
+    await deleteServiceAccount(account.platform, account.account, {
+      confirm_delete_history: true,
+      confirm_account: account.account,
+    });
+    emit('account-deleted', account);
+    ElMessage.success('服务账号及其全部历史消息和配置已彻底删除');
+  } catch (err) {
+    if (err === 'cancel' || err === 'close') return;
+    ElMessage.error(err.response?.data?.error || '彻底删除失败');
+  } finally {
+    setLifecycleBusy(account, 'delete', false);
+  }
 }
 
 function platformShort(platform) {

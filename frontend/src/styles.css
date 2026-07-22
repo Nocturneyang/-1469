@@ -650,7 +650,13 @@ button {
 
 .service-access-card-actions {
   display: flex;
+  flex-wrap: wrap;
   justify-content: flex-end;
+  gap: 8px;
+}
+
+.service-access-card-actions .el-button + .el-button {
+  margin-left: 0;
 }
 
 .service-access-empty {

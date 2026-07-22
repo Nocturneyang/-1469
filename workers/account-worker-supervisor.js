@@ -69,7 +69,13 @@ async function discover() {
   const desiredKeys = new Set(desired.map((ref) => accountKey(ref.platform, ref.account)));
 
   for (const key of [...workers.keys()]) {
-    if (!desiredKeys.has(key)) stopWorker(key, 'no longer desired');
+    if (!desiredKeys.has(key)) {
+      const current = workers.get(key);
+      const control = current?.ref ? readAccountControl(current.ref) : null;
+      stopWorker(key, 'no longer desired', {
+        logout: String(control?.status || '').toLowerCase() === 'logout_requested',
+      });
+    }
   }
 
   for (const ref of desired) {
@@ -169,6 +175,7 @@ function startWorker(ref) {
       assertChromeMemoryAvailable({ env: process.env, log: (message) => log(`${key} ${message}`) });
     } catch (err) {
       workers.set(key, {
+        ref,
         child: null,
         startedAt: 0,
         nextStartAt: Date.now() + RESTART_DELAY_MS,
@@ -197,6 +204,7 @@ function startWorker(ref) {
   });
   const previous = workers.get(key) || {};
   workers.set(key, {
+    ref,
     child,
     startedAt: Date.now(),
     nextStartAt: 0,
@@ -215,6 +223,7 @@ function startWorker(ref) {
     const delay = Math.min(RESTART_MAX_DELAY_MS, Math.round(RESTART_DELAY_MS * (1.5 ** Math.max(0, restartCount - 1))));
     if (restartCount > RESTART_LIMIT) {
       workers.set(key, {
+        ref,
         child: null,
         startedAt: current.startedAt,
         nextStartAt: Number.MAX_SAFE_INTEGER,
@@ -233,6 +242,7 @@ function startWorker(ref) {
       return;
     }
     workers.set(key, {
+      ref,
       child: null,
       startedAt: current.startedAt,
       nextStartAt: now + delay,
@@ -258,16 +268,20 @@ function updateWorkerRestartStatus(ref, status, reason) {
   }
 }
 
-function stopWorker(key, reason) {
+function stopWorker(key, reason, { logout = false } = {}) {
   const current = workers.get(key);
   if (!current) return;
   workers.delete(key);
   if (current.child && !current.child.killed) {
     log(`stopping worker ${key}: ${reason}`);
-    current.child.kill('SIGTERM');
+    if (logout && current.child.connected) {
+      current.child.send({ type: 'account-logout' });
+    } else {
+      current.child.kill('SIGTERM');
+    }
     setTimeout(() => {
       if (!current.child.killed) current.child.kill('SIGKILL');
-    }, 10000).unref();
+    }, logout ? 30000 : 10000).unref();
   }
 }
 

@@ -10,6 +10,7 @@ const indexSource = fs.readFileSync(path.join(root, 'frontend/index.html'), 'utf
 const railSource = fs.readFileSync(path.join(root, 'frontend/src/components/ServiceAccountRail.vue'), 'utf8');
 const topFiltersSource = fs.readFileSync(path.join(root, 'frontend/src/components/TopFilters.vue'), 'utf8');
 const permissionConfigSource = fs.readFileSync(path.join(root, 'frontend/src/components/PermissionConfig.vue'), 'utf8');
+const serviceAccountAccessSource = fs.readFileSync(path.join(root, 'frontend/src/components/ServiceAccountAccess.vue'), 'utf8');
 const stylesSource = fs.readFileSync(path.join(root, 'frontend/src/styles.css'), 'utf8');
 const componentDir = path.join(root, 'frontend/src/components');
 const componentSources = fs.readdirSync(componentDir)
@@ -52,5 +53,10 @@ assert.match(permissionConfigSource, /const result = await saveAdminUserAccess\(
 assert.ok(!permissionConfigSource.includes('role_permissions: Object.fromEntries'), 'account save must not include global role permission drafts');
 assert.match(permissionConfigSource, /scopes: scopeDraft\.value\.map/, 'account save must include service-account scopes');
 assert.match(permissionConfigSource, /await saveRolePermissions\(role\.code,/, 'role permissions must save through their dedicated API');
+assert.ok(serviceAccountAccessSource.includes('退出登录'), 'service accounts must expose a logout-only action');
+assert.ok(serviceAccountAccessSource.includes('彻底删除'), 'service accounts must expose a permanent deletion action');
+assert.match(serviceAccountAccessSource, /await ElMessageBox\.confirm\([\s\S]*await ElMessageBox\.confirm\(/, 'permanent account deletion must require two confirmations');
+assert.ok(serviceAccountAccessSource.includes('所有历史消息及配置都会永久删除且无法恢复'), 'permanent deletion must name the full destructive scope');
+assert.match(serviceAccountAccessSource, /confirm_delete_history:\s*true/, 'permanent deletion must send the backend confirmation guard');
 
 console.log('[frontend] component registrations and brand contract verified');

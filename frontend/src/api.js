@@ -246,8 +246,15 @@ export async function deleteServiceAccountLoginRequest(requestId) {
   return data.request;
 }
 
-export async function deleteServiceAccount(platform, account) {
-  const { data } = await api.delete(`/accounts/${encodeURIComponent(platform)}/${encodeURIComponent(account)}`);
+export async function logoutServiceAccount(platform, account) {
+  const { data } = await api.post(`/accounts/${encodeURIComponent(platform)}/${encodeURIComponent(account)}/logout`);
+  return data.account;
+}
+
+export async function deleteServiceAccount(platform, account, confirmation = {}) {
+  const { data } = await api.delete(`/accounts/${encodeURIComponent(platform)}/${encodeURIComponent(account)}`, {
+    data: confirmation,
+  });
   return data;
 }
 

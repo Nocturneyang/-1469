@@ -100,11 +100,15 @@ spec:
             - name: WORKBENCH_ACCOUNT_DATA_DIR
               value: /data/accounts
             - name: WORKBENCH_ACCOUNT_WORKER_MAX_WORKERS
-              value: "5"
+              value: "13"
             - name: WORKBENCH_ACCOUNT_WORKER_MAX_WA
-              value: "2"
+              value: "5"
             - name: WORKBENCH_ACCOUNT_WORKER_MAX_TG
-              value: "4"
+              value: "8"
+            - name: WORKBENCH_LOGIN_MAX_CONCURRENT_WA
+              value: "1"
+            - name: WORKBENCH_LOGIN_MAX_CONCURRENT_TG
+              value: "1"
             - name: WORKBENCH_CHANNEL_RUNTIME_REQUIRED
               value: "1"
             - name: WORKBENCH_METRICS_ENABLED
@@ -164,7 +168,7 @@ spec:
               memory: 1Gi
             limits:
               cpu: "2"
-              memory: 3Gi
+              memory: 8Gi
       volumes:
         - name: data
           persistentVolumeClaim:

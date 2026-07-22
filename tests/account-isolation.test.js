@@ -177,8 +177,49 @@ async function main() {
     assertAccountWorkbenchRow(accountDataDir, 'wa', 'wa-isolated', 'group_assignments', 1);
     assertGlobalWorkbenchRowCount(workbenchDbPath, 'group_assignments', 0);
 
+    const isolatedSessionDir = path.join(accountDataDir, 'wa', 'wa-isolated', 'session');
+    const sessionMarker = path.join(isolatedSessionDir, 'session-marker.json');
+    fs.writeFileSync(sessionMarker, '{"session":true}\n');
+    setAccountRuntimeLease(accountDataDir, 'wa', 'wa-isolated', true);
+    const pendingLogout = await requestJson(`${baseUrl}/accounts/wa/${encodeURIComponent('wa-isolated')}/logout`, {
+      method: 'POST',
+    });
+    assert.strictEqual(pendingLogout.account.status, 'logout_requested');
+    assert.strictEqual(pendingLogout.account.worker_active, true);
+    assert.strictEqual(fs.existsSync(sessionMarker), true);
+    assertProfileInAccountDb(accountDataDir, 'wa', 'wa-isolated', 'logout_requested');
+    const rejectedActiveDelete = await requestRaw(`${baseUrl}/accounts/wa/${encodeURIComponent('wa-isolated')}`, {
+      method: 'DELETE',
+      body: {
+        confirm_delete_history: true,
+        confirm_account: 'wa-isolated',
+      },
+    });
+    assert.strictEqual(rejectedActiveDelete.status, 409);
+    setAccountRuntimeLease(accountDataDir, 'wa', 'wa-isolated', false);
+    const loggedOutAccount = await requestJson(`${baseUrl}/accounts/wa/${encodeURIComponent('wa-isolated')}/logout`, {
+      method: 'POST',
+    });
+    assert.strictEqual(loggedOutAccount.account.status, 'logged_out');
+    assert.strictEqual(loggedOutAccount.account.worker_active, false);
+    assert.strictEqual(fs.existsSync(sessionMarker), false);
+    assert.strictEqual(fs.existsSync(isolatedSessionDir), true);
+    assertProfileInAccountDb(accountDataDir, 'wa', 'wa-isolated', 'logged_out');
+    assertAccountRawRow(accountDataDir, 'wa', 'wa-isolated', 'messages', 1);
+    assertAccountWorkbenchRow(accountDataDir, 'wa', 'wa-isolated', 'outbound_messages', 2);
+
+    const rejectedUnconfirmedDelete = await requestRaw(`${baseUrl}/accounts/wa/${encodeURIComponent('wa-isolated')}`, {
+      method: 'DELETE',
+    });
+    assert.strictEqual(rejectedUnconfirmedDelete.status, 400);
+    assert.strictEqual(fs.existsSync(path.join(accountDataDir, 'wa', 'wa-isolated')), true);
+
     const removedAccount = await requestJson(`${baseUrl}/accounts/wa/${encodeURIComponent('wa-isolated')}`, {
       method: 'DELETE',
+      body: {
+        confirm_delete_history: true,
+        confirm_account: 'wa-isolated',
+      },
     });
     assert.strictEqual(removedAccount.ok, true);
     assert.strictEqual(removedAccount.account, 'wa-isolated');
@@ -282,8 +323,45 @@ function setAccountSendEnabled(accountDataDir, platform, account, sendEnabled) {
   }
 }
 
+function setAccountRuntimeLease(accountDataDir, platform, account, active) {
+  const db = new Database(accountDbPath(accountDataDir, platform, account, 'runtime.sqlite'));
+  try {
+    if (!active) {
+      db.prepare(`DELETE FROM account_worker_leases WHERE platform = ? AND account = ?`).run(platform, account);
+      return;
+    }
+    const now = new Date();
+    db.prepare(`
+      INSERT INTO account_worker_leases (
+        platform, account, lease_name, holder_id, worker_role, run_id, pid,
+        acquired_at, renewed_at, expires_at, metadata_json
+      )
+      VALUES (?, ?, 'account-runtime', 'test-holder', 'account-runtime', 'test-run', 123,
+        ?, ?, ?, '{}')
+    `).run(
+      platform,
+      account,
+      now.toISOString(),
+      now.toISOString(),
+      new Date(now.getTime() + 60000).toISOString(),
+    );
+  } finally {
+    db.close();
+  }
+}
+
 function assertAccountWorkbenchRow(accountDataDir, platform, account, tableName, expectedCount) {
   const db = new Database(accountDbPath(accountDataDir, platform, account, 'workbench.sqlite'), { readonly: true });
+  try {
+    const row = db.prepare(`SELECT COUNT(*) AS count FROM ${tableName}`).get();
+    assert.strictEqual(row.count, expectedCount);
+  } finally {
+    db.close();
+  }
+}
+
+function assertAccountRawRow(accountDataDir, platform, account, tableName, expectedCount) {
+  const db = new Database(accountDbPath(accountDataDir, platform, account, 'raw.sqlite'), { readonly: true });
   try {
     const row = db.prepare(`SELECT COUNT(*) AS count FROM ${tableName}`).get();
     assert.strictEqual(row.count, expectedCount);
@@ -336,6 +414,18 @@ async function requestJson(url, options = {}) {
   const payload = await response.json();
   assert.ok(response.ok, `${response.status} ${JSON.stringify(payload)}`);
   return payload;
+}
+
+async function requestRaw(url, options = {}) {
+  return fetch(url, {
+    method: options.method || 'GET',
+    headers: {
+      'content-type': 'application/json',
+      'x-operator-id': '1469',
+      ...(options.headers || {}),
+    },
+    body: options.body ? JSON.stringify(options.body) : undefined,
+  });
 }
 
 main().catch((err) => {

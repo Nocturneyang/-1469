@@ -152,6 +152,13 @@ sendTimer = setInterval(() => {
 
 process.on('SIGTERM', shutdown);
 process.on('SIGINT', shutdown);
+process.on('message', (message) => {
+  if (!message || message.type !== 'account-logout') return;
+  shutdown('account-logout', { logout: true }).catch((err) => {
+    log(`account logout failed: ${err.stack || err.message}`);
+    process.exit(1);
+  });
+});
 
 async function start() {
   renewLease();
@@ -1360,10 +1367,10 @@ function upsertProfile(status, displayName) {
   });
 }
 
-async function shutdown(_reason = 'signal', { exitCode = 0 } = {}) {
+async function shutdown(_reason = 'signal', { exitCode = 0, logout = false } = {}) {
   if (stopping) return;
   stopping = true;
-  log('stopping');
+  log(logout ? 'logging out' : 'stopping');
   clearInterval(heartbeatTimer);
   clearInterval(sendTimer);
   clearTimeout(outboundDrainTimer);
@@ -1371,15 +1378,30 @@ async function shutdown(_reason = 'signal', { exitCode = 0 } = {}) {
   try {
     const drained = await outboundConsumer.drainCurrent(30000);
     if (!drained) log('outbound drain timed out; lease recovery will pause the unresolved task');
-    if (PLATFORM === 'wa' && channelClient && typeof channelClient.destroy === 'function') {
-      await channelClient.destroy();
-    } else if (channelClient && typeof channelClient.close === 'function') {
-      await channelClient.close();
-    } else if (channelClient && typeof channelClient.disconnect === 'function') {
-      await channelClient.disconnect();
+    if (logout) {
+      reportHeartbeat('logout_requested', 'logging_out', '正在退出渠道登录');
+      try {
+        await logoutChannelClient();
+      } catch (err) {
+        log(`remote channel logout failed; clearing local session: ${err.message}`);
+        recordRuntimeEvent('remote_logout_failed', 'warning', err.message);
+      }
+      clearLocalSession();
+      channelReady = false;
+      upsertProfile('logged_out');
+      reportHeartbeat('logged_out', 'logged_out', '渠道登录已退出；历史消息和配置已保留');
+      recordRuntimeEvent('account_logged_out', 'info', '服务账号已退出登录');
+    } else {
+      await closeChannelClient();
     }
   } catch (err) {
     log(`channel shutdown failed: ${err.message}`);
+    if (logout) {
+      upsertProfile('logout_failed');
+      reportHeartbeat('error', 'logout_failed', err.message);
+      recordRuntimeEvent('account_logout_failed', 'error', err.message);
+      exitCode = 1;
+    }
   } finally {
     releaseLease();
   }
@@ -1388,6 +1410,57 @@ async function shutdown(_reason = 'signal', { exitCode = 0 } = {}) {
   runtimeDb.close();
   workbenchDb.close();
   process.exit(exitCode);
+}
+
+async function logoutChannelClient() {
+  if (!channelClient) return;
+  if (channelKind === 'wa') {
+    if (typeof channelClient.logout === 'function') await channelClient.logout();
+    if (typeof channelClient.destroy === 'function') {
+      try {
+        await channelClient.destroy();
+      } catch (_) {}
+    }
+    return;
+  }
+  if (channelKind === 'tg-user') {
+    try {
+      const { Api } = require('telegram');
+      if (Api?.auth?.LogOut && typeof channelClient.invoke === 'function') {
+        await channelClient.invoke(new Api.auth.LogOut());
+      }
+    } finally {
+      if (typeof channelClient.disconnect === 'function') await channelClient.disconnect();
+    }
+    return;
+  }
+  if (channelKind === 'tg-bot' && typeof channelClient.stopPolling === 'function') {
+    await channelClient.stopPolling({ cancel: true });
+    return;
+  }
+  await closeChannelClient();
+}
+
+async function closeChannelClient() {
+  if (!channelClient) return;
+  if (PLATFORM === 'wa' && typeof channelClient.destroy === 'function') {
+    await channelClient.destroy();
+  } else if (typeof channelClient.close === 'function') {
+    await channelClient.close();
+  } else if (typeof channelClient.disconnect === 'function') {
+    await channelClient.disconnect();
+  }
+}
+
+function clearLocalSession() {
+  const accountDir = path.resolve(ACCOUNT_PATHS.accountDir);
+  const sessionDir = path.resolve(SESSION_DIR);
+  const relative = path.relative(accountDir, sessionDir);
+  if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) {
+    throw new Error(`refusing to clear session outside account directory: ${sessionDir}`);
+  }
+  fs.rmSync(sessionDir, { recursive: true, force: true });
+  fs.mkdirSync(sessionDir, { recursive: true });
 }
 
 function recordMessageEvent(groupId, eventType) {

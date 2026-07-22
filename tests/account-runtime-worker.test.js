@@ -9,6 +9,7 @@ const { listGroups: listRawGroups, listMessagesPage } = require('../db/raw-messa
 const { openWorkbenchDb } = require('../db/workbench-db');
 const { normalizeChannelLabelName, replaceChannelSnapshot } = require('../lib/channel-sync-store');
 const { channelSyncRetryDelay } = require('../lib/channel-sync-retry');
+const { boundedLoginConcurrency, hasLoginCapacity } = require('../lib/login-capacity');
 const {
   readWhatsAppChatSnapshot,
   readNativeWhatsAppChatSnapshot,
@@ -36,6 +37,11 @@ async function main() {
   const accountDataDir = path.join(tmpDir, 'accounts');
 
   try {
+    assert.strictEqual(boundedLoginConcurrency(undefined), 1);
+    assert.strictEqual(boundedLoginConcurrency('5'), 5);
+    assert.strictEqual(boundedLoginConcurrency('0'), 1);
+    assert.strictEqual(hasLoginCapacity(0, 1), true);
+    assert.strictEqual(hasLoginCapacity(1, 1), false);
     assert.strictEqual(channelSyncRetryDelay(1), 30000);
     assert.strictEqual(channelSyncRetryDelay(2), 60000);
     assert.strictEqual(channelSyncRetryDelay(3), 120000);

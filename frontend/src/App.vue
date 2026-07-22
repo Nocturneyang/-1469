@@ -17,7 +17,8 @@
     :can-manage="Boolean(portalAccess.can_admin)"
     @back="goWorkbench"
     @open-login="openServiceLogin"
-    @delete-account="handleDeleteServiceAccount"
+    @account-deleted="handleServiceAccountDeleted"
+    @refresh-accounts="refreshServiceAccounts"
     @settings-change="handleServiceAccountSettingsChange"
   />
 
@@ -126,7 +127,6 @@
 <script setup>
 import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import ElMessage from 'element-plus/es/components/message/index.mjs';
-import ElMessageBox from 'element-plus/es/components/message-box/index.mjs';
 import ServiceAccountRail from './components/ServiceAccountRail.vue';
 import TopFilters from './components/TopFilters.vue';
 import ConversationList from './components/ConversationList.vue';
@@ -145,7 +145,6 @@ import {
   createGroupNote,
   createManualGroup,
   createReply,
-  deleteServiceAccount,
   fetchAccounts,
   fetchGroupWorkspace,
   fetchGroupNotes,
@@ -757,24 +756,16 @@ function clearServiceAccount() {
   };
 }
 
-async function handleDeleteServiceAccount(account) {
-  if (!account || isConnectedAccount(account)) return;
-  const label = account.account_display_name || account.account;
-  try {
-    await ElMessageBox.confirm(
-      `将永久删除 ${label}（${account.account}）及其登录任务、会话数据和本地 session。此操作不可恢复。`,
-      '删除未接入账号',
-      { confirmButtonText: '永久删除', cancelButtonText: '取消', type: 'warning' },
-    );
-    await deleteServiceAccount(account.platform, account.account);
-    accounts.value = accounts.value.filter((item) => accountKey(item) !== accountKey(account));
-    if (filters.value.accountKeys.includes(accountKey(account))) clearServiceAccount();
-    await Promise.all([loadLabels(), loadManualGroups(), loadGroups({ silent: true })]);
-    ElMessage.success('残留服务账号已删除');
-  } catch (err) {
-    if (err === 'cancel' || err === 'close') return;
-    ElMessage.error('删除失败，请稍后重试');
-  }
+async function handleServiceAccountDeleted(account) {
+  if (!account) return;
+  accounts.value = accounts.value.filter((item) => accountKey(item) !== accountKey(account));
+  if (filters.value.accountKeys.includes(accountKey(account))) clearServiceAccount();
+  await Promise.all([loadLabels(), loadManualGroups(), loadGroups({ silent: true })]);
+}
+
+async function refreshServiceAccounts() {
+  const nextAccounts = await fetchAccounts().catch(() => null);
+  if (Array.isArray(nextAccounts)) accounts.value = nextAccounts;
 }
 
 function handleServiceAccountSettingsChange(account) {
@@ -783,6 +774,9 @@ function handleServiceAccountSettingsChange(account) {
     send_enabled: account.send_enabled,
     global_send_enabled: account.global_send_enabled,
     send_breaker_active: account.send_breaker_active,
+    account_status: account.account_status,
+    is_connected: account.is_connected,
+    can_send: account.can_send,
   };
   groups.value = groups.value.map((group) => accountKey(group) === accountKey(account) ? { ...group, ...patch } : group);
   if (selectedGroup.value && accountKey(selectedGroup.value) === accountKey(account)) {

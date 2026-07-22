@@ -507,6 +507,29 @@ function createWorkbenchRouter({ workbenchDb, runtimeDb, rawDbPath = DEFAULT_RAW
     res.json({ ok: true, request });
   });
 
+  router.post('/accounts/:platform/:account/logout', requireAdmin, (req, res) => {
+    const operator = currentOperatorContext(workbenchDb, req);
+    const platform = requirePlatform(req.params.platform);
+    const account = requireText(req.params.account, 'account');
+    const accountScope = getAccountScope();
+    const manageAccountScope = allowedAccountScope(workbenchDb, operator, accountScope, 'can_manage');
+    requireVisibleAccount(manageAccountScope, platform, account);
+    const exists = accountData.listAccounts({ accountScope: manageAccountScope })
+      .some((item) => item.platform === platform && item.account === account);
+    if (!exists) throw createHttpError(404, 'service account not found');
+
+    const result = accountData.requestServiceAccountLogout({ platform, account });
+    if (!result) throw createHttpError(404, 'service account not found');
+    accountData.withWorkbenchDb(platform, account, { create: true }, (accountDb) => {
+      writeAction(accountDb, operator.id, 'service_account.logout', platform, account, null, account, {
+        status: result.status,
+        worker_active: result.worker_active,
+        session_cleared: result.session_cleared,
+      });
+    });
+    res.status(result.worker_active ? 202 : 200).json({ ok: true, account: result });
+  });
+
   router.delete('/accounts/:platform/:account', requireAdmin, (req, res) => {
     const operator = currentOperatorContext(workbenchDb, req);
     const platform = requirePlatform(req.params.platform);
@@ -517,6 +540,17 @@ function createWorkbenchRouter({ workbenchDb, runtimeDb, rawDbPath = DEFAULT_RAW
     const exists = accountData.listAccounts({ accountScope: manageAccountScope })
       .some((item) => item.platform === platform && item.account === account);
     if (!exists) throw createHttpError(404, 'service account not found');
+    if (req.body?.confirm_delete_history !== true || String(req.body?.confirm_account || '') !== account) {
+      throw createHttpError(400, 'confirm deletion of all history and configuration');
+    }
+    if (accountData.accountRuntimeActive(platform, account)) {
+      throw createHttpError(409, 'account runtime is active; log out before permanent deletion');
+    }
+    const profile = accountData.findAccountProfile(platform, account, manageAccountScope);
+    if (CONNECTED_ACCOUNT_STATUSES.has(String(profile?.status || '').toLowerCase()) ||
+      String(profile?.status || '').toLowerCase() === 'logout_requested') {
+      throw createHttpError(409, 'account is still connected; log out before permanent deletion');
+    }
 
     const deleted_account_data = accountData.deleteServiceAccountData({ platform, account }, {
       outboxDir: doorbellRoot,
