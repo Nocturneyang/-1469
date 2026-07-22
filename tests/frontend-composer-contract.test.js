@@ -37,6 +37,8 @@ assert.match(app, /subscribeConversationEvents\(/, 'the selected conversation mu
 assert.match(api, /subscribeWorkbenchEvents/, 'the client must expose a global realtime subscription');
 assert.match(app, /startWorkbenchEventStream\(\)/, 'the workbench must start the global realtime subscription');
 assert.match(composer, /social-workbench\.drafts\.v1\./, 'text drafts must be isolated by operator');
+assert.match(composer, /\(\) => `\$\{groupDraftKey\(\)\}\|\$\{String\(props\.operatorId \|\| ''\)\}`/, 'composer refresh guard must use a stable conversation key');
+assert.doesNotMatch(composer, /\(\) => \[props\.group\?\.id/, 'same-conversation data refreshes must not clear selected attachments');
 assert.match(composer, /defineExpose\(\{ clearDraft \}\)/, 'the parent must clear a draft only after the outbound task is created');
 assert.match(thread, /\['sent', 'delivered', 'read'\]/, 'the message thread must recognize all three receipt states');
 assert.match(styles, /\.delivery-receipt\.receipt-read\s*\{[^}]*color:/s, 'read receipts must expose a blue double-check state');

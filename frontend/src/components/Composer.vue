@@ -241,7 +241,7 @@ const quoteSummary = computed(() => {
 });
 
 watch(
-  () => [props.group?.id || '', String(props.operatorId || '')],
+  () => `${groupDraftKey()}|${String(props.operatorId || '')}`,
   () => {
     persistDraft(activeDraftStorageKey, activeDraftKey, draft.value);
     activeDraftStorageKey = draftStorageKey();

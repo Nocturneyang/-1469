@@ -70,6 +70,18 @@ async function main() {
       { id: { _serialized: '2349067817414@c.us' }, name: '+234 906 781 7414' },
       { pushname: 'Chris Laco', number: '2349067817414' },
     ), 'Chris Laco');
+    assert.strictEqual(whatsappDisplayName(
+      { id: { _serialized: 'account-name@g.us' }, formattedTitle: 'Mason', isGroup: true },
+      null,
+      '',
+      { excludedNames: ['Mason'] },
+    ), 'account-name@g.us');
+    assert.strictEqual(whatsappDisplayName(
+      { id: { _serialized: 'customer@c.us' }, formattedTitle: 'Mason' },
+      { pushname: '真实客户' },
+      '',
+      { excludedNames: ['Mason'] },
+    ), '真实客户');
     const waImageMessage = {
       id: { id: 'WA-42' },
       type: 'image',
@@ -127,8 +139,7 @@ async function main() {
               return [
                 {
                   id: { _serialized: 'native@g.us', user: 'native', server: 'g.us' },
-                  formattedTitle: 'native@g.us',
-                  groupMetadata: { subject: '原生群' },
+                  formattedTitle: 'Mason',
                   unreadCount: 4,
                   labels: ['1'],
                 },
@@ -149,6 +160,12 @@ async function main() {
                 name: '真实客户',
                 phoneNumber: { _serialized: '15551234567@c.us', user: '15551234567', server: 'c.us' },
               }];
+            },
+          },
+          GroupMetadata: {
+            get(id) {
+              const serialized = id?._serialized || id;
+              return serialized === 'native@g.us' ? { subject: '原生群' } : null;
             },
           },
           Label: {

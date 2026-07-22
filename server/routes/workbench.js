@@ -1681,6 +1681,7 @@ function mapEnrichedGroups(groups, accountProfiles, assignments, labels, unreadC
   return groups.map((group) => {
     const key = groupKey(group.platform, group.account, group.group_id);
     const profile = accountProfiles.get(accountKey(group.platform, group.account));
+    const resolvedGroup = resolveAccountDisplayNameCollision(group, profile);
     const conversationProfile = conversationProfiles.get(key) || defaultConversationProfile(group.platform, group.account, group.group_id);
     const unreadCount = Math.min(Number(unreadCounts.get(key) || 0), 99);
     return {
@@ -1695,9 +1696,9 @@ function mapEnrichedGroups(groups, accountProfiles, assignments, labels, unreadC
       send_breaker_active: breakers.has(accountKey(group.platform, group.account)),
       sync_groups_enabled: profile ? Boolean(profile.sync_groups_enabled) : false,
       risk_level: profile && profile.risk_level ? profile.risk_level : 'low',
-      group_id: group.group_id,
-      group_name: group.group_name,
-      display_group_name: conversationProfile.internal_display_name || group.group_name,
+      group_id: resolvedGroup.group_id,
+      group_name: resolvedGroup.group_name,
+      display_group_name: conversationProfile.internal_display_name || resolvedGroup.group_name,
       last_message_id: group.id,
       last_native_message_id: group.native_message_id || group.message_id || null,
       last_message_time: group.id ? normalizeTimestamp(group.timestamp, group.created_at) : null,
@@ -1722,6 +1723,16 @@ function mapEnrichedGroups(groups, accountProfiles, assignments, labels, unreadC
       labels: labels.get(key) || [],
     };
   });
+}
+
+function resolveAccountDisplayNameCollision(group, profile) {
+  if (normalizePlatform(group?.platform) !== 'wa') return group;
+  const groupName = String(group?.group_name || '').trim();
+  const aliases = [group?.account, profile?.display_name]
+    .map((value) => String(value || '').trim().toLocaleLowerCase())
+    .filter(Boolean);
+  if (!groupName || !aliases.includes(groupName.toLocaleLowerCase())) return group;
+  return { ...group, group_name: String(group?.group_id || '').trim() || '未命名会话' };
 }
 
 function loadActiveBreakerMap(db) {
@@ -2526,6 +2537,7 @@ function mergeConversationMessages(rawMessages, outboundMessages) {
       error_display: outbound.error_display,
       retry_of: outbound.retry_of,
       retry_count: outbound.retry_count,
+      attachments: mergeMessageAttachments(message.attachments, outbound.attachments),
     };
   });
 
@@ -2536,6 +2548,14 @@ function mergeConversationMessages(rawMessages, outboundMessages) {
     if (a.sort_time === b.sort_time) return String(a.id).localeCompare(String(b.id));
     return a.sort_time - b.sort_time;
   });
+}
+
+function mergeMessageAttachments(rawAttachments, outboundAttachments) {
+  const raw = Array.isArray(rawAttachments) ? rawAttachments.filter(Boolean) : [];
+  const outbound = Array.isArray(outboundAttachments) ? outboundAttachments.filter(Boolean) : [];
+  if (!outbound.length) return raw;
+  if (!raw.length || outbound.some((attachment) => attachment?.media_url)) return outbound;
+  return raw;
 }
 
 function collectMissingQuoteIds(messages) {

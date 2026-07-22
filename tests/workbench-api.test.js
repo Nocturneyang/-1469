@@ -476,11 +476,26 @@ async function main() {
       timestamp: 1782950455,
       rawData: '{}',
     });
+    insertRawMessage(rawDbPath, {
+      platform: 'whatsapp',
+      account: 'nanya_wa',
+      messageId: 'account-name-collision-1',
+      groupId: 'account-name-collision@g.us',
+      groupName: 'Nanya Support',
+      senderId: 'nanya_wa',
+      senderName: 'Nanya Support',
+      content: 'account name collision test',
+      timestamp: 1782950456,
+      rawData: JSON.stringify({ fromMe: true }),
+    });
     seedSyncedChannelMetadata(workbenchDb);
     const resolvedLidGroups = await requestJson(`${baseUrl}/groups?platforms=wa&scope=all&search=${encodeURIComponent('真实客户名称')}`);
     assert.strictEqual(resolvedLidGroups.groups.length, 1);
     assert.strictEqual(resolvedLidGroups.groups[0].group_id, '77408698953978@lid');
     assert.strictEqual(resolvedLidGroups.groups[0].group_name, '真实客户名称');
+    const accountNameCollisionGroups = await requestJson(`${baseUrl}/groups?platforms=wa&scope=all&search=${encodeURIComponent('account-name-collision@g.us')}`);
+    assert.strictEqual(accountNameCollisionGroups.groups.length, 1);
+    assert.strictEqual(accountNameCollisionGroups.groups[0].group_name, 'account-name-collision@g.us');
     const labelList = await requestJson(`${baseUrl}/channel-labels?platform=wa`);
     assert.strictEqual(labelList.ok, true);
     assert.strictEqual(labelList.labels.some((label) => label.native_label_id === 'vip-sync'), true);
@@ -738,6 +753,27 @@ async function main() {
     assert.ok(storedAttachments[0].local_path.startsWith('attachments/outbound/'));
     assert.match(storedAttachments[0].sha256, /^[a-f0-9]{64}$/);
     assert.strictEqual(workbenchDb.prepare('SELECT COUNT(*) AS count FROM outbound_attachments WHERE outbound_id = ?').get(attachmentReply.outbound_id).count, 1);
+    workbenchDb.prepare(`
+      UPDATE outbound_messages
+      SET remote_msg_id = 'wa-attachment-echo-1', status = 'sent'
+      WHERE id = ?
+    `).run(attachmentReply.outbound_id);
+    const rawAttachmentDb = new Database(rawDbPath);
+    try {
+      rawAttachmentDb.prepare(`
+        INSERT INTO messages (
+          platform, receiver_account, message_id, group_id, group_name,
+          sender_id, sender_name, direction, content, has_media,
+          media_name, media_mime, media_size, timestamp, raw_data
+        ) VALUES (
+          'whatsapp', 'nanya_wa', 'wa-attachment-echo-1', 'group-1', 'VIP 支持交流群',
+          'nanya_wa', 'Nanya Support', 'outbound', '图片', 1,
+          'paste.png', 'image/png', 8, 1782950430, @rawData
+        )
+      `).run({ rawData: JSON.stringify({ fromMe: true, media: { kind: 'image', name: 'paste.png', mime: 'image/png', size: 8 } }) });
+    } finally {
+      rawAttachmentDb.close();
+    }
 
     const hiddenReply = await requestRaw(`${baseUrl}/reply`, {
       method: 'POST',
@@ -887,6 +923,7 @@ async function main() {
     assert.match(globalReadEvent, /"group_id":"group-1"/);
     const attachmentMessage = messages.messages.find((message) => message.outbound_id === attachmentReply.outbound_id);
     assert.strictEqual(attachmentMessage.attachments[0].name, 'paste.png');
+    assert.strictEqual(attachmentMessage.attachments[0].kind, 'image');
     assert.ok(attachmentMessage.attachments[0].media_url.startsWith('/api/workbench/outbound/'));
     const attachmentDownload = await fetch(`http://127.0.0.1:${port}${attachmentMessage.attachments[0].media_url}`, {
       headers: { 'x-operator-id': '1469' },
@@ -1308,6 +1345,10 @@ function seedSyncedChannelMetadata(db) {
   db.prepare(`
     INSERT INTO channel_groups (platform, account, group_id, group_name, kind, raw_json)
     VALUES ('wa', 'nanya_wa', '77408698953978@lid', '真实客户名称', 'chat', '{}')
+  `).run();
+  db.prepare(`
+    INSERT INTO channel_groups (platform, account, group_id, group_name, kind, raw_json)
+    VALUES ('wa', 'nanya_wa', 'account-name-collision@g.us', 'Nanya Support', 'group', '{}')
   `).run();
   db.prepare(`
     INSERT INTO channel_labels (platform, account, native_label_id, name, color, kind, raw_json)

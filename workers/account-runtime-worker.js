@@ -346,6 +346,7 @@ async function startWhatsAppRuntime() {
     }
     scheduleOutboundDrain(0);
     await syncChannelSnapshot('ready').catch((err) => reportError('wa_sync_failed', err, { fatal: false }));
+    repairMissingWhatsAppMedia().catch((err) => reportError('wa_media_repair_failed', err, { fatal: false }));
   });
 
   client.on('message', (message) => {
@@ -527,13 +528,15 @@ async function handleWaMessage(message) {
   const raw = whatsappMessageMetadata(message, mediaDescriptor);
   const contactForName = chatContact || contact;
   const senderName = whatsappDisplayName(null, contactForName, message.author || message.from || '');
+  const excludedConversationNames = [ACCOUNT, channelClient?.info?.pushname];
+  const conversationContact = chat?.isGroup || String(chatId).endsWith('@g.us') ? null : chatContact;
   const commonRow = {
     db: rawDb,
     platform: 'wa',
     account: ACCOUNT,
     messageId,
     groupId: chatId,
-    groupName: whatsappDisplayName(chat, contactForName, chatId),
+    groupName: whatsappDisplayName(chat, conversationContact, chatId, { excludedNames: excludedConversationNames }),
     senderId: message.author || message.from || '',
     senderName,
     content: whatsappMessageText(message, mediaDescriptor),
@@ -661,18 +664,76 @@ async function resolveTelegramMessageEntities(message) {
 }
 
 async function downloadWhatsAppMedia(message, messageId, descriptor = whatsappMediaDescriptor(message)) {
-  try {
-    const media = await message.downloadMedia();
-    if (!media?.data) return null;
-    return storeInboundMedia(Buffer.from(media.data, 'base64'), {
-      messageId,
-      name: media.filename || descriptor?.name || `wa-${Date.now()}`,
-      mime: media.mimetype || descriptor?.mime || 'application/octet-stream',
-    });
-  } catch (err) {
-    reportError('wa_media_download_failed', err, { fatal: false });
-    return null;
+  let lastError = null;
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      const media = await message.downloadMedia();
+      if (!media?.data) throw new Error('WA media payload is empty');
+      return storeInboundMedia(Buffer.from(media.data, 'base64'), {
+        messageId,
+        name: media.filename || descriptor?.name || `wa-${Date.now()}`,
+        mime: media.mimetype || descriptor?.mime || 'application/octet-stream',
+      });
+    } catch (err) {
+      lastError = err;
+      if (attempt < 3) await waitForRetry(attempt * 500);
+    }
   }
+  reportError('wa_media_download_failed', lastError || new Error('WA media download failed'), { fatal: false });
+  return null;
+}
+
+async function repairMissingWhatsAppMedia() {
+  if (PLATFORM !== 'wa' || typeof channelClient?.getMessageById !== 'function') return 0;
+  const rows = rawDb.prepare(`
+    SELECT m.id, m.message_id,
+           COALESCE(NULLIF(o.native_message_id, ''), m.message_id) AS native_message_id,
+           m.media_name, m.media_mime
+    FROM messages m
+    LEFT JOIN message_observations o
+      ON o.platform = m.platform
+     AND o.canonical_message_id = m.message_id
+     AND o.observer_account = @account
+    WHERE m.platform IN ('wa', 'whatsapp')
+      AND COALESCE(m.has_media, 0) = 1
+      AND (m.media_path IS NULL OR TRIM(m.media_path) = '')
+    ORDER BY m.id DESC
+    LIMIT 30
+  `).all({ account: ACCOUNT });
+  if (!rows.length) return 0;
+  const update = rawDb.prepare(`
+    UPDATE messages
+    SET media_path = @mediaPath,
+        media_name = @mediaName,
+        media_mime = @mediaMime,
+        media_size = @mediaSize,
+        media_sha256 = @mediaSha256,
+        updated_at = STRFTIME('%Y-%m-%d %H:%M:%f', 'now')
+    WHERE id = @id
+  `);
+  let repaired = 0;
+  for (const row of rows) {
+    const message = await channelClient.getMessageById(String(row.native_message_id || row.message_id)).catch(() => null);
+    if (!message?.hasMedia || typeof message.downloadMedia !== 'function') continue;
+    const descriptor = whatsappMediaDescriptor(message) || {
+      name: row.media_name,
+      mime: row.media_mime,
+    };
+    const media = await downloadWhatsAppMedia(message, row.message_id, descriptor);
+    if (!media) continue;
+    const stored = mapStoredMedia(media);
+    update.run({
+      id: row.id,
+      mediaPath: stored.mediaPath,
+      mediaName: stored.mediaName,
+      mediaMime: stored.mediaMime,
+      mediaSize: stored.mediaSize,
+      mediaSha256: stored.mediaSha256,
+    });
+    repaired += 1;
+  }
+  if (repaired) recordRuntimeEvent('wa_media_repaired', 'info', `已补回 ${repaired} 条 WA 历史媒体文件`);
+  return repaired;
 }
 
 async function downloadTelegramBotMedia(message, messageId) {
@@ -978,7 +1039,9 @@ async function syncChannelSnapshot(reason) {
   syncInFlight = true;
   try {
     if (PLATFORM === 'wa' && typeof channelClient.getChats === 'function') {
-      const chatSnapshot = await readWhatsAppChatSnapshot(channelClient);
+      const chatSnapshot = await readWhatsAppChatSnapshot(channelClient, {
+        excludedNames: [ACCOUNT, channelClient?.info?.pushname],
+      });
       const { chats, groups } = chatSnapshot;
       let labelSnapshot = null;
       if (chatSnapshot.degraded) {
@@ -1540,6 +1603,10 @@ function tightenedSendPerMinute() {
 function envFlag(value, fallback) {
   if (value === undefined || value === null || value === '') return fallback;
   return ['1', 'true', 'yes', 'on'].includes(String(value).trim().toLowerCase());
+}
+
+function waitForRetry(milliseconds) {
+  return new Promise((resolve) => setTimeout(resolve, Math.max(0, Number(milliseconds) || 0)));
 }
 
 function log(message) {
