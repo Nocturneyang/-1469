@@ -78,7 +78,8 @@
             <article class="bubble" :class="{ failed: message.status === 'failed' || message.status === 'dead' }">
               <div v-if="message.forwarded_from" class="forwarded-line">转发自 {{ message.forwarded_from }}</div>
               <blockquote v-if="message.quote_msg_id">{{ message.quote_text || `引用消息 ${message.quote_msg_id}` }}</blockquote>
-              <p v-if="message.display_text || message.text">{{ message.display_text || message.text }}</p>
+              <p v-if="message.revoked" class="revoked-message">此消息已撤回</p>
+              <p v-else-if="message.display_text || message.text">{{ message.display_text || message.text }}</p>
               <div v-if="message.attachments && message.attachments.length" class="attachment-stack">
                 <div v-for="attachment in message.attachments" :key="attachment.id || attachment.name" class="attachment-row" :class="{ 'has-preview': attachmentPreview(attachment) }">
                   <a v-if="attachmentPreview(attachment) && attachment.media_url" class="attachment-preview" :href="attachment.media_url" target="_blank" rel="noopener">
@@ -101,9 +102,13 @@
                   ><el-icon><Download /></el-icon><span>下载</span></a>
                 </div>
               </div>
+              <div v-if="message.reactions && message.reactions.length" class="message-reactions" aria-label="消息表情回应">
+                <span v-for="reaction in message.reactions" :key="reaction.emoji" class="reaction-chip">{{ reaction.emoji }} <b>{{ reaction.count }}</b></span>
+              </div>
               <div class="message-metadata">
                 <span v-if="message.message_id">消息 #{{ nativeMessageId(message.message_id) }}</span>
                 <span v-if="message.edited_at">已编辑</span>
+                <span v-if="message.revoked_at">已撤回</span>
                 <span v-if="message.views">{{ message.views }} 次查看</span>
                 <span v-if="message.forwards">{{ message.forwards }} 次转发</span>
               </div>

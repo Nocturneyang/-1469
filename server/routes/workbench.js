@@ -248,6 +248,7 @@ function createWorkbenchRouter({ workbenchDb, runtimeDb, rawDbPath = DEFAULT_RAW
   router.put('/admin/users/:id/scopes', requireAdmin, (req, res) => {
     const userId = requireText(req.params.id, 'id');
     const scopes = replaceOperatorScopes(workbenchDb, userId, req.body?.scopes || []);
+    assertPersistedScopes(req.body?.scopes || [], scopes);
     res.json({ ok: true, operator_id: userId, scopes });
   });
 
@@ -265,6 +266,7 @@ function createWorkbenchRouter({ workbenchDb, runtimeDb, rawDbPath = DEFAULT_RAW
       updateAdminOperator(workbenchDb, userId, profile);
       setOperatorRoles(workbenchDb, userId, roles, currentAdminId(req));
       replaceOperatorScopes(workbenchDb, userId, scopes);
+      assertPersistedScopes(scopes, listEditableOperatorScopes(workbenchDb, userId));
       Object.entries(rolePermissions).forEach(([roleCode, permissionCodes]) => {
         setRolePermissions(workbenchDb, roleCode, Array.isArray(permissionCodes) ? permissionCodes : []);
       });
@@ -1736,6 +1738,7 @@ function mapEnrichedGroups(groups, accountProfiles, assignments, labels, unreadC
     const resolvedGroup = resolveAccountDisplayNameCollision(group, profile);
     const conversationProfile = conversationProfiles.get(key) || defaultConversationProfile(group.platform, group.account, group.group_id);
     const unreadCount = Math.min(Number(unreadCounts.get(key) || 0), 99);
+    const channelState = parseJson(group.raw_json, {});
     return {
       id: key,
       platform: group.platform,
@@ -1760,6 +1763,10 @@ function mapEnrichedGroups(groups, accountProfiles, assignments, labels, unreadC
       has_media: Boolean(group.has_media),
       message_count: group.message_count,
       unread_count: unreadCount,
+      channel_unread_count: Math.max(0, Number(channelState.unreadCount || channelState.unread_count || 0)),
+      channel_pinned: Boolean(channelState.pinned || channelState.pin),
+      channel_archived: Boolean(channelState.archived || channelState.archive || channelState.isArchived),
+      channel_kind: group.kind || (channelState.isGroup ? 'group' : 'chat'),
       conversation_status: conversationProfile.status,
       status: conversationProfile.status,
       priority: conversationProfile.priority,
@@ -1843,7 +1850,12 @@ function mergeGroupSources(rawGroups, syncedGroups) {
       const resolvedRaw = resolveRawGroupDisplayName(group);
       const synced = syncedByKey.get(groupKey(group.platform, group.account, group.group_id));
       if (!synced || isPlaceholderChannelGroupName(synced)) return resolvedRaw;
-      return { ...resolvedRaw, group_name: synced.group_name };
+      return {
+        ...resolvedRaw,
+        group_name: synced.group_name,
+        kind: synced.kind || resolvedRaw.kind,
+        raw_json: synced.raw_json || resolvedRaw.raw_json || null,
+      };
     }),
     ...syncedGroups.filter((group) => !rawKeys.has(groupKey(group.platform, group.account, group.group_id))),
   ];
@@ -1920,6 +1932,7 @@ function listSyncedGroups(db, {
       NULL AS media_path,
       0 AS timestamp,
       NULL AS raw_data,
+      raw_json,
       synced_at AS created_at,
       0 AS message_count
     FROM channel_groups
@@ -2670,6 +2683,7 @@ function mapRawMessage(row) {
   const direction = inferDirection(row);
   const text = row.content;
   const raw = parseJson(row.raw_data, {});
+  const revoked = Boolean(raw.revoked);
   return {
     id: `raw-${row.id}`,
     raw_id: row.id,
@@ -2683,20 +2697,23 @@ function mapRawMessage(row) {
     sender_username: raw.sender_username || '',
     group_name: raw.chat_name || row.group_name,
     direction,
-    text,
-    display_text: text,
+    text: revoked ? '' : text,
+    display_text: revoked ? '' : text,
     quote_msg_id: raw.reply_to_msg_id || null,
     quote_text: raw.quote_text || '',
     forwarded_from: raw.forwarded_from || '',
     forwarded_at: raw.forwarded_at || '',
     edited_at: raw.edited_at || '',
+    revoked,
+    revoked_at: raw.revoked_at || '',
+    reactions: mapMessageReactions(raw.reactions),
     views: Number(raw.views) || 0,
     forwards: Number(raw.forwards) || 0,
     post_author: raw.post_author || '',
     media_kind: raw.media?.kind || '',
-    has_media: Boolean(row.has_media),
+    has_media: Boolean(row.has_media) && !revoked,
     media_path: row.media_path,
-    attachments: row.has_media || row.media_path ? [{
+    attachments: !revoked && (row.has_media || row.media_path) ? [{
       id: `raw-media-${row.id}`,
       name: row.media_name || (row.media_path ? path.basename(String(row.media_path)) : '媒体消息'),
       type: row.media_mime || 'application/octet-stream',
@@ -2714,6 +2731,17 @@ function mapRawMessage(row) {
     sort_time: timestamp,
     source: 'raw',
   };
+}
+
+function mapMessageReactions(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return [];
+  const counts = new Map();
+  Object.values(value).forEach((emoji) => {
+    const normalized = String(emoji || '').trim().slice(0, 32);
+    if (!normalized) return;
+    counts.set(normalized, (counts.get(normalized) || 0) + 1);
+  });
+  return [...counts.entries()].map(([emoji, count]) => ({ emoji, count })).slice(0, 20);
 }
 
 function openConversationEventDbs(accountData, centralWorkbenchDb, accountDataDir, platform, account) {
@@ -3499,17 +3527,48 @@ function accountChannelStats(accountData, workbenchDb, platform, account) {
 }
 
 function mapServiceAccount(account, accountData, workbenchDb) {
-  const status = String(account.account_status || '').toLowerCase();
+  const runtime = accountRuntimeDetails(accountData, account.platform, account.account);
+  const effectiveStatus = runtime.status || account.account_status || '';
+  const status = String(effectiveStatus).toLowerCase();
   const isConnected = CONNECTED_ACCOUNT_STATUSES.has(status);
   const sendEnabled = Number(account.send_enabled) !== 0;
   const globalSendEnabled = process.env.WORKBENCH_SEND_ENABLED === '1';
   return {
     ...account,
+    account_status: effectiveStatus,
+    runtime_status: runtime.status || null,
+    runtime_phase: runtime.phase || null,
+    runtime_started_at: runtime.started_at || null,
+    runtime_last_ready_at: runtime.last_ready_at || null,
+    runtime_last_message_at: runtime.last_message_at || null,
+    runtime_last_error: runtime.last_error || null,
+    runtime_ready_for_seconds: runtime.ready_for_seconds,
     ...accountChannelStats(accountData, workbenchDb, account.platform, account.account),
     is_connected: isConnected,
     global_send_enabled: globalSendEnabled,
     can_send: isConnected && sendEnabled && globalSendEnabled,
   };
+}
+
+function accountRuntimeDetails(accountData, platform, account) {
+  return accountData.withRuntimeDb(platform, account, { create: false }, (db) => {
+    const row = db.prepare(`
+      SELECT status, phase, last_error, last_ready_at, last_message_at, started_at, updated_at
+      FROM collector_heartbeats
+      WHERE account_id = @accountId AND collector_id = @collectorId
+      ORDER BY updated_at DESC
+      LIMIT 1
+    `).get({
+      accountId: `${platform}-${account}`,
+      collectorId: `workbench-account:${platform}:${account}`,
+    }) || {};
+    const readyAt = Date.parse(row.last_ready_at || '');
+    return {
+      ...row,
+      ready_for_seconds: String(row.status || '').toLowerCase() === 'ready' && Number.isFinite(readyAt)
+        ? Math.max(0, Math.floor((Date.now() - readyAt) / 1000)) : null,
+    };
+  });
 }
 
 function listAdminOperators(db) {
@@ -3693,6 +3752,29 @@ function replaceOperatorScopes(db, operatorId, scopes = []) {
   });
   save();
   return listEditableOperatorScopes(db, id);
+}
+
+function assertPersistedScopes(requestedScopes, storedScopes) {
+  const requested = (Array.isArray(requestedScopes) ? requestedScopes : [])
+    .map(normalizeAdminScope)
+    .filter(Boolean)
+    .map(scopeSignature)
+    .sort();
+  const stored = (Array.isArray(storedScopes) ? storedScopes : [])
+    .map(scopeSignature)
+    .sort();
+  if (requested.length !== stored.length || requested.some((value, index) => value !== stored[index])) {
+    throw new Error('permission scope read-after-write verification failed');
+  }
+}
+
+function scopeSignature(scope = {}) {
+  return [
+    normalizePlatform(scope.platform),
+    String(scope.service_account || scope.account || '').trim(),
+    String(scope.native_group_id || '').trim(),
+    boolToInt(scope.can_view), boolToInt(scope.can_reply), boolToInt(scope.can_assign), boolToInt(scope.can_manage),
+  ].join('|');
 }
 
 function normalizeAdminScope(scope = {}) {

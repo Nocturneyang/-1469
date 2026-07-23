@@ -4,7 +4,7 @@ const os = require('os');
 const path = require('path');
 
 const { ensureAccountDatabases } = require('../db/account-db');
-const { ensureRawDb, upsertRawMessage, upsertServiceAccountProfile } = require('../db/raw-db');
+const { ensureRawDb, upsertRawMessage, upsertServiceAccountProfile, upsertWaContactAliases } = require('../db/raw-db');
 const { listGroups: listRawGroups, listMessagesPage } = require('../db/raw-messages');
 const { openWorkbenchDb } = require('../db/workbench-db');
 const { normalizeChannelLabelName, replaceChannelSnapshot } = require('../lib/channel-sync-store');
@@ -118,23 +118,24 @@ async function main() {
     assert.match(workerSource, /\[String\(id\.fromMe\), String\(remote\), messagePart\]/, 'derived WA ids must preserve sender, chat, and message components');
     assert.match(workerSource, /downloadQpl:\s*qpl/, 'the WA compatibility adapter must supply a forwards-compatible download telemetry object');
     assert.match(workerSource, /downloadAndMaybeDecrypt/, 'the compatibility path must retrieve and decrypt every downloadable WA media type');
-    assert.deepStrictEqual(toWhatsAppGroup({
+    assert.match(workerSource, /client\.on\('message_edit'/, 'WA edits must be synchronized by the runtime worker');
+    assert.match(workerSource, /client\.on\('message_reaction'/, 'WA reactions must be synchronized by the runtime worker');
+    assert.match(workerSource, /message_revoke_everyone/, 'WA revokes must be synchronized by the runtime worker');
+    assert.match(workerSource, /contact_changed/, 'WA LID/phone aliases must be updated by the runtime worker');
+    assert.match(workerSource, /'chat_archived'/, 'WA archive events must trigger a snapshot refresh');
+    const waGroup = toWhatsAppGroup({
       id: { _serialized: '123@g.us' },
       formattedTitle: 'WA 群',
       isGroup: true,
       unreadCount: 2,
       pin: 1,
-    }), {
-      group_id: '123@g.us',
-      group_name: 'WA 群',
-      kind: 'group',
-      raw_json: {
-        id: { _serialized: '123@g.us' },
-        isGroup: true,
-        unreadCount: 2,
-        pinned: true,
-      },
     });
+    assert.strictEqual(waGroup.group_id, '123@g.us');
+    assert.strictEqual(waGroup.group_name, 'WA 群');
+    assert.strictEqual(waGroup.kind, 'group');
+    assert.strictEqual(waGroup.raw_json.unreadCount, 2);
+    assert.strictEqual(waGroup.raw_json.pinned, true);
+    assert.strictEqual(waGroup.raw_json.archived, false);
 
     const normalChat = {
       id: { _serialized: 'normal@g.us' },
@@ -300,6 +301,21 @@ async function main() {
       assert.strictEqual(observationRows.length, 1);
       assert.strictEqual(observationRows[0].observer_account, 'wa-runtime');
       assert.strictEqual(observationRows[0].native_chat_id, 'chat-1');
+      upsertWaContactAliases({
+        db: rawDb,
+        account: 'wa-runtime',
+        canonicalId: '15551234567@c.us',
+        aliases: ['77408698953978@lid', '15551234567@c.us'],
+        lidId: '77408698953978@lid',
+        phoneId: '15551234567@c.us',
+        displayName: '真实客户',
+      });
+      const aliases = rawDb.prepare(`
+        SELECT alias_id, canonical_id FROM wa_contact_aliases
+        WHERE account = 'wa-runtime' ORDER BY alias_id
+      `).all();
+      assert.strictEqual(aliases.length, 2);
+      assert.ok(aliases.every((row) => row.canonical_id === '15551234567@c.us'));
       for (let index = 0; index < 90; index += 1) {
         upsertRawMessage({
           db: rawDb,

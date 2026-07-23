@@ -214,6 +214,34 @@ function ensureOperator(db, operatorId, displayName = operatorId) {
   return id;
 }
 
+function resolveOrCreateOperator(db, { id, username, displayName, identities = [], source = 'sso' } = {}) {
+  const stableIds = [...new Set([id, username, ...identities]
+    .map((value) => String(value || '').trim())
+    .filter(Boolean))];
+  if (!stableIds.length) return ensureOperator(db, 'demo-operator', 'demo-operator');
+  const placeholders = stableIds.map((_, index) => `@identity${index}`).join(', ');
+  const params = Object.fromEntries(stableIds.map((identity, index) => [`identity${index}`, identity]));
+  let operator = db.prepare(`
+    SELECT o.id FROM operator_identities i JOIN operators o ON o.id = i.operator_id
+    WHERE i.identity IN (${placeholders}) ORDER BY i.updated_at DESC LIMIT 1
+  `).get(params);
+  if (!operator) {
+    operator = db.prepare(`
+      SELECT id FROM operators WHERE id IN (${placeholders}) OR username IN (${placeholders})
+      ORDER BY CASE WHEN id = @identity0 THEN 0 ELSE 1 END LIMIT 1
+    `).get(params);
+  }
+  const operatorId = operator?.id || String(id || username || stableIds[0]);
+  ensureOperator(db, operatorId, displayName || username || operatorId);
+  const insert = db.prepare(`
+    INSERT INTO operator_identities (identity, operator_id, source, updated_at)
+    VALUES (@identity, @operatorId, @source, CURRENT_TIMESTAMP)
+    ON CONFLICT(identity) DO UPDATE SET updated_at = CURRENT_TIMESTAMP
+  `);
+  db.transaction(() => stableIds.forEach((identity) => insert.run({ identity, operatorId, source })))();
+  return operatorId;
+}
+
 function parseJson(value, fallback) {
   if (!value) return fallback;
   try {
@@ -231,6 +259,7 @@ function safeJson(value) {
 module.exports = {
   DEFAULT_WORKBENCH_DB_PATH,
   ensureOperator,
+  resolveOrCreateOperator,
   openWorkbenchDb,
   parseJson,
   safeJson,

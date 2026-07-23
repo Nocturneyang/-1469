@@ -506,6 +506,9 @@ async function main() {
     assert.strictEqual(syncedGroups.groups.length, 1);
     assert.strictEqual(syncedGroups.groups[0].group_id, 'group-synced-only');
     assert.strictEqual(syncedGroups.groups[0].labels[0].name, '同步标签');
+    assert.strictEqual(syncedGroups.groups[0].channel_unread_count, 7);
+    assert.strictEqual(syncedGroups.groups[0].channel_pinned, true);
+    assert.strictEqual(syncedGroups.groups[0].channel_archived, true);
 
     const manualLevelOne = await requestJson(`${baseUrl}/manual-groups`, {
       method: 'POST',
@@ -989,12 +992,29 @@ async function main() {
           rawData: JSON.stringify({ fromMe: false, media: { kind: 'document', name: fixture.name, mime: fixture.mime, size: fixture.bytes.length } }),
         }).lastInsertRowid);
       });
+      mediaDb.prepare(`
+        INSERT INTO messages (
+          platform, receiver_account, message_id, group_id, group_name,
+          sender_id, sender_name, direction, content, has_media,
+          media_name, media_mime, timestamp, raw_data
+        ) VALUES (
+          'whatsapp', 'nanya_wa', 'wa-revoked-1', 'group-1', 'VIP 支持交流群',
+          'nanya_wa', 'Nanya Support', 'outbound', '不应再展示的正文', 1,
+          'withdrawn.jpg', 'image/jpeg', 1782950428, @rawData
+        )
+      `).run({ rawData: JSON.stringify({ revoked: true, revoked_at: '2026-07-22T12:00:00.000Z' }) });
     } finally {
       mediaDb.close();
     }
     const messages = await requestJson(`${baseUrl}/groups/group-1/messages?platform=wa&account=nanya_wa`);
     assert.strictEqual(messages.ok, true);
     assert.strictEqual(messages.messages.some((message) => message.source === 'workbench'), true);
+    const revokedWaMessage = messages.messages.find((message) => message.message_id === 'wa-revoked-1');
+    assert.strictEqual(revokedWaMessage.revoked, true);
+    assert.strictEqual(revokedWaMessage.text, '');
+    assert.strictEqual(revokedWaMessage.attachments.length, 0);
+    const reactedWaMessage = messages.messages.find((message) => message.message_id === 'm-3');
+    assert.deepStrictEqual(reactedWaMessage.reactions, [{ emoji: '👍', count: 2 }]);
     const pendingWaMedia = messages.messages.find((message) => message.message_id === 'wa-media-pending-1');
     assert.strictEqual(pendingWaMedia.attachments[0].name, 'wa-media-1.png');
     assert.strictEqual(pendingWaMedia.attachments[0].type, 'image/png');
@@ -1383,7 +1403,7 @@ function seedRawDb(rawDbPath) {
     senderName: '另一个客户',
     content: '这是引用编号 54 的回复',
     timestamp: 1782950490,
-    rawData: JSON.stringify({ reply_to_msg_id: 54 }),
+    rawData: JSON.stringify({ reply_to_msg_id: 54, reactions: { 'a@c.us': '👍', 'b@lid': '👍' } }),
   });
   const observe = db.prepare(`
     INSERT INTO message_observations (
@@ -1405,7 +1425,7 @@ function seedRawDb(rawDbPath) {
     account: 'nanya_wa',
     groupId: 'group-1',
     nativeMessageId: '55',
-    rawJson: JSON.stringify({ reply_to_msg_id: 54 }),
+    rawJson: JSON.stringify({ reply_to_msg_id: 54, reactions: { 'a@c.us': '👍', 'b@lid': '👍' } }),
   });
   insert.run({
     platform: 'telegram',
@@ -1480,7 +1500,7 @@ function assertLegacyWorkbenchMigration(db) {
 function seedSyncedChannelMetadata(db) {
   db.prepare(`
     INSERT INTO channel_groups (platform, account, group_id, group_name, kind, raw_json)
-    VALUES ('wa', 'nanya_wa', 'group-synced-only', '仅同步群', 'group', '{}')
+    VALUES ('wa', 'nanya_wa', 'group-synced-only', '仅同步群', 'group', '{"unreadCount":7,"pinned":true,"archived":true}')
   `).run();
   db.prepare(`
     INSERT INTO channel_groups (platform, account, group_id, group_name, kind, raw_json)

@@ -78,6 +78,20 @@ function ensureRawDb(dbPath = DEFAULT_RAW_DB_PATH) {
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
 
+    -- WA 的 LID、手机号 WID 和展示名会随 WhatsApp Web 版本/隐私策略变化。
+    -- 以账号为边界保存别名，消息仍保留渠道原始 ID，避免把不同账号的联系人混在一起。
+    CREATE TABLE IF NOT EXISTS wa_contact_aliases (
+      account TEXT NOT NULL,
+      alias_id TEXT NOT NULL,
+      canonical_id TEXT NOT NULL,
+      lid_id TEXT,
+      phone_id TEXT,
+      display_name TEXT,
+      raw_json TEXT,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY(account, alias_id)
+    );
+
     CREATE INDEX IF NOT EXISTS idx_messages_platform_timestamp
       ON messages(platform, timestamp DESC);
     CREATE INDEX IF NOT EXISTS idx_messages_group
@@ -86,6 +100,8 @@ function ensureRawDb(dbPath = DEFAULT_RAW_DB_PATH) {
       ON message_observations(platform, observer_account, native_chat_id, canonical_message_id);
     CREATE INDEX IF NOT EXISTS idx_channel_account_registry_platform_role
       ON channel_account_registry(platform, account_role, workbench_visible);
+    CREATE INDEX IF NOT EXISTS idx_wa_contact_aliases_canonical
+      ON wa_contact_aliases(account, canonical_id);
   `);
   migrateRawDbSchema(db);
   return db;
@@ -425,6 +441,58 @@ function upsertRawMessage({
   }
 }
 
+function upsertWaContactAliases({
+  db,
+  dbPath = DEFAULT_RAW_DB_PATH,
+  account,
+  canonicalId,
+  aliases = [],
+  lidId = null,
+  phoneId = null,
+  displayName = null,
+  rawData = null,
+} = {}) {
+  const normalizedAccount = String(account || '').trim();
+  const normalizedCanonicalId = String(canonicalId || '').trim();
+  if (!normalizedAccount) throw new Error('account is required');
+  if (!normalizedCanonicalId) return 0;
+  const normalizedAliases = [...new Set([normalizedCanonicalId, ...aliases]
+    .map((value) => String(value || '').trim())
+    .filter(Boolean))];
+  if (!normalizedAliases.length) return 0;
+  const rawDb = db || ensureRawDb(dbPath);
+  const closeOwned = !db;
+  try {
+    const statement = rawDb.prepare(`
+      INSERT INTO wa_contact_aliases (
+        account, alias_id, canonical_id, lid_id, phone_id, display_name, raw_json, updated_at
+      ) VALUES (
+        @account, @aliasId, @canonicalId, @lidId, @phoneId, @displayName, @rawJson, CURRENT_TIMESTAMP
+      )
+      ON CONFLICT(account, alias_id) DO UPDATE SET
+        canonical_id = excluded.canonical_id,
+        lid_id = COALESCE(NULLIF(excluded.lid_id, ''), wa_contact_aliases.lid_id),
+        phone_id = COALESCE(NULLIF(excluded.phone_id, ''), wa_contact_aliases.phone_id),
+        display_name = COALESCE(NULLIF(excluded.display_name, ''), wa_contact_aliases.display_name),
+        raw_json = COALESCE(excluded.raw_json, wa_contact_aliases.raw_json),
+        updated_at = CURRENT_TIMESTAMP
+    `);
+    const row = {
+      account: normalizedAccount,
+      canonicalId: normalizedCanonicalId,
+      lidId: String(lidId || '').trim() || null,
+      phoneId: String(phoneId || '').trim() || null,
+      displayName: String(displayName || '').trim().slice(0, 180) || null,
+      rawJson: safeJson(rawData),
+    };
+    return rawDb.transaction(() => normalizedAliases.reduce((count, aliasId) => (
+      count + statement.run({ ...row, aliasId }).changes
+    ), 0))();
+  } finally {
+    if (closeOwned) rawDb.close();
+  }
+}
+
 function inferStoredDirection(rawData) {
   if (!rawData || typeof rawData !== 'object') return 'inbound';
   if (rawData.fromMe === true || rawData.is_from_me === true || rawData.out === true) return 'outbound';
@@ -467,6 +535,7 @@ module.exports = {
   ensureRawDb,
   setServiceAccountStatus,
   upsertRawMessage,
+  upsertWaContactAliases,
   upsertServiceAccountProfile,
   setServiceAccountSendEnabled,
 };

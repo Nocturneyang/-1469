@@ -1,5 +1,7 @@
 # 社媒客服工作台开发规范与边界设计
 
+> WA 强制入口：任何 WhatsApp（WA）账号、`whatsapp-web.js`、Chromium、session、消息/媒体同步、worker 或部署变更，必须先完整阅读 [WA 账号与媒体处理操作规范](docs/development/wa-account-operation-guide.md)。
+
 ## 0. 当前定稿：工作台完全独立
 
 日期：2026-07-07

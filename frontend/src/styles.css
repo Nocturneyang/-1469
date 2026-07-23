@@ -2648,6 +2648,33 @@ button {
   color: var(--accent);
 }
 
+.revoked-message {
+  color: var(--muted) !important;
+  font-style: italic;
+}
+
+.message-reactions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 8px;
+}
+
+.reaction-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  min-height: 22px;
+  padding: 1px 7px;
+  border: 1px solid rgba(5, 150, 105, 0.2);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.7);
+  color: var(--text);
+  font-size: 12px;
+}
+
+.reaction-chip b { font-size: 10px; font-weight: 650; color: var(--muted); }
+
 .message-metadata {
   display: flex;
   flex-wrap: wrap;
@@ -4094,6 +4121,8 @@ button {
 .mini-tag.tag-more { color: var(--muted); border-color: var(--line); background: var(--surface-muted); }
 .workflow-line { margin-top: 5px; gap: 6px; }
 .workflow-line em { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: var(--muted); font-size: 11px; font-style: normal; }
+.channel-state { color: #64748b; font-size: 10px; line-height: 16px; padding: 0 5px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface-muted); white-space: nowrap; }
+.service-access-runtime-error { margin: 10px 0 0; color: var(--danger); font-size: 12px; overflow-wrap: anywhere; }
 .workflow-pill { min-height: 18px; padding: 1px 6px; font-size: 10px; }
 .preview-line { margin-top: 5px; font-size: 12px; color: var(--muted); }
 .unread-badge { top: 12px; right: 16px; background: var(--danger); box-shadow: 0 2px 4px rgba(239, 68, 68, 0.2); }

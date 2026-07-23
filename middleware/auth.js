@@ -10,6 +10,7 @@ const TOKEN_PREFIX = 'wb1';
 const DEFAULT_SUPER_ADMIN_IDENTITIES = [];
 const SSO_USER_CACHE_TTL_MS = positiveNumber('SSO_USER_CACHE_TTL_MS', 30 * 60 * 1000);
 const ssoUserCache = new Map();
+const ssoUserInflight = new Map();
 const WORKBENCH_SESSION_COOKIE = 'workbench_session';
 const WORKBENCH_CSRF_COOKIE = 'workbench_csrf';
 
@@ -181,9 +182,12 @@ async function getSsoUserFromRemote(token) {
   if (cached && cached.expiresAt > Date.now()) return cached.user;
   if (cached) ssoUserCache.delete(token);
 
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), Number(process.env.SSO_USERINFO_TIMEOUT_MS || 4000));
-  try {
+  const active = ssoUserInflight.get(token);
+  if (active) return active;
+  const request = (async () => {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), Number(process.env.SSO_USERINFO_TIMEOUT_MS || 1500));
+    try {
     const response = await fetch(userInfoUrl, {
       method: 'GET',
       headers: {
@@ -192,16 +196,19 @@ async function getSsoUserFromRemote(token) {
       },
       signal: controller.signal,
     });
-    if (!response.ok) return null;
-    const user = mapRemoteUserInfo(await response.json());
-    if (user) ssoUserCache.set(token, { user, expiresAt: Date.now() + SSO_USER_CACHE_TTL_MS });
-    return user;
-  } catch (err) {
-    console.warn('[auth] SSO userinfo validation failed:', err.message);
-    return null;
-  } finally {
-    clearTimeout(timeout);
-  }
+      if (!response.ok) return null;
+      const user = mapRemoteUserInfo(await response.json());
+      if (user) ssoUserCache.set(token, { user, expiresAt: Date.now() + SSO_USER_CACHE_TTL_MS });
+      return user;
+    } catch (err) {
+      console.warn('[auth] SSO userinfo validation failed:', err.message);
+      return null;
+    } finally {
+      clearTimeout(timeout);
+    }
+  })();
+  ssoUserInflight.set(token, request);
+  try { return await request; } finally { ssoUserInflight.delete(token); }
 }
 
 function isLocalHostName(hostname) {

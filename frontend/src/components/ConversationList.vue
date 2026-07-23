@@ -28,7 +28,7 @@
             <span v-for="label in visibleLabels(group)" :key="labelKey(label)" class="mini-tag" :class="tagClass(label)" :title="labelText(label)">{{ labelText(label) }}</span>
             <span v-if="group.labels.length > 2" class="mini-tag tag-more">+{{ group.labels.length - 2 }}</span>
           </div>
-          <div class="workflow-line"><span class="workflow-pill" :class="group.conversation_status || group.status">{{ statusText(group.conversation_status || group.status) }}</span><em>{{ accountDisplayName(group) }}</em></div>
+          <div class="workflow-line"><span class="workflow-pill" :class="group.conversation_status || group.status">{{ statusText(group.conversation_status || group.status) }}</span><em>{{ accountDisplayName(group) }}</em><span v-if="group.channel_pinned" class="channel-state">置顶</span><span v-if="group.channel_archived" class="channel-state">已归档</span><span v-if="group.channel_unread_count" class="channel-state">渠道未读 {{ group.channel_unread_count }}</span></div>
           <div class="preview-line"><span :title="preview(group)">{{ preview(group) }}</span></div>
         </div>
         <span v-if="group.unread_count" class="unread-badge">{{ group.unread_count }}</span>

@@ -3,7 +3,12 @@
 const fs = require('fs');
 const path = require('path');
 
-const { ensureRawDb, upsertRawMessage, upsertServiceAccountProfile } = require('../db/raw-db');
+const {
+  ensureRawDb,
+  upsertRawMessage,
+  upsertServiceAccountProfile,
+  upsertWaContactAliases,
+} = require('../db/raw-db');
 const { openRuntimeDb } = require('../db/runtime-db');
 const { openWorkbenchDb } = require('../db/workbench-db');
 const { resolveDataDir } = require('../db/paths');
@@ -340,10 +345,12 @@ async function startWhatsAppRuntime() {
     upsertProfile('requires_login');
     reportHeartbeat('waiting_login', 'qr_required', 'WA 账号需要重新扫码登录');
     recordRuntimeEvent('wa_qr_required', 'warning', 'WA runtime 发现账号需要重新扫码');
+    recordAccountStatusEvent('requires_login', 'qr_required');
   });
 
   client.on('authenticated', () => {
     reportHeartbeat('authenticated', 'authenticating', 'WA session 已认证，等待 ready');
+    recordAccountStatusEvent('authenticated', 'authenticating');
   });
 
   client.on('loading_screen', (percent, message) => {
@@ -355,6 +362,7 @@ async function startWhatsAppRuntime() {
     const stateText = String(stateName || 'unknown');
     reportHeartbeat(channelReady ? 'ready' : 'starting', `wa_state_${stateText.toLowerCase()}`, `WA 连接状态：${stateText}`);
     recordRuntimeEvent('wa_state_changed', 'info', `WA 连接状态：${stateText}`);
+    recordAccountStatusEvent(channelReady ? 'ready' : 'starting', `wa_state_${stateText.toLowerCase()}`);
   });
 
   client.on('ready', async () => {
@@ -363,6 +371,7 @@ async function startWhatsAppRuntime() {
     upsertProfile('ready', displayName);
     reportHeartbeat('ready', 'monitoring', `WA runtime 已接管：${displayName}`);
     recordRuntimeEvent('account_ready', 'info', `WA 账号已接管：${displayName}`);
+    recordAccountStatusEvent('ready', 'monitoring');
     try {
       activeWaWebVersion = String(await client.getWWebVersion() || '').trim();
       if (activeWaWebVersion) {
@@ -410,10 +419,39 @@ async function startWhatsAppRuntime() {
     }
   });
 
+  // 这些都是 WA 的服务端事实变化，绝不由 API/浏览器直接访问 session。
+  client.on('message_edit', (message, newBody, previousBody) => {
+    handleWaMessageEdit(message, newBody, previousBody)
+      .catch((err) => reportError('wa_message_edit_failed', err, { fatal: false }));
+  });
+  client.on('message_revoke_everyone', (message, revokedMessage) => {
+    handleWaMessageRevoke(revokedMessage || message, 'everyone')
+      .catch((err) => reportError('wa_message_revoke_failed', err, { fatal: false }));
+  });
+  client.on('message_revoke_me', (message) => {
+    handleWaMessageRevoke(message, 'me')
+      .catch((err) => reportError('wa_message_revoke_me_failed', err, { fatal: false }));
+  });
+  client.on('message_reaction', (reaction) => {
+    handleWaMessageReaction(reaction)
+      .catch((err) => reportError('wa_message_reaction_failed', err, { fatal: false }));
+  });
+  client.on('contact_changed', (message, oldId, newId, isContact) => {
+    handleWaContactChanged(message, oldId, newId, isContact)
+      .catch((err) => reportError('wa_contact_changed_failed', err, { fatal: false }));
+  });
+  ['unread_count', 'chat_archived', 'group_update', 'group_join', 'group_leave'].forEach((eventName) => {
+    client.on(eventName, (...args) => {
+      handleWaChatStateEvent(eventName, args)
+        .catch((err) => reportError(`wa_${eventName}_failed`, err, { fatal: false }));
+    });
+  });
+
   client.on('auth_failure', (message) => {
     channelReady = false;
     upsertProfile('auth_failed');
     reportError('wa_auth_failed', new Error(String(message || 'WA auth failure')));
+    recordAccountStatusEvent('auth_failed', 'auth_failure');
   });
 
   client.on('disconnected', (reason) => {
@@ -422,6 +460,7 @@ async function startWhatsAppRuntime() {
     upsertProfile('disconnected');
     reportHeartbeat('disconnected', 'disconnected', `WA 已断开：${reason || 'unknown'}`);
     recordRuntimeEvent('wa_disconnected', 'warning', `WA 已断开：${reason || 'unknown'}`);
+    recordAccountStatusEvent('disconnected', 'disconnected');
   });
 
   try {
@@ -558,6 +597,7 @@ async function handleWaMessage(message) {
   const raw = whatsappMessageMetadata(message, mediaDescriptor);
   const contactForName = chatContact || contact;
   const senderName = whatsappDisplayName(null, contactForName, message.author || message.from || '');
+  upsertWaContactIdentity({ message, contact, chatContact, chatId, senderName });
   const excludedConversationNames = [ACCOUNT, channelClient?.info?.pushname];
   const conversationContact = chat?.isGroup || String(chatId).endsWith('@g.us') ? null : chatContact;
   const commonRow = {
@@ -593,6 +633,169 @@ async function handleWaMessage(message) {
       requestMissingWhatsAppMediaRepair();
     }
   }
+}
+
+async function handleWaMessageEdit(message, newBody, previousBody) {
+  const target = findStoredWaMessage(message);
+  if (!target) return;
+  const raw = parseStoredJson(target.raw_data);
+  const nextText = typeof newBody === 'string' ? newBody : whatsappMessageText(message);
+  raw.edited_at = new Date().toISOString();
+  raw.previous_text = typeof previousBody === 'string' ? previousBody : target.content;
+  raw.revoke_scope = null;
+  raw.revoked = false;
+  raw.edit_source = 'wa_message_edit';
+  updateStoredWaMessage(target.id, {
+    content: nextText,
+    rawData: raw,
+  });
+  recordMessageEvent(target.group_id, 'message_updated');
+}
+
+async function handleWaMessageRevoke(message, scope) {
+  const target = findStoredWaMessage(message);
+  if (!target) return;
+  const raw = parseStoredJson(target.raw_data);
+  raw.revoked = true;
+  raw.revoked_at = new Date().toISOString();
+  raw.revoke_scope = scope;
+  updateStoredWaMessage(target.id, { content: '', rawData: raw });
+  recordMessageEvent(target.group_id, 'message_revoked');
+}
+
+async function handleWaMessageReaction(reaction) {
+  const nativeMessageId = waEventId(reaction?.msgId || reaction?.messageId);
+  if (!nativeMessageId) return;
+  const target = findStoredWaMessageByNativeId(nativeMessageId);
+  if (!target) return;
+  const raw = parseStoredJson(target.raw_data);
+  const senderId = waEventId(reaction?.senderId || reaction?.sender);
+  const emoji = String(reaction?.reaction || '').trim().slice(0, 32);
+  if (!senderId) return;
+  const reactions = raw.reactions && typeof raw.reactions === 'object' && !Array.isArray(raw.reactions)
+    ? raw.reactions : {};
+  if (emoji) reactions[senderId] = emoji;
+  else delete reactions[senderId];
+  raw.reactions = reactions;
+  raw.reactions_updated_at = new Date().toISOString();
+  updateStoredWaMessage(target.id, { rawData: raw });
+  recordMessageEvent(target.group_id, 'message_reaction');
+}
+
+async function handleWaContactChanged(message, oldId, newId, isContact) {
+  const chatId = String(message?.from || message?.to || waEventId(newId) || waEventId(oldId) || '').trim();
+  const contact = typeof message?.getContact === 'function' ? await message.getContact().catch(() => null) : null;
+  const chat = typeof message?.getChat === 'function' ? await message.getChat().catch(() => null) : null;
+  const chatContact = !chat?.isGroup && typeof chat?.getContact === 'function'
+    ? await chat.getContact().catch(() => null) : null;
+  upsertWaContactIdentity({
+    message,
+    contact,
+    chatContact,
+    chatId,
+    senderName: whatsappDisplayName(null, chatContact || contact, chatId),
+    additionalAliases: [waEventId(oldId), waEventId(newId)],
+  });
+  recordRuntimeEvent('wa_contact_changed', 'info', 'WA 联系人标识已同步', { old_id: waEventId(oldId), new_id: waEventId(newId), is_contact: Boolean(isContact) });
+  await syncChannelSnapshot('contact_changed');
+}
+
+async function handleWaChatStateEvent(eventName, args) {
+  const chat = args.find((value) => value && (value.id || value.isGroup !== undefined)) || null;
+  const groupId = waEventId(chat?.id) || '';
+  recordRuntimeEvent(`wa_${eventName}`, 'info', `WA 会话状态变更：${eventName}`, { group_id: groupId || null });
+  recordMessageEvent(groupId || null, 'conversation_sync');
+  await syncChannelSnapshot(eventName);
+}
+
+function upsertWaContactIdentity({ message, contact, chatContact, chatId, senderName, additionalAliases = [] } = {}) {
+  const source = chatContact || contact || {};
+  const aliases = [
+    message?.from,
+    message?.to,
+    message?.author,
+    chatId,
+    source?.id,
+    source?.wid,
+    source?.lid,
+    source?.lidId,
+    source?.phoneNumber,
+    source?.pn,
+    ...additionalAliases,
+  ].map(waEventId).filter(Boolean);
+  const lidId = aliases.find((value) => value.endsWith('@lid')) || '';
+  const phoneId = aliases.find((value) => /@(c\.us|s\.whatsapp\.net)$/i.test(value)) || '';
+  const canonicalId = phoneId || lidId || aliases[0] || '';
+  if (!canonicalId) return;
+  upsertWaContactAliases({
+    db: rawDb,
+    account: ACCOUNT,
+    canonicalId,
+    aliases,
+    lidId,
+    phoneId,
+    displayName: senderName,
+    rawData: { aliases, lid_id: lidId || null, phone_id: phoneId || null },
+  });
+}
+
+function waEventId(value) {
+  if (!value) return '';
+  if (typeof value === 'string' || typeof value === 'number') return String(value).trim();
+  const serialized = value?._serialized || value?.id?._serialized;
+  if (serialized) return String(serialized).trim();
+  if (value?.user && value?.server) return `${value.user}@${value.server}`;
+  return String(value?.id || '').trim();
+}
+
+function findStoredWaMessage(message) {
+  const nativeMessageId = whatsappSerializedMessageId(message) || waEventId(message?.id);
+  if (!nativeMessageId) return null;
+  return findStoredWaMessageByNativeId(nativeMessageId);
+}
+
+function findStoredWaMessageByNativeId(nativeMessageId) {
+  return rawDb.prepare(`
+    SELECT m.id, m.group_id, m.content, m.raw_data
+    FROM messages m
+    LEFT JOIN message_observations o
+      ON o.platform = m.platform
+      AND o.canonical_message_id = m.message_id
+      AND o.observer_account = @account
+    WHERE m.platform = 'wa'
+      AND m.receiver_account = @account
+      AND (m.message_id = @nativeMessageId OR o.native_message_id = @nativeMessageId)
+    ORDER BY m.id DESC
+    LIMIT 1
+  `).get({ account: ACCOUNT, nativeMessageId: String(nativeMessageId) });
+}
+
+function updateStoredWaMessage(id, { content, rawData } = {}) {
+  const params = {
+    id,
+    account: ACCOUNT,
+    content: content === undefined ? null : String(content),
+    rawData: rawData === undefined ? null : safeJson(rawData),
+  };
+  rawDb.transaction(() => {
+    rawDb.prepare(`
+      UPDATE messages
+      SET content = COALESCE(@content, content),
+          raw_data = COALESCE(@rawData, raw_data),
+          updated_at = STRFTIME('%Y-%m-%d %H:%M:%f', 'now')
+      WHERE id = @id AND platform = 'wa' AND receiver_account = @account
+    `).run(params);
+    rawDb.prepare(`
+      UPDATE message_observations
+      SET raw_json = COALESCE(@rawData, raw_json), observed_at = CURRENT_TIMESTAMP
+      WHERE platform = 'wa' AND observer_account = @account
+        AND canonical_message_id = (SELECT message_id FROM messages WHERE id = @id)
+    `).run(params);
+  })();
+}
+
+function parseStoredJson(value) {
+  try { return value ? JSON.parse(value) : {}; } catch (_) { return {}; }
 }
 
 async function handleTgBotMessage(message) {
@@ -1710,6 +1913,21 @@ function recordMessageEvent(groupId, eventType) {
     account: ACCOUNT,
     groupId,
     eventType,
+  });
+}
+
+function recordAccountStatusEvent(status, phase) {
+  recordChannelEvent(runtimeDb, {
+    platform: PLATFORM,
+    account: ACCOUNT,
+    groupId: null,
+    eventType: 'account_status',
+    payload: {
+      status: String(status || ''),
+      phase: String(phase || ''),
+      started_at: STARTED_AT,
+      ready_for_ms: channelReady ? Math.max(0, Date.now() - new Date(STARTED_AT).getTime()) : null,
+    },
   });
 }
 

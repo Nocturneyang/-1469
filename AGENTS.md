@@ -38,6 +38,12 @@ Workbench must not share monitor SQLite files, monitor auth, monitor frontend ro
 
 - `DEVELOPMENT_GUIDE.md`
 
+涉及 WhatsApp（WA）账号、`whatsapp-web.js`、Chromium、session、消息同步、媒体下载、标签同步、外发状态、worker 或相关部署的任何变更前，还必须完整阅读：
+
+- `docs/development/wa-account-operation-guide.md`
+
+该规范是 WA 变更的强制发布门槛：必须从账号生命周期、消息身份、媒体落盘、鉴权访问、可观测性、端到端验证与回滚评估改动；不得只修 UI 表象或直接修改 `node_modules`。
+
 如果用户明确要求修改监控项目，必须先重新确认范围；默认工作台需求只在 `/Users/a2026/Desktop/工作台/` 内实现。
 
 从 2026-07-08 起，`workbench/` 指 `/Users/a2026/Desktop/工作台/`，不是 `/Users/a2026/Desktop/社媒监控/workbench/`。

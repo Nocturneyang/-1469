@@ -10,6 +10,19 @@ CREATE TABLE IF NOT EXISTS operators (
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+-- 将会变化的 SSO 返回字段（username/email）绑定到工作台内部坐席 ID。
+-- 权限、范围和审计始终引用 operator_id，避免 SSO 字段顺序或格式变化后“看似丢失权限”。
+CREATE TABLE IF NOT EXISTS operator_identities (
+  identity TEXT PRIMARY KEY,
+  operator_id TEXT NOT NULL,
+  source TEXT NOT NULL DEFAULT 'sso',
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_operator_identities_operator
+  ON operator_identities(operator_id);
+
 CREATE TABLE IF NOT EXISTS workbench_super_admins (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   identity TEXT NOT NULL UNIQUE,

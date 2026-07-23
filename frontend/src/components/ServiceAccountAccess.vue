@@ -74,7 +74,17 @@
             <span>最近同步</span>
             <strong>{{ timeText(account.last_channel_sync_at) }}</strong>
           </div>
+          <div>
+            <span>运行状态</span>
+            <strong>{{ account.runtime_phase || account.runtime_status || accountStatus(account) || '未上报' }}</strong>
+          </div>
+          <div>
+            <span>已就绪</span>
+            <strong>{{ runtimeDuration(account.runtime_ready_for_seconds) }}</strong>
+          </div>
         </div>
+
+        <p v-if="account.runtime_last_error" class="service-access-runtime-error">最近运行错误：{{ account.runtime_last_error }}</p>
 
         <div class="service-access-method">
           <span>接入方式</span>
@@ -192,6 +202,14 @@ function statusText(account) {
 
 function accountStatus(account) {
   return String(account?.account_status || '').trim().toLowerCase();
+}
+
+function runtimeDuration(value) {
+  const seconds = Number(value);
+  if (!Number.isFinite(seconds) || seconds < 0) return '—';
+  if (seconds < 60) return `${Math.floor(seconds)} 秒`;
+  if (seconds < 3600) return `${Math.floor(seconds / 60)} 分钟`;
+  return `${Math.floor(seconds / 3600)} 小时 ${Math.floor((seconds % 3600) / 60)} 分钟`;
 }
 
 function canLogout(account) {
