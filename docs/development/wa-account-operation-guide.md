@@ -121,7 +121,7 @@ worker 在 ready 后和周期任务中扫描近期 `has_media = 1 AND media_path
 
 图片使用安全的 inline MIME；PDF、Office 文件和其他非图片附件必须返回 `Content-Disposition: attachment` 与原始文件名。前端只有在 `media_url` 存在时才展示预览或下载入口。
 
-## 6. WA 事件同步与展示边界
+## 6. WA 事件同步、原生动作与展示边界
 
 WA 的账号状态与会话事实必须由 runtime worker 订阅、写入账号隔离数据库，再由 API/UI 只读展示。当前工作台同步以下能力：
 
@@ -129,8 +129,72 @@ WA 的账号状态与会话事实必须由 runtime worker 订阅、写入账号�
 - 消息编辑、对所有人/仅自己撤回；撤回消息不再暴露原正文或历史附件下载入口。
 - 表情回应；按 emoji 聚合展示，不向坐席暴露回应者的原始标识。
 - 联系人 LID、手机号 WID、原始会话 ID 与展示名的账号内别名映射；不得跨账号合并联系人。
-- 原生标签、渠道未读数、置顶和归档状态；工作台第一版只读，不修改 WA 原生状态。
+- 原生标签、渠道未读数、置顶和归档状态；标签仍只读，不在工作台内修改 WA 原生标签。
 - 群名、群成员加入/离开、群元数据等会话变更；事件到达后重新同步会话快照。
+
+### 6.3 群成员快照与原生提及
+
+群成员、群简介和管理员身份是随账号、随会话变化的原生数据。worker 将其写入该账号 `workbench.sqlite.channel_groups.raw_json`，API/UI 只读取该快照；不得让浏览器或 API 为了补齐成员信息直接操作 WA session。
+
+发送提及必须经过完整链路：
+
+```text
+worker 同步 participants[{ id, name, is_admin }]
+→ UI 只从当前会话快照选择成员并生成显示文本
+→ API 校验每个 ID 仍属于 platform + account + group_id
+→ outbound_messages.mentions_json 记账
+→ 唯一账号 worker getContactById + sendMessage({ mentions })
+```
+
+规则：
+
+- `@显示名`、手机号、数据库行 ID 和 UI 短 ID 都不是原生提及身份，不能据此推断或伪造 WA `mentions`。
+- 快照缺失、超时或成员不在当前群时，创建外发任务必须返回明确冲突错误；不能静默发成普通消息。
+- worker 发送时再次解析联系人；解析失败按不可重试的 `MENTION_ID_INVALID` 结束任务，并保留账本和错误证据。
+- 群成员快照只用于会话展示和受控提及，不得跨账号复用，也不得把它变成工作台自行维护的通讯录事实源。
+
+### 6.4 实时消息去重与历史校准
+
+WA 事件流用于低延迟，不是历史完整性的唯一保证。worker 必须把同一原生消息 ID 的 `message_create` 与 `message` 收敛为一次处理，且在调用 `getChat`、联系人解析或媒体下载之前完成去重；不能只依靠 SQLite 唯一键在末端吞掉重复写入。
+
+历史消息采用后台、受限、可续跑的校准：worker 在 ready、重连后的会话快照同步后，按会话状态分批调用 WA `chat.fetchMessages({ limit })`，以原生消息 ID 幂等写入 `raw.sqlite`。进度写入账号 `runtime.sqlite.wa_history_sync_state`，每个会话逐步扩大读取范围，直至源端可用历史不足或达到明确的安全上限。
+
+规则：
+
+- 坐席浏览器和 `/groups/:groupId/messages` API 只读本地 `raw.sqlite`；滚动历史不得直接拉 WA。
+- 回补批次不可下载历史媒体，以免一次历史校准耗尽网络或磁盘；媒体仍走专门的可观测补偿链路。
+- 每批成功后只发送一次会话刷新事件；不得为每条历史消息造成 SSE 风暴。
+- `WORKBENCH_WA_HISTORY_SYNC_CHAT_LIMIT`、`..._BATCH_SIZE`、`..._MAX_MESSAGES` 是容量边界，任何调大必须先做单账号灰度并观察 Chromium 内存、WA 限流和 SQLite 写入耗时。
+
+### 6.1 工作台状态与 WA 原生状态必须分开
+
+- `conversation_reads` 表示“该坐席已在工作台看过”，不会向客户发送已读回执。
+- `send_seen` 表示“请求 WA 对该会话发送已读”。它必须由坐席显式点击、账号 worker 实际执行并回写结果。
+- 工作台查看/输入协作状态属于 `conversation_presence`；WA 输入中属于临时原生动作，二者不可混用。
+
+### 6.2 原生动作的唯一链路
+
+除“发送新消息”外，所有会改变 WA 原生状态的动作都使用 `channel_action_tasks`：
+
+```text
+坐席 UI / API
+→ workbench.sqlite.channel_action_tasks(status=pending, client_action_id 幂等)
+→ action-worker-{platform}-{account} 门铃
+→ 账号 runtime worker（唯一 session 持有者）
+→ WA Web 动作
+→ completed / failed + 结构化错误 + 会话事件
+```
+
+允许的已审计动作：显式 WA 已读、输入中/停止输入、消息回应、归档/取消归档、会话置顶/取消置顶、静音/取消静音、标记未读，以及仅限本账号已确认外发消息的编辑、撤回和消息置顶。
+
+规则：
+
+- 浏览器、API 请求线程和测试脚本不得直接调用 `sendSeen`、`sendReaction`、`archive`、`edit`、`delete` 或任何 WA client 方法。
+- 每个任务必须包含 `platform + account + group_id`；需要目标消息时必须保存并验证 `native_message_id`。
+- 原生引用、回应、编辑、撤回、置顶绝不能使用工作台自增 ID、UI 短 ID 或 `raw_id`。原生 ID 无法验证时返回明确错误，禁止降级为普通消息或对错误消息操作。
+- 会话归档、置顶、静音和标记未读要求会话管理权限；对外可见的已读、输入中、回应、编辑和撤回要求回复权限。
+- 任务成功仅表示 worker 已得到 WA 方法成功返回；UI 仍应通过后续事件/快照更新展示最终原生状态。群聊不能伪造逐成员已读。
+- 输入中任务必须带短有效期，过期后不得补发；停输、切换会话、发送成功和页面卸载时必须清除。
 
 不在本次范围：通话、投票、计划活动（scheduled events）。以后新增 WA 事件时，必须先明确其事件签名、原始 ID 关联方式、幂等入库方式、UI 最小展示和 Web 版本降级策略。
 
@@ -142,6 +206,7 @@ WA 的账号状态与会话事实必须由 runtime worker 订阅、写入账号�
 - [ ] 明确变更位于 adapter/runtime、supervisor、数据层、API 或 UI 的哪一层。
 - [ ] 列出上游依赖：`whatsapp-web.js` 版本、WA Web 版本、Chromium 版本、session 状态。
 - [ ] 明确不会由 API/浏览器直接操作 WA session，不会跨账号读取文件或 DB。
+- [ ] 若变更涉及原生动作，明确 `channel_action_tasks` 的幂等键、目标原生 ID、权限、过期/重试边界与最终状态。
 - [ ] 为失败路径定义结构化错误、重试边界和最终降级状态。
 
 代码完成后：
@@ -151,6 +216,9 @@ WA 的账号状态与会话事实必须由 runtime worker 订阅、写入账号�
 - [ ] 验证 worker 在超过 discovery 周期后仍持续运行。
 - [ ] 验证 `starting → ready`、认证失败、断连、重启恢复。
 - [ ] 验证消息 ID 缺失时的重建和不可重建时的安全降级。
+- [ ] 验证同一入站消息同时触发 `message_create` 与 `message` 时，只发生一次聊天/联系人/媒体处理；验证 ready 或重连后的历史校准可跨 worker 重启续跑，且浏览器历史分页仍只读本地库。
+- [ ] 验证原生引用、回应、编辑/撤回或会话动作在 worker 未 ready、原生 ID 缺失、任务重复和 worker 重启时不会产生伪成功或跨会话操作。
+- [ ] 涉及提及时，验证群成员快照、API 会话范围校验、`mentions_json` 记账和 worker 联系人解析；缺失/过期/跨群成员必须拒绝而不是降级为普通消息。
 - [ ] 验证媒体“收到 → raw 占位 → 落盘 → 鉴权下载 API → UI 预览/下载”全链路。
 - [ ] 运行前端构建；生产发布前运行 `npm run predeploy:check -- --skip-install`。
 
@@ -168,6 +236,7 @@ WA 的账号状态与会话事实必须由 runtime worker 订阅、写入账号�
 
 - worker 当前状态、`starting → ready` 耗时、断连次数、重启次数；
 - 编辑、撤回、回应、联系人映射和会话快照事件的接收/关联失败数；
+- 原生动作按 `action_type + status` 的排队、完成、失败、重试、过期数和最长等待时间；
 - 当前 WA Web、`whatsapp-web.js`、Chromium 版本；
 - 入站媒体下载尝试数、成功数、失败数、按 MIME 分类成功率；
 - `media_path IS NULL` 的近期积压量和最长等待时间；

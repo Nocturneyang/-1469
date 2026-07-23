@@ -128,6 +128,20 @@ function openRuntimeDb(dbPath = DEFAULT_RUNTIME_DB_PATH) {
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
 
+    CREATE TABLE IF NOT EXISTS wa_history_sync_state (
+      platform TEXT NOT NULL,
+      account TEXT NOT NULL,
+      group_id TEXT NOT NULL,
+      loaded_limit INTEGER NOT NULL DEFAULT 0,
+      completed INTEGER NOT NULL DEFAULT 0,
+      capped INTEGER NOT NULL DEFAULT 0,
+      last_attempt_at TEXT,
+      last_success_at TEXT,
+      last_error TEXT,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (platform, account, group_id)
+    );
+
     CREATE INDEX IF NOT EXISTS idx_runtime_events_account_time
       ON runtime_events(account_id, created_at);
     CREATE INDEX IF NOT EXISTS idx_channel_sync_tasks_status
@@ -140,6 +154,8 @@ function openRuntimeDb(dbPath = DEFAULT_RUNTIME_DB_PATH) {
       ON channel_events(id, platform, account);
     CREATE INDEX IF NOT EXISTS idx_channel_events_created
       ON channel_events(created_at);
+    CREATE INDEX IF NOT EXISTS idx_wa_history_sync_pending
+      ON wa_history_sync_state(platform, account, completed, last_success_at);
   `);
   return db;
 }

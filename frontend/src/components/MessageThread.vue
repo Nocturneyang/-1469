@@ -52,6 +52,27 @@
           </el-popover>
         </div>
       </div>
+      <div v-if="group.platform === 'wa'" class="thread-native-actions">
+        <el-button text size="small" :disabled="!canReplyNative" @click="$emit('native-action', { actionType: 'send_seen' })">标记 WA 已读</el-button>
+        <el-popover v-if="canManageNative" placement="bottom-end" :width="180" trigger="click">
+          <template #reference><el-button text size="small">WA 会话操作</el-button></template>
+          <div class="native-action-menu">
+            <el-button text @click="$emit('native-action', { actionType: group.channel_archived ? 'unarchive' : 'archive' })">{{ group.channel_archived ? '取消归档' : '归档会话' }}</el-button>
+            <el-button text @click="$emit('native-action', { actionType: group.channel_pinned ? 'unpin_chat' : 'pin_chat' })">{{ group.channel_pinned ? '取消置顶' : '置顶会话' }}</el-button>
+            <el-button text @click="$emit('native-action', { actionType: 'mark_unread' })">标记 WA 未读</el-button>
+            <el-button text @click="$emit('native-action', { actionType: 'mute' })">静音会话</el-button>
+            <el-button text @click="$emit('native-action', { actionType: 'unmute' })">取消静音</el-button>
+          </div>
+        </el-popover>
+      </div>
+      <el-input
+        v-model="messageSearchDraft"
+        class="thread-message-search"
+        size="small"
+        clearable
+        placeholder="搜索当前会话"
+        @input="scheduleMessageSearch"
+      />
     </header>
 
     <div v-if="!group" class="thread-empty">
@@ -88,6 +109,9 @@
                   <img v-else-if="attachmentPreview(attachment)" :src="attachmentPreview(attachment)" :alt="attachment.name || '媒体预览'" loading="lazy" @error="hideBrokenPreview">
                   <el-icon v-else><Document /></el-icon>
                   <div class="attachment-info">
+                    <audio v-if="isAudioAttachment(attachment) && attachment.media_url" class="attachment-player" controls preload="metadata" :src="attachment.media_url"></audio>
+                    <video v-else-if="isVideoAttachment(attachment) && attachment.media_url" class="attachment-video" controls preload="metadata" :src="attachment.media_url"></video>
+                    <a v-else-if="isLocationAttachment(attachment) && attachment.detail" class="attachment-location" :href="locationUrl(attachment.detail)" target="_blank" rel="noopener">在地图中打开：{{ attachment.detail }}</a>
                     <a v-if="attachment.media_url" class="attachment-name" :href="attachment.media_url" :download="attachment.kind === 'image' || attachment.kind === 'sticker' ? null : (attachment.name || '附件')" target="_blank" rel="noopener">{{ attachment.name || '附件' }}</a>
                     <span v-else class="attachment-name" :title="attachment.name || '附件'">{{ attachment.name || '附件' }}</span>
                     <small>{{ attachmentMeta(attachment) }}</small>
@@ -126,6 +150,15 @@
               </span>
               <span v-else-if="statusText(message.status)" class="status" :class="`status-${message.status}`">{{ statusText(message.status) }}</span>
               <button type="button" class="message-action-button" @click="$emit('quote', message)">引用</button>
+              <el-popover v-if="canReplyNative && nativeMessageIdentity(message)" placement="top" :width="172" trigger="click">
+                <template #reference><button type="button" class="message-action-button">回应</button></template>
+                <div class="reaction-picker">
+                  <button v-for="emoji in reactionEmojis" :key="emoji" type="button" @click="$emit('native-action', { actionType: 'reaction', targetMessageId: nativeMessageIdentity(message), payload: { emoji } })">{{ emoji }}</button>
+                </div>
+              </el-popover>
+              <button v-if="message.direction === 'outbound' && nativeMessageIdentity(message) && canReplyNative" type="button" class="message-action-button" @click="$emit('message-edit', message)">编辑</button>
+              <button v-if="message.direction === 'outbound' && nativeMessageIdentity(message) && canReplyNative" type="button" class="message-action-button danger" @click="$emit('message-revoke', message)">撤回</button>
+              <button v-if="canManageNative && nativeMessageIdentity(message)" type="button" class="message-action-button" @click="$emit('native-action', { actionType: 'message_pin', targetMessageId: nativeMessageIdentity(message) })">置顶消息</button>
               <button v-if="['pending', 'paused'].includes(message.status) && canSend(group)" type="button" class="message-action-button" @click="$emit('cancel', message)">取消</button>
               <button v-if="message.outbound_id && ['failed', 'dead', 'paused', 'canceled'].includes(message.status) && canSend(group)" type="button" class="message-action-button danger" @click="$emit('retry', message)">重试</button>
             </footer>
@@ -137,20 +170,22 @@
 </template>
 
 <script setup>
-import { computed, nextTick, reactive, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, reactive, ref, watch } from 'vue';
 import { Document, Download, EditPen } from '@element-plus/icons-vue';
 import { formatMessageDateLabel, formatMessageTime, messageDayKey, platformClass, statusText } from '../utils/format';
 
 const props = defineProps({
-  group: { type: Object, default: null }, messages: { type: Array, default: () => [] }, paging: { type: Object, default: () => ({ has_more: false, before_id: null }) }, loadingMessages: { type: Boolean, default: false }, loadingOlder: { type: Boolean, default: false }, stickToBottom: { type: Boolean, default: true }, manualGroups: { type: Array, default: () => [] }, savingManualGroups: { type: Boolean, default: false },
+  group: { type: Object, default: null }, messages: { type: Array, default: () => [] }, paging: { type: Object, default: () => ({ has_more: false, before_id: null }) }, loadingMessages: { type: Boolean, default: false }, loadingOlder: { type: Boolean, default: false }, stickToBottom: { type: Boolean, default: true }, manualGroups: { type: Array, default: () => [] }, savingManualGroups: { type: Boolean, default: false }, messageSearch: { type: String, default: '' },
 });
-const emit = defineEmits(['retry', 'cancel', 'load-older', 'read-progress', 'stick-state-change', 'quote', 'manual-groups-change', 'manual-group-create']);
+const emit = defineEmits(['retry', 'cancel', 'load-older', 'read-progress', 'stick-state-change', 'quote', 'native-action', 'message-edit', 'message-revoke', 'manual-groups-change', 'manual-group-create']);
 const scrollRef = ref(null);
 const lastStickState = ref(true);
 const lastReadProgress = ref({ groupId: '', rawId: 0 });
 const pendingOlderScroll = ref(null);
 const olderRequestInFlight = ref(false);
 const manualDraft = reactive({ name: '' });
+const messageSearchDraft = ref('');
+let messageSearchTimer = null;
 const BOTTOM_THRESHOLD_PX = 96;
 const TOP_LOAD_THRESHOLD_PX = 72;
 const READ_VISIBLE_THRESHOLD_PX = 24;
@@ -169,10 +204,15 @@ watch(() => props.loadingOlder, async (loading, wasLoading) => {
     olderRequestInFlight.value = false;
   }
 });
-watch(() => props.group?.id, () => { lastStickState.value = true; pendingOlderScroll.value = null; olderRequestInFlight.value = false; manualDraft.name = ''; });
+watch(() => props.group?.id, () => { lastStickState.value = true; pendingOlderScroll.value = null; olderRequestInFlight.value = false; manualDraft.name = ''; messageSearchDraft.value = ''; });
+watch(() => props.messageSearch, (value) => { if (value !== messageSearchDraft.value) messageSearchDraft.value = value || ''; });
+onBeforeUnmount(() => clearTimeout(messageSearchTimer));
 
 const accountDisplayName = computed(() => props.group?.account_display_name || props.group?.account || '');
 const canManageManualGroups = computed(() => props.group?.permissions?.can_manage === true);
+const canReplyNative = computed(() => props.group?.platform === 'wa' && props.group?.permissions?.can_reply !== false);
+const canManageNative = computed(() => canReplyNative.value && props.group?.permissions?.can_manage === true);
+const reactionEmojis = ['👍', '❤️', '😂', '😮', '😢', '🙏'];
 const workbenchTags = computed(() => (props.group?.labels || []).filter(isWorkbenchTag));
 const channelGroupTags = computed(() => (props.group?.labels || []).filter((label) => label && !isWorkbenchTag(label)));
 const headerTags = computed(() => [...channelGroupTags.value, ...workbenchTags.value]);
@@ -195,6 +235,12 @@ function headerLabelText(label) { return isWorkbenchTag(label) ? labelDisplayNam
 function labelTitle(label) { return `${isWorkbenchTag(label) ? '工作台标签' : '渠道分组'} · ${headerLabelText(label)}`; }
 function submitManualGroup() { if (!canSubmitManualGroup.value) return; emit('manual-group-create', { name: manualDraft.name.trim(), group_level: 1 }); manualDraft.name = ''; }
 function attachmentPreview(attachment) { const url = attachment?.preview_url || attachment?.data_url || attachment?.media_url; const type = attachment?.type || ''; return (attachment?.kind === 'image' || attachment?.kind === 'sticker' || type.startsWith('image/')) ? url : ''; }
+function isAudioAttachment(attachment) { return ['audio', 'voice'].includes(attachment?.media_kind) || String(attachment?.type || '').startsWith('audio/'); }
+function isVideoAttachment(attachment) { return attachment?.media_kind === 'video' || String(attachment?.type || '').startsWith('video/'); }
+function isLocationAttachment(attachment) { return attachment?.media_kind === 'location'; }
+function locationUrl(detail) { return `https://www.google.com/maps?q=${encodeURIComponent(String(detail || ''))}`; }
+function nativeMessageIdentity(message) { return String(message?.native_message_id || message?.remote_msg_id || '').trim(); }
+function scheduleMessageSearch() { clearTimeout(messageSearchTimer); messageSearchTimer = setTimeout(() => emit('message-filter-change', messageSearchDraft.value), 220); }
 function attachmentMeta(attachment) { return [mediaKindText(attachment?.media_kind || attachment?.kind), attachment?.type, formatBytes(attachment?.size), attachment?.duration ? `${Math.round(Number(attachment.duration))} 秒` : '', attachment?.detail].filter(Boolean).join(' · '); }
 function mediaKindText(kind) { return ({ photo: '图片', image: '图片', sticker: '贴纸', video: '视频', voice: '语音', document: '文件', contact: '联系人', location: '位置', poll: '投票', webpage: '网页' })[kind] || '附件'; }
 function formatBytes(value) { const bytes = Number(value); if (!Number.isFinite(bytes) || bytes <= 0) return ''; if (bytes < 1024) return `${bytes} B`; if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`; return `${(bytes / (1024 * 1024)).toFixed(1)} MB`; }

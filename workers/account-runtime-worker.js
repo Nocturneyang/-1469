@@ -18,10 +18,13 @@ const {
   sanitizeAccountSegment,
 } = require('../db/account-db');
 const { createOutboundConsumer, markProviderAckByRemoteId } = require('../lib/outbound-consumer');
+const { createChannelActionConsumer } = require('../lib/channel-action-consumer');
 const { recordChannelEvent } = require('../lib/channel-events');
 const { installProcessGuards, logEvent } = require('../lib/runtime-observability');
 const {
   clearResolvedOutboundDoorbells,
+  channelActionDoorbellDir,
+  clearResolvedChannelActionDoorbells,
   createOutboundDoorbellWatcher,
   outboundDoorbellDir,
 } = require('../lib/outbound-doorbell');
@@ -38,6 +41,11 @@ const {
 } = require('../lib/chrome-launch');
 const { channelSyncRetryDelay } = require('../lib/channel-sync-retry');
 const { readWhatsAppChatSnapshot, whatsappDisplayName } = require('../lib/wa-chat-snapshot');
+const {
+  createNativeMessageDeduper,
+  nextHistoryFetchLimit,
+  historySyncOutcome,
+} = require('../lib/wa-history-reconciliation');
 const {
   normalizeWhatsAppDownloadedMedia,
   whatsappMediaDescriptor,
@@ -80,6 +88,11 @@ const LEASE_TTL_MS = boundedNumber(process.env.WORKBENCH_WORKER_LEASE_TTL_MS, 45
 const CHAT_SYNC_MS = boundedNumber(process.env.WORKBENCH_ACCOUNT_WORKER_CHAT_SYNC_MS, 10 * 60 * 1000, 30000, 60 * 60 * 1000);
 const WA_MEDIA_REPAIR_MS = boundedNumber(process.env.WORKBENCH_WA_MEDIA_REPAIR_MS, 2 * 60 * 1000, 30000, 30 * 60 * 1000);
 const WA_MEDIA_REPAIR_RETRY_MS = boundedNumber(process.env.WORKBENCH_WA_MEDIA_REPAIR_RETRY_MS, 15000, 5000, 5 * 60 * 1000);
+const WA_HISTORY_SYNC_ENABLED = process.env.WORKBENCH_WA_HISTORY_SYNC_ENABLED !== '0';
+const WA_HISTORY_SYNC_CHAT_LIMIT = boundedNumber(process.env.WORKBENCH_WA_HISTORY_SYNC_CHAT_LIMIT, 12, 1, 100);
+const WA_HISTORY_SYNC_BATCH_SIZE = boundedNumber(process.env.WORKBENCH_WA_HISTORY_SYNC_BATCH_SIZE, 100, 10, 500);
+const WA_HISTORY_SYNC_MAX_MESSAGES = boundedNumber(process.env.WORKBENCH_WA_HISTORY_SYNC_MAX_MESSAGES, 1000, WA_HISTORY_SYNC_BATCH_SIZE, 10000);
+const WA_HISTORY_RESYNC_MS = boundedNumber(process.env.WORKBENCH_WA_HISTORY_RESYNC_MS, 6 * 60 * 60 * 1000, 10 * 60 * 1000, 7 * 24 * 60 * 60 * 1000);
 const CHANNEL_SYNC_RETRY_BASE_MS = boundedNumber(
   process.env.WORKBENCH_CHANNEL_SYNC_RETRY_BASE_MS,
   30000,
@@ -100,7 +113,9 @@ fs.mkdirSync(SESSION_DIR, { recursive: true });
 fs.mkdirSync(OUTBOX_DIR, { recursive: true });
 fs.mkdirSync(MEDIA_DIR, { recursive: true });
 const OUTBOUND_DOORBELL_DIR = outboundDoorbellDir(OUTBOX_DIR, PLATFORM, ACCOUNT);
+const ACTION_DOORBELL_DIR = channelActionDoorbellDir(OUTBOX_DIR, PLATFORM, ACCOUNT);
 fs.mkdirSync(OUTBOUND_DOORBELL_DIR, { recursive: true });
+fs.mkdirSync(ACTION_DOORBELL_DIR, { recursive: true });
 
 const rawDb = ensureRawDb(RAW_DB_PATH);
 const runtimeDb = openRuntimeDb(RUNTIME_DB_PATH);
@@ -128,10 +143,18 @@ let syncInFlight = false;
 let outboundDrainInFlight = false;
 let outboundDrainRequested = false;
 let outboundDrainTimer = null;
+let actionDrainInFlight = false;
+let actionDrainRequested = false;
+let actionDrainTimer = null;
 let waMediaRepairInFlight = false;
 let nextWaMediaRepairAt = 0;
+let waHistoryReconcileInFlight = false;
+let waHistoryReconcileRequested = false;
+let waHistoryReconcileTimer = null;
+let waHistoryReconcileGroups = [];
 const immediateOutboundIds = [];
 const immediateOutboundIdSet = new Set();
+const waMessageDeduper = createNativeMessageDeduper();
 
 const outboundConsumer = createOutboundConsumer({
   db: workbenchDb,
@@ -141,6 +164,13 @@ const outboundConsumer = createOutboundConsumer({
   minIntervalMs: tightenedSendMinInterval(),
   perMinuteLimit: tightenedSendPerMinute(),
 });
+const channelActionConsumer = createChannelActionConsumer({
+  db: workbenchDb,
+  platform: PLATFORM,
+  account: ACCOUNT,
+  performAction: performChannelAction,
+  workerId: `${WORKER_HOLDER_ID}-${WORKER_RUN_ID}-action`,
+});
 const outboundDoorbellWatcher = createOutboundDoorbellWatcher({
   directory: OUTBOUND_DOORBELL_DIR,
   onWake: (event) => {
@@ -148,6 +178,11 @@ const outboundDoorbellWatcher = createOutboundDoorbellWatcher({
     scheduleOutboundDrain(15);
   },
   onError: (err) => reportError('outbound_doorbell_watch_failed', err, { fatal: false }),
+});
+const actionDoorbellWatcher = createOutboundDoorbellWatcher({
+  directory: ACTION_DOORBELL_DIR,
+  onWake: () => scheduleActionDrain(15),
+  onError: (err) => reportError('channel_action_doorbell_watch_failed', err, { fatal: false }),
 });
 
 log(`started, account=${PLATFORM}:${ACCOUNT}, raw=${RAW_DB_PATH}, runtime=${RUNTIME_DB_PATH}, send=${SEND_ENABLED ? 'enabled' : 'disabled'}`);
@@ -163,6 +198,7 @@ heartbeatTimer = setInterval(() => {
 }, HEARTBEAT_MS);
 sendTimer = setInterval(() => {
   scheduleOutboundDrain(0);
+  scheduleActionDrain(0);
 }, SEND_POLL_MS);
 
 process.on('SIGTERM', shutdown);
@@ -198,6 +234,7 @@ async function tick() {
     await syncChannelSnapshot('periodic');
   }
   scheduleMissingWhatsAppMediaRepair('periodic');
+  scheduleActionDrain(0);
   reportHeartbeat(channelReady ? 'ready' : 'starting', channelReady ? 'monitoring' : 'starting', '');
 }
 
@@ -218,6 +255,175 @@ function scheduleMissingWhatsAppMediaRepair(reason, { force = false } = {}) {
     .finally(() => {
       waMediaRepairInFlight = false;
     });
+}
+
+function scheduleWhatsAppHistoryReconciliation(reason, groups = []) {
+  if (
+    stopping ||
+    PLATFORM !== 'wa' ||
+    !WA_HISTORY_SYNC_ENABLED ||
+    !channelReady ||
+    !channelClient ||
+    typeof channelClient.getChatById !== 'function'
+  ) return;
+  waHistoryReconcileGroups = Array.isArray(groups) ? groups : waHistoryReconcileGroups;
+  if (waHistoryReconcileInFlight) {
+    waHistoryReconcileRequested = true;
+    return;
+  }
+  if (waHistoryReconcileTimer) return;
+  waHistoryReconcileTimer = setTimeout(() => {
+    waHistoryReconcileTimer = null;
+    reconcileWhatsAppHistory(reason, waHistoryReconcileGroups).catch((err) => {
+      reportError('wa_history_reconcile_failed', err, { fatal: false });
+    });
+  }, 0);
+}
+
+function selectWhatsAppHistoryGroups(groups) {
+  const snapshotIds = new Set((groups || []).map((group) => String(group?.group_id || '').trim()).filter(Boolean));
+  if (!snapshotIds.size) return [];
+  const stateRows = runtimeDb.prepare(`
+    SELECT group_id, loaded_limit, completed, capped, last_success_at
+    FROM wa_history_sync_state
+    WHERE platform = @platform AND account = @account
+  `).all({ platform: PLATFORM, account: ACCOUNT });
+  const stateByGroup = new Map(stateRows.map((row) => [String(row.group_id), row]));
+  const now = Date.now();
+  return [...snapshotIds].map((groupId) => ({ groupId, state: stateByGroup.get(groupId) || null }))
+    .filter(({ state }) => {
+      if (!state || !Number(state.completed)) return true;
+      const lastSuccess = Date.parse(state.last_success_at || '');
+      return !Number.isFinite(lastSuccess) || now - lastSuccess >= WA_HISTORY_RESYNC_MS;
+    })
+    .sort((left, right) => {
+      const leftPending = Number(left.state?.completed) ? 1 : 0;
+      const rightPending = Number(right.state?.completed) ? 1 : 0;
+      if (leftPending !== rightPending) return leftPending - rightPending;
+      return String(left.state?.last_success_at || '').localeCompare(String(right.state?.last_success_at || ''));
+    })
+    .slice(0, WA_HISTORY_SYNC_CHAT_LIMIT);
+}
+
+function recordWhatsAppHistoryAttempt(groupId) {
+  runtimeDb.prepare(`
+    INSERT INTO wa_history_sync_state (platform, account, group_id, last_attempt_at, updated_at)
+    VALUES (@platform, @account, @groupId, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    ON CONFLICT(platform, account, group_id) DO UPDATE SET
+      last_attempt_at = CURRENT_TIMESTAMP,
+      updated_at = CURRENT_TIMESTAMP
+  `).run({ platform: PLATFORM, account: ACCOUNT, groupId });
+}
+
+function recordWhatsAppHistorySuccess(groupId, outcome) {
+  runtimeDb.prepare(`
+    INSERT INTO wa_history_sync_state (
+      platform, account, group_id, loaded_limit, completed, capped,
+      last_attempt_at, last_success_at, last_error, updated_at
+    ) VALUES (
+      @platform, @account, @groupId, @loadedLimit, @completed, @capped,
+      CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, NULL, CURRENT_TIMESTAMP
+    )
+    ON CONFLICT(platform, account, group_id) DO UPDATE SET
+      loaded_limit = excluded.loaded_limit,
+      completed = excluded.completed,
+      capped = excluded.capped,
+      last_attempt_at = CURRENT_TIMESTAMP,
+      last_success_at = CURRENT_TIMESTAMP,
+      last_error = NULL,
+      updated_at = CURRENT_TIMESTAMP
+  `).run({
+    platform: PLATFORM,
+    account: ACCOUNT,
+    groupId,
+    loadedLimit: outcome.loaded_limit,
+    completed: outcome.completed ? 1 : 0,
+    capped: outcome.capped ? 1 : 0,
+  });
+}
+
+function recordWhatsAppHistoryFailure(groupId, error) {
+  runtimeDb.prepare(`
+    INSERT INTO wa_history_sync_state (platform, account, group_id, last_attempt_at, last_error, updated_at)
+    VALUES (@platform, @account, @groupId, CURRENT_TIMESTAMP, @lastError, CURRENT_TIMESTAMP)
+    ON CONFLICT(platform, account, group_id) DO UPDATE SET
+      last_attempt_at = CURRENT_TIMESTAMP,
+      last_error = excluded.last_error,
+      updated_at = CURRENT_TIMESTAMP
+  `).run({
+    platform: PLATFORM,
+    account: ACCOUNT,
+    groupId,
+    lastError: String(error?.message || error || 'history sync failed').slice(0, 2000),
+  });
+}
+
+async function reconcileWhatsAppHistory(reason, groups = []) {
+  if (waHistoryReconcileInFlight || !channelReady || PLATFORM !== 'wa') return;
+  waHistoryReconcileInFlight = true;
+  try {
+    const candidates = selectWhatsAppHistoryGroups(groups);
+    let restoredMessages = 0;
+    for (const { groupId, state } of candidates) {
+      const isRefresh = Boolean(state?.completed);
+      const requestedLimit = (isRefresh
+        ? Math.min(Math.max(1, Number(state?.loaded_limit) || WA_HISTORY_SYNC_BATCH_SIZE), WA_HISTORY_SYNC_BATCH_SIZE)
+        : nextHistoryFetchLimit(state, {
+        batchSize: WA_HISTORY_SYNC_BATCH_SIZE,
+        maxMessages: WA_HISTORY_SYNC_MAX_MESSAGES,
+      })) || WA_HISTORY_SYNC_BATCH_SIZE;
+      recordWhatsAppHistoryAttempt(groupId);
+      try {
+        const chat = await channelClient.getChatById(groupId);
+        if (!chat || typeof chat.fetchMessages !== 'function') throw new Error('WA chat history fetch is unavailable');
+        const fetchedMessages = await chat.fetchMessages({ limit: requestedLimit });
+        const messages = Array.isArray(fetchedMessages) ? fetchedMessages : [];
+        for (const message of messages) {
+          await persistWaMessage(message, { source: 'history', chatHint: chat, downloadMedia: false });
+        }
+        const initialOutcome = historySyncOutcome({
+          requestedLimit,
+          receivedCount: messages.length,
+          maxMessages: WA_HISTORY_SYNC_MAX_MESSAGES,
+        });
+        const outcome = isRefresh ? {
+          loaded_limit: Number(state?.loaded_limit) || requestedLimit,
+          completed: true,
+          capped: Boolean(state?.capped),
+        } : initialOutcome;
+        recordWhatsAppHistorySuccess(groupId, outcome);
+        restoredMessages += messages.length;
+        recordChannelEvent(runtimeDb, {
+          platform: PLATFORM,
+          account: ACCOUNT,
+          groupId,
+          eventType: 'history_reconciled',
+          payload: { reason, received_count: messages.length, ...outcome },
+        });
+      } catch (error) {
+        recordWhatsAppHistoryFailure(groupId, error);
+        recordRuntimeEvent('wa_history_chat_failed', 'warning', `WA 历史校准失败：${groupId}`, {
+          reason,
+          group_id: groupId,
+          error: String(error?.message || error),
+        });
+      }
+    }
+    if (candidates.length) {
+      reportHeartbeat('ready', 'history_sync', `WA 历史校准：${candidates.length} 个会话，${restoredMessages} 条消息`);
+      recordRuntimeEvent('wa_history_sync', 'info', 'WA 历史消息校准完成', {
+        reason,
+        group_count: candidates.length,
+        message_count: restoredMessages,
+      });
+    }
+  } finally {
+    waHistoryReconcileInFlight = false;
+    if (waHistoryReconcileRequested) {
+      waHistoryReconcileRequested = false;
+      scheduleWhatsAppHistoryReconciliation('queued', waHistoryReconcileGroups);
+    }
+  }
 }
 
 function requestMissingWhatsAppMediaRepair() {
@@ -268,6 +474,54 @@ function scheduleOutboundDrain(delayMs = 0) {
     drainOutbound().catch((err) => reportError('send_loop_failed', err, { fatal: false }));
   }, delay);
   outboundDrainTimer.unref?.();
+}
+
+async function drainChannelActions() {
+  if (actionDrainInFlight) {
+    actionDrainRequested = true;
+    return;
+  }
+  if (stopping || !channelReady || !channelClient) return;
+  actionDrainInFlight = true;
+  let drainAgain = false;
+  try {
+    const result = await channelActionConsumer.runOnce();
+    clearResolvedChannelActionDoorbells({ directory: ACTION_DOORBELL_DIR, db: workbenchDb });
+    if (result.status !== 'idle') {
+      log(`channel action result ${JSON.stringify(result)}`);
+      recordChannelEvent(runtimeDb, {
+        platform: PLATFORM,
+        account: ACCOUNT,
+        groupId: result.group_id || null,
+        eventType: 'channel_action',
+        payload: { action_id: result.action_id || null, action_type: result.action_type || null, status: result.status },
+      });
+    }
+    drainAgain = !['idle', 'failed'].includes(result.status);
+  } finally {
+    actionDrainInFlight = false;
+    const requested = actionDrainRequested;
+    actionDrainRequested = false;
+    if (drainAgain || requested) scheduleActionDrain(0);
+  }
+}
+
+function scheduleActionDrain(delayMs = 0) {
+  if (stopping) return;
+  const delay = Math.max(0, Number(delayMs) || 0);
+  if (actionDrainInFlight) {
+    actionDrainRequested = true;
+    return;
+  }
+  if (actionDrainTimer) {
+    if (delay > 0) return;
+    clearTimeout(actionDrainTimer);
+  }
+  actionDrainTimer = setTimeout(() => {
+    actionDrainTimer = null;
+    drainChannelActions().catch((err) => reportError('channel_action_loop_failed', err, { fatal: false }));
+  }, delay);
+  actionDrainTimer.unref?.();
 }
 
 function rememberImmediateOutbound(payload) {
@@ -363,6 +617,9 @@ async function startWhatsAppRuntime() {
     reportHeartbeat(channelReady ? 'ready' : 'starting', `wa_state_${stateText.toLowerCase()}`, `WA 连接状态：${stateText}`);
     recordRuntimeEvent('wa_state_changed', 'info', `WA 连接状态：${stateText}`);
     recordAccountStatusEvent(channelReady ? 'ready' : 'starting', `wa_state_${stateText.toLowerCase()}`);
+    if (channelReady && stateText.toUpperCase() === 'CONNECTED') {
+      syncChannelSnapshot('reconnected').catch((err) => reportError('wa_reconnect_sync_failed', err, { fatal: false }));
+    }
   });
 
   client.on('ready', async () => {
@@ -384,15 +641,16 @@ async function startWhatsAppRuntime() {
       log(`WA WebVersion detection failed: ${err.message}`);
     }
     scheduleOutboundDrain(0);
+    scheduleActionDrain(0);
     await syncChannelSnapshot('ready').catch((err) => reportError('wa_sync_failed', err, { fatal: false }));
     scheduleMissingWhatsAppMediaRepair('ready', { force: true });
   });
 
   client.on('message', (message) => {
-    handleWaMessage(message).catch((err) => reportError('wa_message_failed', err, { fatal: false }));
+    handleWaMessageEvent(message, 'received').catch((err) => reportError('wa_message_failed', err, { fatal: false }));
   });
   client.on('message_create', (message) => {
-    handleWaMessage(message).catch((err) => reportError('wa_message_create_failed', err, { fatal: false }));
+    handleWaMessageEvent(message, 'created').catch((err) => reportError('wa_message_create_failed', err, { fatal: false }));
   });
   client.on('message_ack', (message, ack) => {
     if (Number(ack) < 1) return;
@@ -519,6 +777,7 @@ async function startTelegramBotRuntime(credential) {
     reportHeartbeat('ready', 'monitoring', `TG Bot runtime 已接管：${displayName || ACCOUNT}`);
     recordRuntimeEvent('account_ready', 'info', `TG Bot 已接管：${displayName || ACCOUNT}`);
     scheduleOutboundDrain(0);
+    scheduleActionDrain(0);
   } catch (err) {
     reportError('tg_bot_ready_failed', err);
   }
@@ -573,6 +832,7 @@ async function startTelegramUserRuntime(credential) {
     reportHeartbeat('ready', 'monitoring', `TG 用户 runtime 已接管：${displayName}`);
     recordRuntimeEvent('account_ready', 'info', `TG 用户账号已接管：${displayName}`);
     scheduleOutboundDrain(0);
+    scheduleActionDrain(0);
     client.addEventHandler((event) => {
       handleTgUserEvent(event).catch((err) => reportError('tg_user_message_failed', err, { fatal: false }));
     }, new NewMessage({}));
@@ -583,9 +843,19 @@ async function startTelegramUserRuntime(credential) {
   }
 }
 
-async function handleWaMessage(message) {
+function waMessageDedupeKey(message) {
+  const id = message?.id || {};
+  return String(id._serialized || id.id || whatsappSerializedMessageId(message) || '').trim();
+}
+
+async function handleWaMessageEvent(message, source = 'received') {
+  const key = waMessageDedupeKey(message);
+  return waMessageDeduper.run(key, () => persistWaMessage(message, { source }));
+}
+
+async function persistWaMessage(message, { source = 'received', chatHint = null, downloadMedia = true } = {}) {
   if (!message || !message.id) return;
-  const chat = await message.getChat().catch(() => null);
+  const chat = chatHint || await message.getChat().catch(() => null);
   const contact = await message.getContact().catch(() => null);
   const chatContact = !chat?.isGroup && typeof chat?.getContact === 'function'
     ? await chat.getContact().catch(() => null)
@@ -620,19 +890,22 @@ async function handleWaMessage(message) {
     nativeMessageId,
   };
   const rowId = upsertRawMessage(commonRow);
-  lastMessageAt = new Date().toISOString();
-  reportHeartbeat('ready', 'message', `WA message ${rowId}`);
-  recordMessageEvent(chatId, message.fromMe ? 'outbound_message' : 'inbound');
+  if (source !== 'history') {
+    lastMessageAt = new Date().toISOString();
+    reportHeartbeat('ready', 'message', `WA message ${rowId}`);
+    recordMessageEvent(chatId, message.fromMe ? 'outbound_message' : 'inbound');
+  }
 
-  if (mediaDescriptor?.downloadable) {
-        const media = await downloadWhatsAppMedia(message, messageId, mediaDescriptor, nativeMessageId);
+  if (downloadMedia && mediaDescriptor?.downloadable) {
+    const media = await downloadWhatsAppMedia(message, messageId, mediaDescriptor, nativeMessageId);
     if (media) {
       upsertRawMessage({ ...commonRow, ...mapStoredMedia(media) });
-      recordMessageEvent(chatId, message.fromMe ? 'outbound_message' : 'inbound');
+      if (source !== 'history') recordMessageEvent(chatId, message.fromMe ? 'outbound_message' : 'inbound');
     } else {
       requestMissingWhatsAppMediaRepair();
     }
   }
+  return { rowId, groupId: chatId, messageId, nativeMessageId };
 }
 
 async function handleWaMessageEdit(message, newBody, previousBody) {
@@ -1245,11 +1518,88 @@ async function sendMessageViaChannel(task) {
   return sendTelegramUserTask(task, attachments);
 }
 
+async function performChannelAction(task) {
+  if (!channelReady || !channelClient) {
+    throw Object.assign(new Error('channel runtime is not ready'), { code: 'CHANNEL_NOT_READY' });
+  }
+  if (PLATFORM !== 'wa') {
+    throw Object.assign(new Error('channel action is not implemented for this platform'), { code: 'ACTION_UNSUPPORTED' });
+  }
+  const action = String(task.action_type || '').trim();
+  const payload = task.payload || {};
+  const chatId = task.chat_id || task.group_id;
+  const chat = async () => {
+    if (typeof channelClient.getChatById !== 'function') {
+      throw Object.assign(new Error('WA chat operation is unavailable'), { code: 'ACTION_UNSUPPORTED' });
+    }
+    const value = await channelClient.getChatById(chatId);
+    if (!value) throw Object.assign(new Error('WA chat was not found'), { code: 'CHAT_NOT_FOUND' });
+    return value;
+  };
+  const message = async () => {
+    const id = String(task.target_message_id || '').trim();
+    if (!id || typeof channelClient.getMessageById !== 'function') {
+      throw Object.assign(new Error('WA message identity is unavailable'), { code: 'MESSAGE_ID_INVALID' });
+    }
+    const value = await channelClient.getMessageById(id);
+    if (!value) throw Object.assign(new Error('WA message was not found'), { code: 'MESSAGE_ID_INVALID' });
+    return value;
+  };
+  if (action === 'send_seen') {
+    await (await chat()).sendSeen();
+    return { native_state: 'seen' };
+  }
+  if (action === 'typing') {
+    const target = await chat();
+    if (payload.active) await target.sendStateTyping();
+    else await target.clearState();
+    return { active: Boolean(payload.active) };
+  }
+  if (action === 'reaction') {
+    const emoji = String(payload.emoji || '').trim();
+    if (!emoji || typeof channelClient.sendReaction !== 'function') {
+      throw Object.assign(new Error('reaction is invalid or unsupported'), { code: 'ACTION_UNSUPPORTED' });
+    }
+    await channelClient.sendReaction(String(task.target_message_id), emoji);
+    return { emoji };
+  }
+  if (action === 'archive' || action === 'unarchive' || action === 'pin_chat' || action === 'unpin_chat' || action === 'mark_unread' || action === 'mute' || action === 'unmute') {
+    const target = await chat();
+    const method = ({ archive: 'archive', unarchive: 'unarchive', pin_chat: 'pin', unpin_chat: 'unpin', mark_unread: 'markUnread', mute: 'mute', unmute: 'unmute' })[action];
+    if (typeof target[method] !== 'function') throw Object.assign(new Error(`WA ${action} is unavailable`), { code: 'ACTION_UNSUPPORTED' });
+    if (action === 'mute' && payload.until) await target[method](new Date(payload.until));
+    else await target[method]();
+    return { native_state: action };
+  }
+  if (action === 'message_edit' || action === 'message_revoke' || action === 'message_pin' || action === 'message_unpin') {
+    const target = await message();
+    if (!target.fromMe) throw Object.assign(new Error('only messages sent by this account can be changed'), { code: 'ACTION_FORBIDDEN' });
+    if (action === 'message_edit') {
+      const text = String(payload.text || '').trim();
+      if (!text || typeof target.edit !== 'function') throw Object.assign(new Error('message edit is invalid or unsupported'), { code: 'ACTION_UNSUPPORTED' });
+      await target.edit(text);
+      return { text };
+    }
+    if (action === 'message_revoke') {
+      if (typeof target.delete !== 'function') throw Object.assign(new Error('message revoke is unavailable'), { code: 'ACTION_UNSUPPORTED' });
+      await target.delete(true);
+      return { revoked: true };
+    }
+    const method = action === 'message_pin' ? 'pin' : 'unpin';
+    if (typeof target[method] !== 'function') throw Object.assign(new Error(`message ${method} is unavailable`), { code: 'ACTION_UNSUPPORTED' });
+    await target[method]();
+    return { pinned: action === 'message_pin' };
+  }
+  throw Object.assign(new Error(`unsupported channel action: ${action}`), { code: 'ACTION_UNSUPPORTED' });
+}
+
 async function sendWhatsAppTask(task, attachments) {
   const chatId = task.chat_id || task.group_id;
   const quoteOptions = task.quote_msg_id ? { quotedMessageId: String(task.quote_msg_id) } : {};
+  const mentionOptions = await resolveWhatsAppMentions(task);
+  const sendOptions = { ...quoteOptions, ...mentionOptions };
   if (!attachments.length) {
-    const sent = await channelClient.sendMessage(chatId, task.text || '', quoteOptions);
+    const sent = await channelClient.sendMessage(chatId, task.text || '', sendOptions);
     return { remote_msg_id: whatsappMessageId(sent) };
   }
   let lastMessageId = '';
@@ -1259,12 +1609,31 @@ async function sendWhatsAppTask(task, attachments) {
     const media = new MessageMedia(attachment.type, attachment.base64, attachment.name);
     const options = {
       ...(index === 0 && task.text ? { caption: task.text } : {}),
-      ...(index === 0 ? quoteOptions : {}),
+      ...(index === 0 ? sendOptions : {}),
     };
     const sent = await channelClient.sendMessage(chatId, media, options);
     lastMessageId = whatsappMessageId(sent) || lastMessageId;
   }
   return { remote_msg_id: lastMessageId };
+}
+
+async function resolveWhatsAppMentions(task) {
+  if (!task?.mentions_json) return {};
+  let ids;
+  try { ids = JSON.parse(task.mentions_json); } catch (_) {
+    throw Object.assign(new Error('mentions_json is invalid'), { code: 'MENTION_ID_INVALID' });
+  }
+  const uniqueIds = [...new Set((Array.isArray(ids) ? ids : []).map((id) => String(id || '').trim()).filter(Boolean))];
+  if (!uniqueIds.length) return {};
+  if (typeof channelClient?.getContactById !== 'function') {
+    throw Object.assign(new Error('WA contact lookup is unavailable'), { code: 'MENTION_ID_INVALID' });
+  }
+  const contacts = await Promise.all(uniqueIds.map(async (id) => {
+    const contact = await channelClient.getContactById(id);
+    if (!contact) throw Object.assign(new Error(`WA mention contact was not found: ${id}`), { code: 'MENTION_ID_INVALID' });
+    return contact;
+  }));
+  return { mentions: contacts };
 }
 
 async function sendTelegramBotTask(task, attachments) {
@@ -1455,6 +1824,7 @@ async function syncChannelSnapshot(reason) {
         failed_models: chatSnapshot.failedCount,
         ...result,
       });
+      scheduleWhatsAppHistoryReconciliation(reason, groups);
       return result;
     }
     if (PLATFORM === 'tg' && channelClient.getDialogs && typeof channelClient.getDialogs === 'function') {
@@ -1818,7 +2188,10 @@ async function shutdown(_reason = 'signal', { exitCode = 0, logout = false } = {
   clearInterval(heartbeatTimer);
   clearInterval(sendTimer);
   clearTimeout(outboundDrainTimer);
+  clearTimeout(actionDrainTimer);
+  clearTimeout(waHistoryReconcileTimer);
   outboundDoorbellWatcher.close();
+  actionDoorbellWatcher.close();
   try {
     const drained = await outboundConsumer.drainCurrent(30000);
     if (!drained) log('outbound drain timed out; lease recovery will pause the unresolved task');

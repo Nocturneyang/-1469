@@ -54,6 +54,11 @@ const OUTBOUND_STATUSES = new Set(['pending', 'sending', 'sent', 'delivered', 'r
 const CONVERSATION_STATUSES = new Set(['pending', 'in_progress', 'resolved', 'paused']);
 const CONVERSATION_PRIORITIES = new Set(['low', 'normal', 'high', 'urgent']);
 const PRESENCE_MODES = new Set(['viewing', 'typing', 'replying']);
+const CHANNEL_ACTION_TYPES = new Set([
+  'send_seen', 'typing', 'reaction', 'archive', 'unarchive', 'pin_chat', 'unpin_chat',
+  'mark_unread', 'mute', 'unmute', 'message_edit', 'message_revoke', 'message_pin', 'message_unpin',
+]);
+const MANAGE_CHANNEL_ACTION_TYPES = new Set(['archive', 'unarchive', 'pin_chat', 'unpin_chat', 'mark_unread', 'mute', 'unmute']);
 const CONNECTED_ACCOUNT_STATUSES = new Set(['online', 'authenticated', 'ready', 'monitoring', 'healthy']);
 const MAX_ATTACHMENTS = 4;
 const MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024;
@@ -1262,6 +1267,17 @@ function createWorkbenchRouter({ workbenchDb, runtimeDb, rawDbPath = DEFAULT_RAW
     if (!text && !attachments.length) {
       throw createHttpError(400, 'text or attachment is required');
     }
+    // WA quotedMessageId must be a real WA serialized message ID.  Never fall
+    // back to a local row ID: a plain message is safer than a misleading reply.
+    const quoteMsgId = body.quote_msg_id
+      ? (platform === 'wa'
+        ? resolveNativeMessageReference(accountData, platform, account, groupId, body.quote_msg_id)
+        : String(body.quote_msg_id).trim())
+      : null;
+    const mentionIds = platform === 'wa'
+      ? resolveConversationMentionIds(accountData, platform, account, groupId, body.mention_ids || body.mentions)
+      : [];
+    const mentionsJson = mentionIds.length ? safeJson(mentionIds) : null;
     const result = accountData.withWorkbenchDb(platform, account, { create: true }, (accountDb, context) => {
       const existing = accountDb.prepare(`
         SELECT * FROM outbound_messages
@@ -1279,12 +1295,12 @@ function createWorkbenchRouter({ workbenchDb, runtimeDb, rawDbPath = DEFAULT_RAW
       const attachmentJson = storedAttachments.length ? safeJson(storedAttachments) : null;
       const insert = accountDb.prepare(`
         INSERT INTO outbound_messages (
-          client_msg_id, platform, account, group_id, chat_id, text, quote_msg_id,
+          client_msg_id, platform, account, group_id, chat_id, text, quote_msg_id, mentions_json,
           attachment_json, status, created_by
         )
         VALUES (
           @clientMsgId, @platform, @account, @groupId, @chatId, @text, @quoteMsgId,
-          @attachmentJson, @status, @createdBy
+          @mentionsJson, @attachmentJson, @status, @createdBy
         )
         ON CONFLICT(created_by, client_msg_id) DO NOTHING
       `).run({
@@ -1294,7 +1310,8 @@ function createWorkbenchRouter({ workbenchDb, runtimeDb, rawDbPath = DEFAULT_RAW
         groupId,
         chatId: body.chat_id || groupId,
         text,
-        quoteMsgId: body.quote_msg_id || null,
+        quoteMsgId,
+        mentionsJson,
         attachmentJson,
         status: desiredStatus,
         createdBy: operatorId,
@@ -1314,6 +1331,7 @@ function createWorkbenchRouter({ workbenchDb, runtimeDb, rawDbPath = DEFAULT_RAW
           outbound_id: outbound.id,
           status: outbound.status,
           quote_msg_id: outbound.quote_msg_id,
+          mention_count: mentionIds.length,
           has_attachment: Boolean(attachmentJson),
         });
         if (outbound.status === 'pending') writeDoorbell(doorbellRoot, outbound);
@@ -1377,6 +1395,79 @@ function createWorkbenchRouter({ workbenchDb, runtimeDb, rawDbPath = DEFAULT_RAW
       last_read_message_id: lastReadMessageId,
     });
     res.json({ ok: true, unread_count: unreadCount });
+  });
+
+  // Workbench read progress is an internal collaboration state.  This endpoint
+  // is intentionally separate: it requests a real WA operation and only the
+  // account worker may execute it.
+  router.post('/groups/:groupId/channel-actions', (req, res) => {
+    const accountScope = getAccountScope();
+    const operator = currentOperatorContext(workbenchDb, req);
+    const body = req.body || {};
+    const platform = requirePlatform(body.platform || req.query.platform);
+    const account = requireText(body.account || req.query.account, 'account');
+    const groupId = req.params.groupId;
+    const actionType = String(body.action_type || '').trim();
+    if (platform !== 'wa') throw createHttpError(400, 'native channel actions are currently available for WA only');
+    if (!CHANNEL_ACTION_TYPES.has(actionType)) throw createHttpError(400, 'unsupported native channel action');
+    const capability = MANAGE_CHANNEL_ACTION_TYPES.has(actionType) ? 'can_manage' : 'can_reply';
+    const scoped = allowedAccountScope(workbenchDb, operator, accountScope, capability);
+    requireVisibleAccount(scoped, platform, account);
+    requireConversationCapability(workbenchDb, operator, platform, account, groupId, capability);
+    const clientActionId = String(body.client_action_id || crypto.randomUUID()).trim();
+    if (!clientActionId || clientActionId.length > 160) throw createHttpError(400, 'client_action_id is invalid');
+    const payload = normalizeChannelActionPayload(actionType, body.payload || {});
+    const targetMessageId = requiresNativeMessageTarget(actionType)
+      ? resolveNativeMessageReference(accountData, platform, account, groupId, body.target_message_id, { outboundOnly: ['message_edit', 'message_revoke'].includes(actionType) })
+      : null;
+    const task = accountData.withWorkbenchDb(platform, account, { create: true }, (accountDb) => {
+      const existing = accountDb.prepare(`
+        SELECT * FROM channel_action_tasks WHERE created_by = @operatorId AND client_action_id = @clientActionId
+      `).get({ operatorId: operator.id, clientActionId });
+      if (existing) return { task: existing, inserted: false };
+      const result = accountDb.prepare(`
+        INSERT INTO channel_action_tasks (
+          client_action_id, platform, account, group_id, chat_id, action_type, target_message_id,
+          payload_json, status, created_by, expires_at
+        ) VALUES (
+          @clientActionId, @platform, @account, @groupId, @chatId, @actionType, @targetMessageId,
+          @payloadJson, 'pending', @operatorId, @expiresAt
+        )
+      `).run({
+        clientActionId,
+        platform,
+        account,
+        groupId,
+        chatId: body.chat_id || groupId,
+        actionType,
+        targetMessageId,
+        payloadJson: safeJson(payload),
+        operatorId: operator.id,
+        expiresAt: actionType === 'typing' ? sqlTimestamp(Date.now() + 10000) : null,
+      });
+      const created = accountDb.prepare('SELECT * FROM channel_action_tasks WHERE id = ?').get(result.lastInsertRowid);
+      writeAction(accountDb, operator.id, `channel.${actionType}.request`, platform, account, groupId, created.id, {
+        target_message_id: targetMessageId,
+        payload,
+      });
+      writeConversationTimeline(accountDb, operator.id, `channel.${actionType}.request`, platform, account, groupId, {
+        channel_action_id: created.id,
+        target_message_id: targetMessageId,
+      });
+      writeChannelActionDoorbell(doorbellRoot, created);
+      return { task: created, inserted: true };
+    });
+    emitChannelEvent(platform, account, groupId, 'channel_action', {
+      action_id: task.task.id,
+      action_type: actionType,
+      status: task.task.status,
+    });
+    res.status(task.inserted ? 202 : 200).json({
+      ok: true,
+      action_id: task.task.id,
+      status: task.task.status,
+      idempotent: !task.inserted,
+    });
   });
 
   router.post('/groups/bulk', (req, res) => {
@@ -2423,11 +2514,34 @@ function buildConversationWorkspace(db, centralDb, platform, account, groupId, {
   const timelinePage = loadConversationTimelinePage(db, centralDb, platform, account, groupId, { limit: timelineLimit });
   return {
     profile: loadConversationProfile(db, platform, account, groupId),
+    native: loadConversationNativeMetadata(db, platform, account, groupId),
     notes: notesPage.notes,
     notes_paging: notesPage.paging,
     timeline: timelinePage.timeline,
     timeline_paging: timelinePage.paging,
     presence: loadConversationPresence(db, centralDb, platform, account, groupId),
+  };
+}
+
+function loadConversationNativeMetadata(db, platform, account, groupId) {
+  const row = db.prepare(`
+    SELECT group_name, kind, raw_json, synced_at FROM channel_groups
+    WHERE platform = ? AND account = ? AND group_id = ?
+  `).get(platform, account, groupId);
+  const raw = parseJson(row?.raw_json, {});
+  const participants = Array.isArray(raw?.participants) ? raw.participants.slice(0, 1024).map((participant) => ({
+    id: String(participant?.id || '').trim(),
+    name: String(participant?.name || participant?.phone_number || participant?.id || '').trim(),
+    is_admin: Boolean(participant?.is_admin),
+    is_super_admin: Boolean(participant?.is_super_admin),
+  })).filter((participant) => participant.id) : [];
+  return {
+    kind: row?.kind || '',
+    group_name: row?.group_name || '',
+    description: String(raw?.groupDescription || '').trim(),
+    participants,
+    participant_count: participants.length,
+    synced_at: row?.synced_at || null,
   };
 }
 
@@ -2822,6 +2936,7 @@ function mapOutboundRow(row, { scopedIds = false } = {}) {
     text,
     display_text: text,
     quote_msg_id: row.quote_msg_id,
+    mention_ids: parseJson(row.mentions_json, []),
     attachments,
     status: row.status,
     remote_msg_id: row.remote_msg_id,
@@ -4172,6 +4287,114 @@ function writeDoorbell(outboxDir, outbound) {
     created_at: new Date().toISOString(),
   }, null, 2));
   fs.renameSync(tempPath, finalPath);
+}
+
+function writeChannelActionDoorbell(outboxDir, task) {
+  const accountSegment = sanitizeSegment(task.account);
+  const workerDir = path.join(outboxDir, `action-worker-${task.platform}-${accountSegment}`);
+  fs.mkdirSync(workerDir, { recursive: true });
+  const finalPath = path.join(workerDir, `${task.id}.json`);
+  const tempPath = `${finalPath}.${process.pid}.tmp`;
+  fs.writeFileSync(tempPath, JSON.stringify({
+    action_id: task.id,
+    platform: task.platform,
+    account: task.account,
+    action_type: task.action_type,
+    created_at: new Date().toISOString(),
+  }, null, 2));
+  fs.renameSync(tempPath, finalPath);
+}
+
+function requiresNativeMessageTarget(actionType) {
+  return ['reaction', 'message_edit', 'message_revoke', 'message_pin', 'message_unpin'].includes(actionType);
+}
+
+function normalizeChannelActionPayload(actionType, input) {
+  const payload = input && typeof input === 'object' ? input : {};
+  if (actionType === 'typing') return { active: payload.active === true };
+  if (actionType === 'reaction') {
+    const emoji = String(payload.emoji || '').trim();
+    if (!emoji || emoji.length > 32) throw createHttpError(400, 'reaction emoji is invalid');
+    return { emoji };
+  }
+  if (actionType === 'message_edit') {
+    const text = String(payload.text || '').trim();
+    if (!text || text.length > 4096) throw createHttpError(400, 'message edit text is invalid');
+    return { text };
+  }
+  if (actionType === 'mute' && payload.until) {
+    const timestamp = Date.parse(String(payload.until));
+    if (!Number.isFinite(timestamp) || timestamp <= Date.now()) throw createHttpError(400, 'mute until is invalid');
+    return { until: new Date(timestamp).toISOString() };
+  }
+  return {};
+}
+
+function resolveNativeMessageReference(accountData, platform, account, groupId, value, { outboundOnly = false } = {}) {
+  const reference = String(value || '').trim();
+  if (!reference || reference.length > 512) throw createHttpError(409, 'native message identity is unavailable; refresh the conversation and retry');
+  const ledgerNativeId = accountData.withWorkbenchDb(platform, account, { readonly: accountData.isolated }, (db) => {
+    const row = db.prepare(`
+      SELECT remote_msg_id FROM outbound_messages
+      WHERE platform = @platform AND account = @account AND group_id = @groupId
+        AND remote_msg_id = @reference
+      LIMIT 1
+    `).get({ platform, account, groupId, reference });
+    return String(row?.remote_msg_id || '').trim();
+  });
+  if (ledgerNativeId) return ledgerNativeId;
+  if (outboundOnly) throw createHttpError(409, 'only a confirmed message sent by this account can be changed');
+  const rawDb = accountData.openAccountRawDb(platform, account, { readonly: true });
+  try {
+    const row = rawDb.prepare(`
+      SELECT m.message_id, o.native_message_id
+      FROM messages m
+      LEFT JOIN message_observations o
+        ON o.platform = m.platform
+       AND o.canonical_message_id = m.message_id
+       AND o.observer_account = @account
+      WHERE CASE LOWER(m.platform)
+        WHEN 'whatsapp' THEN 'wa'
+        WHEN 'telegram' THEN 'tg'
+        WHEN 'telegram-user' THEN 'tg'
+        WHEN 'tg-user' THEN 'tg'
+        ELSE LOWER(m.platform)
+      END = @platform
+        AND m.group_id = @groupId
+        AND (m.message_id = @reference OR o.native_message_id = @reference)
+      ORDER BY o.observed_at DESC, m.id DESC
+      LIMIT 1
+    `).get({ platform, account, groupId, reference });
+    const native = String(row?.native_message_id || '').trim();
+    if (native) return native;
+  } finally {
+    rawDb.close();
+  }
+  throw createHttpError(409, 'native message identity is unavailable; refresh the conversation and retry');
+}
+
+function resolveConversationMentionIds(accountData, platform, account, groupId, value) {
+  const requested = [...new Set((Array.isArray(value) ? value : [])
+    .map((item) => String(item || '').trim()).filter(Boolean))];
+  if (!requested.length) return [];
+  if (requested.length > 32 || requested.some((id) => id.length > 256)) {
+    throw createHttpError(400, 'mention list is invalid');
+  }
+  const rawJson = accountData.withWorkbenchDb(platform, account, { readonly: accountData.isolated }, (db) => (
+    db.prepare('SELECT raw_json FROM channel_groups WHERE platform = ? AND account = ? AND group_id = ?')
+      .get(platform, account, groupId)?.raw_json
+  ));
+  const participants = parseJson(rawJson, {})?.participants;
+  const allowed = new Set((Array.isArray(participants) ? participants : [])
+    .map((participant) => String(participant?.id || '').trim()).filter(Boolean));
+  if (!allowed.size || requested.some((id) => !allowed.has(id))) {
+    throw createHttpError(409, 'group participant data is unavailable or stale; refresh the WA account and retry');
+  }
+  return requested;
+}
+
+function sqlTimestamp(value) {
+  return new Date(value).toISOString().slice(0, 19).replace('T', ' ');
 }
 
 function publicOutboundId(row, accountData) {

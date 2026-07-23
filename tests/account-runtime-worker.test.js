@@ -120,6 +120,10 @@ async function main() {
     assert.match(workerSource, /downloadAndMaybeDecrypt/, 'the compatibility path must retrieve and decrypt every downloadable WA media type');
     assert.match(workerSource, /client\.on\('message_edit'/, 'WA edits must be synchronized by the runtime worker');
     assert.match(workerSource, /client\.on\('message_reaction'/, 'WA reactions must be synchronized by the runtime worker');
+    assert.match(workerSource, /handleWaMessageEvent\(message, 'received'\)/, 'received and created WA events must share the native-message dedupe path');
+    assert.match(workerSource, /createNativeMessageDeduper/, 'WA realtime event processing must deduplicate before chat/contact/media work starts');
+    assert.match(workerSource, /scheduleWhatsAppHistoryReconciliation\(reason, groups\)/, 'WA snapshots must schedule a background historical reconciliation');
+    assert.match(workerSource, /chat\.fetchMessages\(\{ limit: requestedLimit \}\)/, 'history reconciliation must use the channel worker, never the browser or API request path');
     assert.match(workerSource, /message_revoke_everyone/, 'WA revokes must be synchronized by the runtime worker');
     assert.match(workerSource, /contact_changed/, 'WA LID/phone aliases must be updated by the runtime worker');
     assert.match(workerSource, /'chat_archived'/, 'WA archive events must trigger a snapshot refresh');

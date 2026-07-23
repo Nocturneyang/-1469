@@ -38,6 +38,10 @@
           <el-icon><ChatDotRound /></el-icon>
           <span>表情</span>
         </button>
+        <el-popover v-if="mentionableParticipants.length" placement="top-start" :width="260" trigger="click">
+          <template #reference><button class="icon-button" type="button" title="提及群成员" aria-label="提及群成员" :disabled="disabled"><span>@</span><span>提及</span></button></template>
+          <div class="mention-picker"><strong>提及群成员</strong><button v-for="participant in mentionableParticipants" :key="participant.id" type="button" @click="insertMention(participant)"><span>{{ participant.name }}</span><small v-if="participant.is_admin">管理员</small></button></div>
+        </el-popover>
         <button
           class="icon-button"
           type="button"
@@ -186,11 +190,13 @@ const props = defineProps({
     type: [String, Number],
     default: '',
   },
+  participants: { type: Array, default: () => [] },
 });
 
 const emit = defineEmits(['send', 'clear-quote', 'typing-state']);
 const draft = ref('');
 const attachments = ref([]);
+const mentionedIds = ref([]);
 const emojiOpen = ref(false);
 const emojiButtonRef = ref(null);
 const emojiPanelRef = ref(null);
@@ -213,6 +219,7 @@ const sendAllowed = computed(() => (
 ));
 const disabled = computed(() => !props.group || props.sending || !sendAllowed.value);
 const canSubmit = computed(() => Boolean(draft.value.trim() || attachments.value.length));
+const mentionableParticipants = computed(() => (props.group?.platform === 'wa' ? props.participants : []).filter((participant) => participant?.id && participant?.name).slice(0, 200));
 const accountDisplayName = computed(() => {
   if (!props.group) return '';
   return props.group.account_display_name || props.group.account || '';
@@ -248,6 +255,7 @@ watch(
     activeDraftKey = groupDraftKey();
     draft.value = readDraft(activeDraftStorageKey, activeDraftKey);
     attachments.value = [];
+    mentionedIds.value = [];
     emojiOpen.value = false;
     emit('clear-quote');
     emitTyping(false);
@@ -425,12 +433,9 @@ function submit() {
   emit('send', {
     text,
     attachments: attachments.value.filter(Boolean).map((attachment) => ({ ...attachment })),
+    mention_ids: [...mentionedIds.value],
     quote_msg_id: props.quoteMessage && (
-      props.quoteMessage.remote_msg_id ||
-      props.quoteMessage.message_id ||
-      props.quoteMessage.raw_id ||
-      props.quoteMessage.outbound_id ||
-      props.quoteMessage.id
+      props.quoteMessage.native_message_id || props.quoteMessage.remote_msg_id || ''
     ),
   });
   emojiOpen.value = false;
@@ -439,9 +444,20 @@ function submit() {
 function clearDraft() {
   draft.value = '';
   attachments.value = [];
+  mentionedIds.value = [];
   emojiOpen.value = false;
   persistDraft(activeDraftStorageKey, activeDraftKey, '');
   emitTyping(false);
+}
+
+function insertMention(participant) {
+  const id = String(participant?.id || '').trim();
+  const name = String(participant?.name || '').trim();
+  if (!id || !name || disabled.value) return;
+  mentionedIds.value = [...new Set([...mentionedIds.value, id])];
+  const token = `@${name}`;
+  if (!draft.value.includes(token)) draft.value = `${draft.value}${draft.value && !/\s$/.test(draft.value) ? ' ' : ''}${token} `;
+  nextTick(() => textareaRef.value?.focus());
 }
 
 function groupDraftKey() {

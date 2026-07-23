@@ -92,6 +92,7 @@ CREATE TABLE IF NOT EXISTS outbound_messages (
   chat_id TEXT,
   text TEXT NOT NULL DEFAULT '',
   quote_msg_id TEXT,
+  mentions_json TEXT,
   attachment_json TEXT,
   status TEXT NOT NULL DEFAULT 'pending',
   remote_msg_id TEXT,
@@ -154,6 +155,41 @@ CREATE TABLE IF NOT EXISTS outbound_attachments (
 
 CREATE INDEX IF NOT EXISTS idx_outbound_attachments_outbound
   ON outbound_attachments(outbound_id);
+
+-- 所有会改变渠道原生状态、但不是发送一条新消息的动作都必须账本化。
+-- 例如：已读、输入中、回应、归档、置顶、静音、编辑、撤回。
+-- API 和浏览器只写此表；唯一持有渠道 session 的账号 worker 串行执行。
+CREATE TABLE IF NOT EXISTS channel_action_tasks (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  client_action_id TEXT NOT NULL,
+  platform TEXT NOT NULL,
+  account TEXT NOT NULL,
+  group_id TEXT NOT NULL,
+  chat_id TEXT,
+  action_type TEXT NOT NULL,
+  target_message_id TEXT,
+  payload_json TEXT,
+  status TEXT NOT NULL DEFAULT 'pending',
+  created_by TEXT NOT NULL,
+  error_code TEXT,
+  error_message TEXT,
+  result_json TEXT,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  executing_started_at TEXT,
+  completed_at TEXT,
+  expires_at TEXT,
+  owner_worker_id TEXT,
+  lease_expires_at TEXT,
+  retry_count INTEGER NOT NULL DEFAULT 0,
+  next_attempt_at TEXT,
+  UNIQUE(created_by, client_action_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_channel_action_tasks_queue
+  ON channel_action_tasks(platform, account, status, next_attempt_at, created_at);
+CREATE INDEX IF NOT EXISTS idx_channel_action_tasks_conversation
+  ON channel_action_tasks(platform, account, group_id, created_at);
 
 CREATE TABLE IF NOT EXISTS group_assignments (
   id INTEGER PRIMARY KEY AUTOINCREMENT,

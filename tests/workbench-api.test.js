@@ -509,6 +509,10 @@ async function main() {
     assert.strictEqual(syncedGroups.groups[0].channel_unread_count, 7);
     assert.strictEqual(syncedGroups.groups[0].channel_pinned, true);
     assert.strictEqual(syncedGroups.groups[0].channel_archived, true);
+    const groupWorkspace = await requestJson(`${baseUrl}/groups/group-1/workspace?platform=wa&account=nanya_wa`);
+    assert.strictEqual(groupWorkspace.native.description, '用于验证群成员快照和原生提及。');
+    assert.strictEqual(groupWorkspace.native.participant_count, 2);
+    assert.strictEqual(groupWorkspace.native.participants[0].id, 'customer-1@c.us');
 
     const manualLevelOne = await requestJson(`${baseUrl}/manual-groups`, {
       method: 'POST',
@@ -744,6 +748,7 @@ async function main() {
       group_id: 'group-1',
       text: '已为您查询，请稍等。',
       quote_msg_id: 'm-2',
+      mention_ids: ['customer-1@c.us'],
     };
     const firstReply = await requestJson(`${baseUrl}/reply`, {
       method: 'POST',
@@ -757,6 +762,20 @@ async function main() {
     assert.strictEqual(secondReply.idempotent, true);
     assert.strictEqual(secondReply.outbound_id, firstReply.outbound_id);
     assert.ok(fs.existsSync(path.join(outboxDir, 'worker-wa-nanya_wa', `${firstReply.outbound_id}.json`)));
+    assert.deepStrictEqual(JSON.parse(workbenchDb.prepare('SELECT mentions_json FROM outbound_messages WHERE id = ?').get(firstReply.outbound_id).mentions_json), ['customer-1@c.us']);
+
+    const invalidMentionReply = await requestRaw(`${baseUrl}/reply`, {
+      method: 'POST',
+      body: {
+        client_msg_id: 'client-invalid-mention',
+        platform: 'wa',
+        account: 'nanya_wa',
+        group_id: 'group-1',
+        text: '不应发送',
+        mention_ids: ['not-in-this-group@c.us'],
+      },
+    });
+    assert.strictEqual(invalidMentionReply.status, 409);
 
     const attachmentReply = await requestJson(`${baseUrl}/reply`, {
       method: 'POST',
@@ -1065,6 +1084,33 @@ async function main() {
     }));
     assert.match(globalReadEvent, /event: conversation_read/);
     assert.match(globalReadEvent, /"group_id":"group-1"/);
+    const nativeAction = await requestJson(`${baseUrl}/groups/group-1/channel-actions`, {
+      method: 'POST',
+      body: {
+        platform: 'wa', account: 'nanya_wa', client_action_id: 'api-native-reaction-1',
+        action_type: 'reaction', target_message_id: 'm-2', payload: { emoji: '👍' },
+      },
+    });
+    assert.strictEqual(nativeAction.status, 'pending');
+    const storedNativeAction = workbenchDb.prepare('SELECT * FROM channel_action_tasks WHERE id = ?').get(nativeAction.action_id);
+    assert.strictEqual(storedNativeAction.action_type, 'reaction');
+    assert.strictEqual(storedNativeAction.target_message_id, '54');
+    const duplicateNativeAction = await requestJson(`${baseUrl}/groups/group-1/channel-actions`, {
+      method: 'POST',
+      body: {
+        platform: 'wa', account: 'nanya_wa', client_action_id: 'api-native-reaction-1',
+        action_type: 'reaction', target_message_id: 'm-2', payload: { emoji: '👍' },
+      },
+    });
+    assert.strictEqual(duplicateNativeAction.idempotent, true);
+    const invalidNativeAction = await requestRaw(`${baseUrl}/groups/group-1/channel-actions`, {
+      method: 'POST',
+      body: {
+        platform: 'wa', account: 'nanya_wa', client_action_id: 'api-native-reaction-invalid',
+        action_type: 'reaction', target_message_id: 'not-a-native-message', payload: { emoji: '👍' },
+      },
+    });
+    assert.strictEqual(invalidNativeAction.status, 409);
     const attachmentMessage = messages.messages.find((message) => message.outbound_id === attachmentReply.outbound_id);
     assert.strictEqual(attachmentMessage.attachments[0].name, 'paste.png');
     assert.strictEqual(attachmentMessage.attachments[0].kind, 'image');
@@ -1076,7 +1122,9 @@ async function main() {
     assert.strictEqual(attachmentDownload.headers.get('content-type'), 'image/png');
     assert.ok((await attachmentDownload.arrayBuffer()).byteLength > 0);
     const quotedMessage = messages.messages.find((message) => message.outbound_id === firstReply.outbound_id);
-    assert.strictEqual(quotedMessage.quote_msg_id, 'm-2');
+    // WA replies persist the verified native serialized identity, never a
+    // workbench/raw row id that could silently turn into a plain message.
+    assert.strictEqual(String(quotedMessage.quote_msg_id), '54');
     const nativeQuotedMessage = messages.messages.find((message) => message.message_id === 'm-3');
     assert.strictEqual(nativeQuotedMessage.quote_msg_id, 54);
     assert.strictEqual(nativeQuotedMessage.quote_text, '谢谢');
@@ -1502,6 +1550,16 @@ function seedSyncedChannelMetadata(db) {
     INSERT INTO channel_groups (platform, account, group_id, group_name, kind, raw_json)
     VALUES ('wa', 'nanya_wa', 'group-synced-only', '仅同步群', 'group', '{"unreadCount":7,"pinned":true,"archived":true}')
   `).run();
+  db.prepare(`
+    INSERT INTO channel_groups (platform, account, group_id, group_name, kind, raw_json)
+    VALUES ('wa', 'nanya_wa', 'group-1', 'VIP 支持交流群', 'group', @rawJson)
+  `).run({ rawJson: JSON.stringify({
+    groupDescription: '用于验证群成员快照和原生提及。',
+    participants: [
+      { id: 'customer-1@c.us', name: '客户', is_admin: false },
+      { id: 'agent-demo@c.us', name: 'Nanya Support', is_admin: true },
+    ],
+  }) });
   db.prepare(`
     INSERT INTO channel_groups (platform, account, group_id, group_name, kind, raw_json)
     VALUES ('wa', 'nanya_wa', '77408698953978@lid', '真实客户名称', 'chat', '{}')

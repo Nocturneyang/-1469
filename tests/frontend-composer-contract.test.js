@@ -43,6 +43,18 @@ assert.match(composer, /\(\) => `\$\{groupDraftKey\(\)\}\|\$\{String\(props\.ope
 assert.doesNotMatch(composer, /\(\) => \[props\.group\?\.id/, 'same-conversation data refreshes must not clear selected attachments');
 assert.match(composer, /defineExpose\(\{ clearDraft \}\)/, 'the parent must clear a draft only after the outbound task is created');
 assert.match(thread, /\['sent', 'delivered', 'read'\]/, 'the message thread must recognize all three receipt states');
+assert.ok(thread.includes('标记 WA 已读'), 'WA native seen must remain an explicit user action');
+assert.ok(thread.includes('WA 会话操作'), 'managed WA chat operations must be discoverable from the thread header');
+assert.match(thread, /actionType: 'reaction'/, 'message reactions must request a native channel action');
+assert.match(api, /export async function createChannelAction/, 'the UI must create a ledgered native channel action instead of calling WA directly');
+assert.match(app, /quoteMessage\.value\.native_message_id \|\| quoteMessage\.value\.remote_msg_id/, 'native WA identity must be preferred for quoted replies');
+assert.doesNotMatch(app, /quoteMessage\.value\.raw_id \|\| quoteMessage\.value\.outbound_id/, 'quoted replies must never fall back to local IDs');
+assert.ok(composer.includes('提及群成员'), 'WA composer must expose a participant-backed mention picker');
+assert.match(composer, /mention_ids:\s*\[\.\.\.mentionedIds\.value\]/, 'composer must send validated native mention IDs separately from display text');
+assert.match(app, /:participants="workspaceDetail\.native\?\.participants \|\| \[\]"/, 'composer mentions must use the worker-synced conversation participant snapshot');
+assert.ok(inspector.includes('WA 会话资料'), 'conversation inspector must show worker-synced WA group metadata');
+assert.ok(thread.includes('搜索当前会话'), 'the message thread must expose chat-local search');
+assert.ok(thread.includes('attachment-player'), 'voice and audio media must be playable inline');
 assert.match(styles, /\.delivery-receipt\.receipt-read\s*\{[^}]*color:/s, 'read receipts must expose a blue double-check state');
 assert.match(app, /preserve_existing/, 'realtime refreshes must preserve already-loaded history');
 assert.match(thread, /attachment\.media_url/, 'downloaded inbound media must be rendered from the authenticated media endpoint');

@@ -44,6 +44,7 @@ function migrateOutboundReliability(db) {
     if (!columns.has(name)) db.prepare(`ALTER TABLE outbound_messages ADD COLUMN ${name} ${definition}`).run();
   };
   addColumn('provider_ack', 'INTEGER NOT NULL DEFAULT 0');
+  addColumn('mentions_json', 'TEXT');
   addColumn('read_at', 'TEXT');
   addColumn('owner_worker_id', 'TEXT');
   addColumn('lease_expires_at', 'TEXT');

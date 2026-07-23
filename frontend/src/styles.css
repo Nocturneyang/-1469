@@ -4462,6 +4462,15 @@ button {
 .thread-account { max-width: 150px; overflow: hidden; color: var(--muted); font-family: "JetBrains Mono", monospace; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .thread-label-zone { border-left: 0; }
 .thread-label-zone.is-empty { flex: 0 0 0; min-width: 0; padding-left: 0; }
+.thread-native-actions { display: inline-flex; align-items: center; gap: 2px; margin-left: 6px; white-space: nowrap; }
+.thread-message-search { width: 158px; margin-left: 8px; }
+.native-action-menu { display: grid; justify-items: start; gap: 2px; }
+.reaction-picker { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+.reaction-picker button { border: 1px solid var(--line-soft); border-radius: 6px; background: #fff; cursor: pointer; font-size: 17px; line-height: 30px; }
+.reaction-picker button:hover { background: #f0f7ff; }
+.attachment-player, .attachment-video { display: block; width: min(260px, 100%); margin-bottom: 6px; }
+.attachment-video { max-height: 210px; border-radius: 6px; background: #111; }
+.attachment-location { display: block; margin-bottom: 4px; color: var(--primary); font-size: 12px; }
 .header-tag { height: 24px; border-radius: 2px; }
 .header-tag:not(.workbench):not(.more) { color: #087f3f; border-color: #25d366; background: transparent; }
 .header-tag.workbench { color: #172b4d; border-color: transparent; background: #ebecf0; }
@@ -4617,6 +4626,12 @@ button {
 }
 .composer-toolbar .icon-button span { font-size: 11px; }
 .composer-toolbar .icon-button:hover { border-color: #dce2f0; color: var(--accent-strong); background: #f5f8ff; }
+.mention-picker { display: grid; gap: 4px; max-height: 280px; overflow: auto; }
+.mention-picker > strong { padding: 2px 4px 7px; color: var(--muted); font-size: 12px; }
+.mention-picker > button { display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; padding: 7px 8px; border: 0; border-radius: 4px; color: var(--text); background: transparent; text-align: left; cursor: pointer; }
+.mention-picker > button:hover { background: #f3f6ff; color: var(--accent-strong); }
+.mention-picker small,
+.native-participant-list em { color: #657084; font-size: 10px; font-style: normal; }
 .emoji-panel { bottom: 50px; border-radius: 6px; }
 .emoji-button { border-radius: 4px; background: #fff; }
 .composer textarea { min-height: 52px; padding: 8px 12px 4px; background: transparent; line-height: 1.5; }
@@ -4651,6 +4666,10 @@ button {
 .status-section .el-select__wrapper { border-radius: 2px; background: #f3f3fd; }
 .conversation-health { display: flex; align-items: center; gap: 6px; margin-top: 10px; color: #008a4b; font-size: 10px; }
 .conversation-health i { width: 7px; height: 7px; border: 1px solid #008a4b; border-radius: 50%; background: #fff; }
+.native-info-section .section-heading > span { color: var(--muted); font-size: 11px; }
+.native-description { margin: 9px 0 0; color: #475467; font-size: 12px; line-height: 1.55; white-space: pre-wrap; }
+.native-participant-list { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.native-participant-list > span { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; padding: 3px 6px; border: 1px solid #dbe2f0; border-radius: 10px; color: #475467; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .note-item { border-color: #ffe082; border-radius: 2px; background: #fff8e1; }
 .timeline-list { position: relative; padding-left: 14px; border-left: 1px solid var(--line); }
 .timeline-list article { position: relative; padding: 2px 0 8px 8px; border: 0; border-radius: 0; background: transparent; }

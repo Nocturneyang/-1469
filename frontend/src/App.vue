@@ -81,12 +81,17 @@
             :stick-to-bottom="stickToBottom"
             :manual-groups="manualGroups"
             :saving-manual-groups="savingManualGroups"
+            :message-search="messageSearch"
             @retry="handleRetry"
             @cancel="handleCancel"
             @load-older="handleLoadOlder"
             @read-progress="handleReadProgress"
             @stick-state-change="handleStickStateChange"
             @quote="handleQuote"
+            @native-action="handleNativeAction"
+            @message-edit="handleMessageEdit"
+            @message-revoke="handleMessageRevoke"
+            @message-filter-change="handleMessageFilterChange"
             @manual-groups-change="handleManualGroupsChange"
             @manual-group-create="handleManualGroupCreate"
           />
@@ -96,6 +101,7 @@
             :sending="sending"
             :quote-message="quoteMessage"
             :operator-id="currentOperator?.id || currentUser?.id || ''"
+            :participants="workspaceDetail.native?.participants || []"
             @send="handleSend"
             @clear-quote="clearQuote"
             @typing-state="handleTypingState"
@@ -144,6 +150,7 @@ const ServiceAccountAccess = defineAsyncComponent(() => import('./components/Ser
 const ServiceAccountLogin = defineAsyncComponent(() => import('./components/ServiceAccountLogin.vue'));
 import {
   cancelOutbound,
+  createChannelAction,
   createClientMsgId,
   createGroupNote,
   deleteGroupNote,
@@ -184,6 +191,7 @@ const accounts = ref([]);
 const groups = ref([]);
 const messages = ref([]);
 const messagePaging = ref({ has_more: false, before_id: null });
+const messageSearch = ref('');
 const accountScope = ref({ mode: 'all', active: false, accounts: [] });
 const portalAccess = ref({ can_monitor: false, can_workbench: true, can_admin: false });
 const currentOperator = ref(null);
@@ -273,6 +281,7 @@ let cacheWriteTimer = null;
 let restoringWorkbenchCache = false;
 let presenceHeartbeatTimer = null;
 let typingPresenceTimer = null;
+let nativeTypingActive = false;
 let stopConversationEvents = null;
 let conversationEventRefreshTimer = null;
 let stopWorkbenchEvents = null;
@@ -416,6 +425,7 @@ watch(
   async () => {
     stickToBottom.value = true;
     quoteMessage.value = null;
+    messageSearch.value = '';
     stopConversationEventStream();
     if (selectedGroup.value) {
       const selectedGroupId = selectedGroup.value.id;
@@ -829,6 +839,9 @@ async function loadMessages(params = {}) {
   const preserveExisting = Boolean(params.preserve_existing);
   const requestParams = { ...params };
   delete requestParams.preserve_existing;
+  if (!Object.prototype.hasOwnProperty.call(requestParams, 'message_search') && messageSearch.value.trim()) {
+    requestParams.message_search = messageSearch.value.trim();
+  }
   // 实时刷新只能复用当前会话代次，不能让首次加载响应失效；切换会话和翻页才开启新代次。
   const requestSeq = preserveExisting ? messageRequestSeq : ++messageRequestSeq;
   const cacheKey = messageCacheKey(group);
@@ -983,10 +996,11 @@ async function handleSend(message) {
   const payload = typeof message === 'string' ? { text: message, attachments: [] } : (message || {});
   const text = String(payload.text || '').trim();
   const attachments = Array.isArray(payload.attachments) ? payload.attachments : [];
+  const mentionIds = Array.isArray(payload.mention_ids) ? payload.mention_ids : [];
   if (!text && !attachments.length) return;
   const clientMsgId = createClientMsgId();
   const quoteMsgId = payload.quote_msg_id || (quoteMessage.value && (
-    quoteMessage.value.remote_msg_id || quoteMessage.value.message_id || quoteMessage.value.raw_id || quoteMessage.value.outbound_id
+    quoteMessage.value.native_message_id || quoteMessage.value.remote_msg_id || ''
   ));
   const optimistic = createOptimisticOutbound({
     group,
@@ -1008,6 +1022,7 @@ async function handleSend(message) {
       group_id: group.group_id,
       text,
       attachments,
+      mention_ids: mentionIds,
       quote_msg_id: quoteMsgId,
     });
     composerRef.value?.clearDraft();
@@ -1281,12 +1296,70 @@ async function handleTypingState(active) {
   clearTimeout(typingPresenceTimer);
   if (!active) {
     updateGroupPresence(selectedGroup.value, 'typing', false).catch(() => {});
+    requestNativeTyping(false);
     return;
   }
   updateGroupPresence(selectedGroup.value, 'typing', true).catch(() => {});
+  requestNativeTyping(true);
   typingPresenceTimer = setTimeout(() => {
-    if (selectedGroup.value) updateGroupPresence(selectedGroup.value, 'typing', false).catch(() => {});
+    if (selectedGroup.value) {
+      updateGroupPresence(selectedGroup.value, 'typing', false).catch(() => {});
+      requestNativeTyping(false);
+    }
   }, 4500);
+}
+
+function requestNativeTyping(active) {
+  const group = selectedGroup.value;
+  if (!group || group.platform !== 'wa' || group.permissions?.can_reply === false) return;
+  if (nativeTypingActive === Boolean(active)) return;
+  nativeTypingActive = Boolean(active);
+  createChannelAction(group, 'typing', { active }).catch(() => {});
+}
+
+async function handleNativeAction(event) {
+  if (!selectedGroup.value || !event?.actionType) return;
+  try {
+    const result = await createChannelAction(
+      selectedGroup.value,
+      event.actionType,
+      event.payload || {},
+      event.targetMessageId || '',
+    );
+    if (event.actionType !== 'typing') ElMessage.success(result.idempotent ? '原生动作已在处理中' : '已提交 WA 原生动作');
+    if (['archive', 'unarchive', 'pin_chat', 'unpin_chat', 'mark_unread', 'mute', 'unmute'].includes(event.actionType)) {
+      setTimeout(() => loadGroups({ silent: true }), 800);
+    }
+  } catch (err) {
+    if (event.actionType !== 'typing') ElMessage.error(err?.response?.data?.error || 'WA 原生动作提交失败');
+  }
+}
+
+async function handleMessageEdit(message) {
+  const targetMessageId = nativeMessageIdentity(message);
+  if (!targetMessageId) return ElMessage.warning('该消息尚未获得 WA 原生身份，不能编辑');
+  const text = window.prompt('编辑此消息', message.display_text || message.text || '');
+  if (text === null || !String(text).trim()) return;
+  await handleNativeAction({ actionType: 'message_edit', targetMessageId, payload: { text: String(text).trim() } });
+}
+
+async function handleMessageRevoke(message) {
+  const targetMessageId = nativeMessageIdentity(message);
+  if (!targetMessageId) return ElMessage.warning('该消息尚未获得 WA 原生身份，不能撤回');
+  if (!window.confirm('确认从 WhatsApp 撤回这条消息？')) return;
+  await handleNativeAction({ actionType: 'message_revoke', targetMessageId });
+}
+
+async function handleMessageFilterChange(value) {
+  const next = String(value || '').trim();
+  if (next === messageSearch.value) return;
+  messageSearch.value = next;
+  messagePaging.value = { has_more: false, before_id: null };
+  await loadMessages({ message_search: next || undefined });
+}
+
+function nativeMessageIdentity(message) {
+  return String(message?.native_message_id || message?.remote_msg_id || '').trim();
 }
 
 function startPresenceHeartbeat() {

@@ -17,6 +17,19 @@
         <div class="conversation-health"><i></i>{{ isOnline ? '会话活跃' : '渠道暂未在线' }}</div>
       </section>
 
+      <section v-if="native.participant_count || native.description" class="inspector-section native-info-section">
+        <div class="section-heading">
+          <div class="section-title">WA 会话资料</div>
+          <span v-if="native.participant_count">{{ native.participant_count }} 位成员</span>
+        </div>
+        <p v-if="native.description" class="native-description">{{ native.description }}</p>
+        <div v-if="native.participants?.length" class="native-participant-list">
+          <span v-for="participant in native.participants.slice(0, 8)" :key="participant.id">
+            {{ participant.name }}<em v-if="participant.is_super_admin || participant.is_admin">管理员</em>
+          </span>
+        </div>
+      </section>
+
       <section class="inspector-section notes-section">
         <div class="section-heading"><div class="section-title">内部备注</div><el-button v-if="workspaceDetail.notes_paging?.has_more" text @click="$emit('load-more-notes')">查看全部</el-button></div>
         <div v-if="notes.length" class="note-list">
@@ -70,6 +83,7 @@ const profile = computed(() => props.workspaceDetail?.profile || props.group || 
 const notes = computed(() => props.workspaceDetail?.notes || []);
 const timeline = computed(() => props.workspaceDetail?.timeline || []);
 const presence = computed(() => props.workspaceDetail?.presence || []);
+const native = computed(() => props.workspaceDetail?.native || {});
 const canManage = computed(() => props.group?.permissions?.can_manage === true);
 const canReply = computed(() => props.group?.permissions?.can_reply === true);
 const canWriteNote = computed(() => canReply.value || canManage.value);

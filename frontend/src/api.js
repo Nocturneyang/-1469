@@ -331,6 +331,7 @@ export async function fetchGroupWorkspace(group) {
   });
   return {
     profile: data.profile || null,
+    native: data.native || null,
     notes: data.notes || [],
     timeline: data.timeline || [],
     presence: data.presence || [],
@@ -404,6 +405,18 @@ export async function createReply(payload) {
 
 export async function markRead(payload) {
   const { data } = await api.post('/messages/read', payload);
+  return data;
+}
+
+export async function createChannelAction(group, actionType, payload = {}, targetMessageId = '') {
+  const { data } = await api.post(`/groups/${encodeURIComponent(group.group_id)}/channel-actions`, {
+    platform: group.platform,
+    account: group.account,
+    client_action_id: createClientMsgId(),
+    action_type: actionType,
+    target_message_id: targetMessageId || undefined,
+    payload,
+  });
   return data;
 }
 
