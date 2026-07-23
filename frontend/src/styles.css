@@ -4537,6 +4537,34 @@ button {
 .message-row { gap: 10px; margin-bottom: 18px; }
 .message-row.outbound { flex-direction: row-reverse; justify-content: flex-start; }
 .sender-chip { width: 34px; height: 34px; border: 1px solid #d8dce3; border-radius: 6px; color: var(--accent-strong); background: #fff; box-shadow: 0 1px 2px rgba(15,23,42,.04); }
+.mention-sender-trigger,
+.bubble-author-mention {
+  appearance: none;
+  padding: 0;
+  border: 0;
+  color: inherit;
+  background: transparent;
+  font: inherit;
+  cursor: pointer;
+}
+.sender-chip.mention-sender-trigger {
+  border: 1px solid #d8dce3;
+  background: #fff;
+}
+.mention-sender-trigger:hover,
+.mention-sender-trigger:focus-visible {
+  color: #087d55;
+  border-color: #74c6a8;
+  background: #eefaf5;
+  outline: none;
+}
+.bubble-author-mention:hover,
+.bubble-author-mention:focus-visible {
+  color: var(--accent-strong);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  outline: none;
+}
 .message-content { display: flex; max-width: min(680px, 78%); flex-direction: column; align-items: flex-start; }
 .outbound .message-content { align-items: flex-end; }
 .bubble-author { width: 100%; display: flex; gap: 8px; align-items: baseline; margin: 0 4px 5px; color: var(--muted); font-size: 11px; }

@@ -100,6 +100,13 @@ async function main() {
     assert.strictEqual(waImageDescriptor.downloadable, true);
     assert.strictEqual(whatsappMessageText(waImageMessage, waImageDescriptor), '图片');
     assert.strictEqual(whatsappMessageMetadata(waImageMessage, waImageDescriptor).media.kind, 'image');
+    assert.deepStrictEqual(whatsappMessageMetadata({
+      ...waImageMessage,
+      mentionedIds: [
+        { _serialized: '15551234567@c.us' },
+        { user: '77408698953978', server: 'lid' },
+      ],
+    }, waImageDescriptor).mentionedIds, ['15551234567@c.us', '77408698953978@lid']);
     const normalizedWaImage = normalizeWhatsAppDownloadedMedia({
       data: Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).toString('base64'),
       mimetype: 'application/octet-stream',
@@ -203,9 +210,20 @@ async function main() {
             },
           },
           GroupMetadata: {
+            async update() {},
             get(id) {
               const serialized = id?._serialized || id;
-              return serialized === 'native@g.us' ? { subject: '原生群' } : null;
+              return serialized === 'native@g.us' ? {
+                subject: '原生群',
+                participants: {
+                  serialize() {
+                    return [{
+                      id: { _serialized: '77408698953978@lid', user: '77408698953978', server: 'lid' },
+                      isAdmin: true,
+                    }];
+                  },
+                },
+              } : null;
             },
           },
           Label: {
@@ -223,6 +241,15 @@ async function main() {
       assert.strictEqual(nativeSnapshot.available, true);
       assert.strictEqual(nativeSnapshot.models[0].id._serialized, 'native@g.us');
       assert.strictEqual(nativeSnapshot.models[0].formattedTitle, '原生群');
+      assert.deepStrictEqual(nativeSnapshot.models[0].participants, [{
+        id: '15551234567@c.us',
+        name: '真实客户',
+        phone_number: '15551234567',
+        lid_id: '77408698953978@lid',
+        phone_id: '15551234567@c.us',
+        is_admin: true,
+        is_super_admin: false,
+      }]);
       assert.strictEqual(nativeSnapshot.models[1].formattedTitle, '真实客户');
       assert.deepStrictEqual(nativeSnapshot.labelSnapshot, {
         labels: [{

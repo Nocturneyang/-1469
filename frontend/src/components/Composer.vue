@@ -139,7 +139,7 @@
         <el-button
           type="primary"
           :icon="Position"
-          :loading="sending"
+          :loading="sending || submissionLocked"
           :disabled="disabled || !canSubmit"
           @click="submit"
         >
@@ -162,6 +162,7 @@ import {
   Position,
   Postcard,
 } from '@element-plus/icons-vue';
+import { createClientMsgId } from '../api';
 
 const MAX_ATTACHMENTS = 4;
 const MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024;
@@ -198,6 +199,10 @@ const draft = ref('');
 const attachments = ref([]);
 const mentionedIds = ref([]);
 const emojiOpen = ref(false);
+const submissionLocked = ref(false);
+const pendingSubmission = ref(null);
+const pendingClientMsgId = ref('');
+const retryFingerprint = ref('');
 const emojiButtonRef = ref(null);
 const emojiPanelRef = ref(null);
 const fileInputRef = ref(null);
@@ -205,6 +210,7 @@ const imageInputRef = ref(null);
 const stickerInputRef = ref(null);
 const textareaRef = ref(null);
 let typingTimer = null;
+let lastTypingState = false;
 let draftSaveTimer = null;
 let activeDraftKey = '';
 let activeDraftStorageKey = '';
@@ -217,7 +223,7 @@ const sendAllowed = computed(() => (
   props.group.permissions &&
   props.group.permissions.can_reply !== false
 ));
-const disabled = computed(() => !props.group || props.sending || !sendAllowed.value);
+const disabled = computed(() => !props.group || props.sending || submissionLocked.value || !sendAllowed.value);
 const canSubmit = computed(() => Boolean(draft.value.trim() || attachments.value.length));
 const mentionableParticipants = computed(() => (props.group?.platform === 'wa' ? props.participants : []).filter((participant) => participant?.id && participant?.name).slice(0, 200));
 const accountDisplayName = computed(() => {
@@ -226,7 +232,7 @@ const accountDisplayName = computed(() => {
 });
 const disabledReason = computed(() => {
   if (!props.group) return '请选择会话';
-  if (props.sending) return '发送任务创建中';
+  if (props.sending || submissionLocked.value) return '发送任务创建中';
   if (props.group.permissions && props.group.permissions.can_reply === false) return '当前坐席没有回复权限';
   if (props.group.global_send_enabled !== true) return '生产全局发送开关已关闭';
   if (props.group.send_enabled === false || Number(props.group.send_enabled) === 0) return '当前服务账号发送开关已关闭，请管理员在“服务账号”中开启';
@@ -429,16 +435,43 @@ function formatSize(size) {
 
 function submit() {
   const text = draft.value.trim();
-  if ((!text && !attachments.value.length) || !props.group || props.sending) return;
-  emit('send', {
+  if ((!text && !attachments.value.length) || !props.group || props.sending || submissionLocked.value) return;
+  const attachmentSnapshot = attachments.value.filter(Boolean).map((attachment) => ({ ...attachment }));
+  const mentionSnapshot = [...mentionedIds.value];
+  const quoteMsgId = props.quoteMessage && (
+    props.quoteMessage.native_message_id || props.quoteMessage.remote_msg_id || ''
+  );
+  const fingerprint = submissionFingerprint({
+    group_key: groupDraftKey(),
     text,
-    attachments: attachments.value.filter(Boolean).map((attachment) => ({ ...attachment })),
-    mention_ids: [...mentionedIds.value],
-    quote_msg_id: props.quoteMessage && (
-      props.quoteMessage.native_message_id || props.quoteMessage.remote_msg_id || ''
-    ),
+    attachments: attachmentSnapshot,
+    mention_ids: mentionSnapshot,
+    quote_msg_id: quoteMsgId,
   });
+  const clientMsgId = pendingClientMsgId.value && retryFingerprint.value === fingerprint
+    ? pendingClientMsgId.value
+    : createClientMsgId();
+  const submission = {
+    client_msg_id: clientMsgId,
+    text,
+    attachments: attachmentSnapshot,
+    mention_ids: mentionSnapshot,
+    quote_msg_id: quoteMsgId,
+    group_key: groupDraftKey(),
+    draft_key: activeDraftKey,
+    draft_storage_key: activeDraftStorageKey,
+  };
+  pendingSubmission.value = submission;
+  pendingClientMsgId.value = clientMsgId;
+  retryFingerprint.value = fingerprint;
+  submissionLocked.value = true;
+  draft.value = '';
+  attachments.value = [];
+  mentionedIds.value = [];
   emojiOpen.value = false;
+  persistDraft(activeDraftStorageKey, activeDraftKey, '');
+  emitTyping(false);
+  emit('send', submission);
 }
 
 function clearDraft() {
@@ -446,8 +479,44 @@ function clearDraft() {
   attachments.value = [];
   mentionedIds.value = [];
   emojiOpen.value = false;
+  pendingSubmission.value = null;
+  pendingClientMsgId.value = '';
+  retryFingerprint.value = '';
+  submissionLocked.value = false;
   persistDraft(activeDraftStorageKey, activeDraftKey, '');
   emitTyping(false);
+}
+
+function commitSubmission(clientMsgId) {
+  if (String(pendingSubmission.value?.client_msg_id || '') !== String(clientMsgId || '')) return;
+  pendingSubmission.value = null;
+  pendingClientMsgId.value = '';
+  retryFingerprint.value = '';
+  submissionLocked.value = false;
+}
+
+function restoreSubmission(clientMsgId) {
+  const submission = pendingSubmission.value;
+  if (!submission || String(submission.client_msg_id || '') !== String(clientMsgId || '')) return;
+  persistDraft(submission.draft_storage_key, submission.draft_key, submission.text);
+  if (submission.draft_key === activeDraftKey && submission.draft_storage_key === activeDraftStorageKey) {
+    draft.value = submission.text;
+    attachments.value = submission.attachments.map((attachment) => ({ ...attachment }));
+    mentionedIds.value = [...submission.mention_ids];
+    nextTick(() => textareaRef.value?.focus());
+  }
+  pendingSubmission.value = null;
+  submissionLocked.value = false;
+}
+
+function submissionFingerprint(submission) {
+  return JSON.stringify({
+    group_key: String(submission.group_key || ''),
+    text: String(submission.text || ''),
+    attachment_ids: (submission.attachments || []).map((attachment) => String(attachment.id || '')),
+    mention_ids: submission.mention_ids || [],
+    quote_msg_id: String(submission.quote_msg_id || ''),
+  });
 }
 
 function insertMention(participant) {
@@ -491,13 +560,21 @@ function persistDraft(storageKey, key, value) {
   } catch (_) { }
 }
 
-defineExpose({ clearDraft });
+defineExpose({ clearDraft, commitSubmission, restoreSubmission, insertMention });
 
 function emitTyping(active) {
+  const nextState = Boolean(active);
   clearTimeout(typingTimer);
-  emit('typing-state', active);
-  if (active) {
-    typingTimer = setTimeout(() => emit('typing-state', false), 2200);
+  if (lastTypingState !== nextState) {
+    lastTypingState = nextState;
+    emit('typing-state', nextState);
+  }
+  if (nextState) {
+    typingTimer = setTimeout(() => {
+      if (!lastTypingState) return;
+      lastTypingState = false;
+      emit('typing-state', false);
+    }, 2200);
   }
 }
 </script>

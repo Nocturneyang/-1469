@@ -88,6 +88,7 @@
             @read-progress="handleReadProgress"
             @stick-state-change="handleStickStateChange"
             @quote="handleQuote"
+            @mention-sender="handleMentionSender"
             @native-action="handleNativeAction"
             @message-edit="handleMessageEdit"
             @message-revoke="handleMessageRevoke"
@@ -991,14 +992,14 @@ function mergeMessages(...sets) {
 }
 
 async function handleSend(message) {
-  if (!selectedGroup.value) return;
+  if (!selectedGroup.value || sending.value) return;
   const group = { ...selectedGroup.value };
   const payload = typeof message === 'string' ? { text: message, attachments: [] } : (message || {});
   const text = String(payload.text || '').trim();
   const attachments = Array.isArray(payload.attachments) ? payload.attachments : [];
   const mentionIds = Array.isArray(payload.mention_ids) ? payload.mention_ids : [];
   if (!text && !attachments.length) return;
-  const clientMsgId = createClientMsgId();
+  const clientMsgId = String(payload.client_msg_id || '').trim() || createClientMsgId();
   const quoteMsgId = payload.quote_msg_id || (quoteMessage.value && (
     quoteMessage.value.native_message_id || quoteMessage.value.remote_msg_id || ''
   ));
@@ -1025,7 +1026,7 @@ async function handleSend(message) {
       mention_ids: mentionIds,
       quote_msg_id: quoteMsgId,
     });
-    composerRef.value?.clearDraft();
+    composerRef.value?.commitSubmission(clientMsgId);
     quoteMessage.value = null;
     patchOptimisticOutbound(clientMsgId, {
       id: `outbound-${reply.outbound_id}`,
@@ -1040,6 +1041,7 @@ async function handleSend(message) {
     ]).catch(() => {});
     if (LIVE_OUTBOUND_STATUSES.has(reply.status)) startPendingRefresh();
   } catch (err) {
+    composerRef.value?.restoreSubmission(clientMsgId);
     patchOptimisticOutbound(clientMsgId, {
       status: 'failed',
       error_display: '发送任务创建失败，请重新发送',
@@ -1285,6 +1287,10 @@ function profileToGroupPatch(profile, detail = {}) {
 function handleQuote(message) {
   if (!message) return;
   quoteMessage.value = message;
+}
+
+function handleMentionSender(participant) {
+  composerRef.value?.insertMention(participant);
 }
 
 function clearQuote() {

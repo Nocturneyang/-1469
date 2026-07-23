@@ -93,9 +93,28 @@
       <template v-for="(message, index) in messages" :key="message.id">
         <div v-if="shouldShowDateSeparator(message, index)" class="message-date"><span>{{ formatMessageDateLabel(messageTimeValue(message)) }}</span></div>
         <div class="message-row" :class="message.direction === 'outbound' ? 'outbound' : 'inbound'" :data-raw-id="message.raw_id || null" :data-readable="isReadableMessage(message) ? 'true' : null">
-          <div class="sender-chip">{{ message.direction === 'outbound' ? '我' : '客' }}</div>
+          <button
+            v-if="canMentionSender(message)"
+            type="button"
+            class="sender-chip mention-sender-trigger"
+            :title="`@${message.sender_mention_name}`"
+            :aria-label="`提及 ${message.sender_mention_name}`"
+            @click="mentionSender(message)"
+          >客</button>
+          <div v-else class="sender-chip">{{ message.direction === 'outbound' ? '我' : '客' }}</div>
           <div class="message-content">
-            <div class="bubble-author"><span>{{ message.direction === 'outbound' ? '您' : (message.sender_name || group.group_name) }}<small v-if="message.sender_username">@{{ message.sender_username }}</small></span><time :title="fullMessageTime(messageTimeValue(message))">{{ formatMessageTime(messageTimeValue(message)) }}</time></div>
+            <div class="bubble-author">
+              <button
+                v-if="canMentionSender(message)"
+                type="button"
+                class="bubble-author-mention"
+                :title="`@${message.sender_mention_name}`"
+                :aria-label="`提及 ${message.sender_mention_name}`"
+                @click="mentionSender(message)"
+              >{{ message.sender_name || group.group_name }}<small v-if="message.sender_username">@{{ message.sender_username }}</small></button>
+              <span v-else>{{ message.direction === 'outbound' ? '您' : (message.sender_name || group.group_name) }}<small v-if="message.sender_username">@{{ message.sender_username }}</small></span>
+              <time :title="fullMessageTime(messageTimeValue(message))">{{ formatMessageTime(messageTimeValue(message)) }}</time>
+            </div>
             <article class="bubble" :class="{ failed: message.status === 'failed' || message.status === 'dead' }">
               <div v-if="message.forwarded_from" class="forwarded-line">转发自 {{ message.forwarded_from }}</div>
               <blockquote v-if="message.quote_msg_id">{{ message.quote_text || `引用消息 ${message.quote_msg_id}` }}</blockquote>
@@ -177,7 +196,7 @@ import { formatMessageDateLabel, formatMessageTime, messageDayKey, platformClass
 const props = defineProps({
   group: { type: Object, default: null }, messages: { type: Array, default: () => [] }, paging: { type: Object, default: () => ({ has_more: false, before_id: null }) }, loadingMessages: { type: Boolean, default: false }, loadingOlder: { type: Boolean, default: false }, stickToBottom: { type: Boolean, default: true }, manualGroups: { type: Array, default: () => [] }, savingManualGroups: { type: Boolean, default: false }, messageSearch: { type: String, default: '' },
 });
-const emit = defineEmits(['retry', 'cancel', 'load-older', 'read-progress', 'stick-state-change', 'quote', 'native-action', 'message-edit', 'message-revoke', 'manual-groups-change', 'manual-group-create']);
+const emit = defineEmits(['retry', 'cancel', 'load-older', 'read-progress', 'stick-state-change', 'quote', 'mention-sender', 'native-action', 'message-edit', 'message-revoke', 'manual-groups-change', 'manual-group-create']);
 const scrollRef = ref(null);
 const lastStickState = ref(true);
 const lastReadProgress = ref({ groupId: '', rawId: 0 });
@@ -226,6 +245,24 @@ const canSubmitManualGroup = computed(() => canManageManualGroups.value && !prop
 
 function platformShort(platform) { return platform === 'wa' ? 'W' : platform === 'tg' ? 'T' : '?'; }
 function canSend(group) { return Boolean(group && group.send_enabled !== false && Number(group.send_enabled) !== 0 && (!group.permissions || group.permissions.can_reply !== false)); }
+function canMentionSender(message) {
+  return Boolean(
+    canReplyNative.value &&
+    canSend(props.group) &&
+    props.group?.global_send_enabled === true &&
+    !props.group?.send_breaker_active &&
+    message?.direction !== 'outbound' &&
+    message?.sender_mention_id &&
+    message?.sender_mention_name
+  );
+}
+function mentionSender(message) {
+  if (!canMentionSender(message)) return;
+  emit('mention-sender', {
+    id: message.sender_mention_id,
+    name: message.sender_mention_name,
+  });
+}
 function receiptStatus(status) { return ['sent', 'delivered', 'read'].includes(status) ? status : ''; }
 function receiptTitle(status) { return ({ sent: '已发送到渠道', delivered: '客户设备已收到', read: '客户已读' })[status] || ''; }
 function isWorkbenchTag(label) { return Number(label?.is_manual) === 1 || String(label?.source || '').startsWith('manual'); }

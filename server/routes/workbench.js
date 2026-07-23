@@ -883,13 +883,23 @@ function createWorkbenchRouter({ workbenchDb, runtimeDb, rawDbPath = DEFAULT_RAW
     const rawDurationMs = Date.now() - rawStartedAt;
     const inbound = page.messages.map(mapRawMessage);
     const ledgerStartedAt = Date.now();
-    const outbound = accountData.withWorkbenchDb(platform, account, { readonly: accountData.isolated }, (accountDb) => listOutboundMessages(accountDb, {
-      platform,
-      account,
-      groupId,
-      limit: requestedLimit,
-      scopedIds: accountData.isolated,
+    const ledger = accountData.withWorkbenchDb(platform, account, { readonly: accountData.isolated }, (accountDb) => ({
+      outbound: listOutboundMessages(accountDb, {
+        platform,
+        account,
+        groupId,
+        limit: requestedLimit,
+        scopedIds: accountData.isolated,
+      }),
+      participants: loadConversationNativeMetadata(
+        accountDb,
+        platform,
+        account,
+        groupId,
+        { includeAliases: true },
+      ).participants,
     }));
+    const outbound = ledger.outbound;
     const ledgerDurationMs = Date.now() - ledgerStartedAt;
     const merged = applyMentionDisplayNames(enrichConversationQuoteTexts(
       mergeConversationMessages(inbound, outbound),
@@ -900,7 +910,7 @@ function createWorkbenchRouter({ workbenchDb, runtimeDb, rawDbPath = DEFAULT_RAW
         groupId,
         quoteIds: collectMissingQuoteIds([...inbound, ...outbound]),
       }),
-    ));
+    ), ledger.participants);
     const messages = messageFilters.active ? filterConversationMessages(merged, messageFilters) : merged;
     const totalDurationMs = Date.now() - requestStartedAt;
     res.setHeader('Server-Timing', [
@@ -2523,7 +2533,7 @@ function buildConversationWorkspace(db, centralDb, platform, account, groupId, {
   };
 }
 
-function loadConversationNativeMetadata(db, platform, account, groupId) {
+function loadConversationNativeMetadata(db, platform, account, groupId, options = {}) {
   const row = db.prepare(`
     SELECT group_name, kind, raw_json, synced_at FROM channel_groups
     WHERE platform = ? AND account = ? AND group_id = ?
@@ -2532,6 +2542,11 @@ function loadConversationNativeMetadata(db, platform, account, groupId) {
   const participants = Array.isArray(raw?.participants) ? raw.participants.slice(0, 1024).map((participant) => ({
     id: String(participant?.id || '').trim(),
     name: String(participant?.name || participant?.phone_number || participant?.id || '').trim(),
+    ...(options.includeAliases ? {
+      phone_number: String(participant?.phone_number || '').trim(),
+      lid_id: String(participant?.lid_id || '').trim(),
+      phone_id: String(participant?.phone_id || '').trim(),
+    } : {}),
     is_admin: Boolean(participant?.is_admin),
     is_super_admin: Boolean(participant?.is_super_admin),
   })).filter((participant) => participant.id) : [];
@@ -2813,6 +2828,7 @@ function mapRawMessage(row) {
     direction,
     text: revoked ? '' : text,
     display_text: revoked ? '' : text,
+    mention_ids: Array.isArray(raw.mentionedIds) ? raw.mentionedIds : [],
     quote_msg_id: raw.reply_to_msg_id || null,
     quote_text: raw.quote_text || '',
     forwarded_from: raw.forwarded_from || '',
@@ -2956,31 +2972,62 @@ function mapOutboundRow(row, { scopedIds = false } = {}) {
   };
 }
 
-function applyMentionDisplayNames(messages) {
-  const contacts = buildConversationContactIndex(messages);
-  if (!contacts.byDigits.size && !contacts.singleExternalName) return messages;
+function applyMentionDisplayNames(messages, participants = []) {
+  const contacts = buildConversationContactIndex(messages, participants);
   return messages.map((message) => {
+    const senderMention = resolveSenderMentionTarget(message, contacts);
     const text = String(message.display_text || message.text || '');
-    if (!text || !/@\d{6,20}\b/.test(text)) return message;
-    const displayText = text.replace(/@(\d{6,20})\b/g, (match, digits) => {
+    const displayText = text && /@\d{6,20}\b/.test(text)
+      ? text.replace(/@(\d{6,20})\b/g, (match, digits) => {
       const exactName = contacts.byDigits.get(digits);
       if (exactName) return `@${exactName}`;
       if (contacts.singleExternalName && message.direction === 'outbound') return `@${contacts.singleExternalName}`;
       return match;
-    });
-    if (displayText === text) return message;
+      })
+      : text;
+    if (!senderMention && displayText === text) return message;
     return {
       ...message,
-      display_text: displayText,
-      mention_display_map: contacts.displayMap,
+      ...(displayText !== text ? {
+        display_text: displayText,
+        mention_display_map: contacts.displayMap,
+      } : {}),
+      ...(senderMention ? {
+        sender_mention_id: senderMention.id,
+        sender_mention_name: senderMention.name,
+      } : {}),
     };
   });
 }
 
-function buildConversationContactIndex(messages) {
+function buildConversationContactIndex(messages, participants = []) {
   const byDigits = new Map();
   const displayMap = {};
   const externalNames = new Set();
+  const mentionByAlias = new Map();
+  const mentionByDigits = new Map();
+  const ambiguousAliases = new Set();
+  const ambiguousDigits = new Set();
+  participants.forEach((participant) => {
+    const name = normalizeDisplayName(participant?.name);
+    const id = String(participant?.id || '').trim();
+    if (!name || !id) return;
+    const target = { id, name };
+    const aliases = [
+      participant?.id,
+      participant?.phone_number,
+      participant?.lid_id,
+      participant?.phone_id,
+    ];
+    aliases.map(normalizeWaIdentity).filter(Boolean).forEach((alias) => {
+      registerUniqueMentionTarget(mentionByAlias, ambiguousAliases, alias, target);
+    });
+    aliases.flatMap(extractDigits).forEach((digits) => {
+      byDigits.set(digits, name);
+      displayMap[digits] = name;
+      registerUniqueMentionTarget(mentionByDigits, ambiguousDigits, digits, target);
+    });
+  });
   messages.forEach((message) => {
     if (!message || message.direction === 'outbound') return;
     const name = normalizeDisplayName(message.sender_name);
@@ -2995,13 +3042,45 @@ function buildConversationContactIndex(messages) {
     byDigits,
     displayMap,
     singleExternalName: externalNames.size === 1 ? [...externalNames][0] : '',
+    mentionByAlias,
+    mentionByDigits,
   };
+}
+
+function resolveSenderMentionTarget(message, contacts) {
+  if (!message || message.direction === 'outbound' || !['wa', 'whatsapp'].includes(String(message.platform || '').toLowerCase())) return null;
+  const senderId = String(message.sender_id || '').trim();
+  if (!senderId) return null;
+  const exact = contacts.mentionByAlias.get(normalizeWaIdentity(senderId));
+  if (exact) return exact;
+  const candidates = extractDigits(senderId)
+    .map((digits) => contacts.mentionByDigits.get(digits))
+    .filter(Boolean);
+  const unique = [...new Map(candidates.map((target) => [target.id, target])).values()];
+  return unique.length === 1 ? unique[0] : null;
+}
+
+function registerUniqueMentionTarget(index, ambiguousKeys, key, target) {
+  if (!key || ambiguousKeys.has(key)) return;
+  const existing = index.get(key);
+  if (existing && existing.id !== target.id) {
+    index.delete(key);
+    ambiguousKeys.add(key);
+    return;
+  }
+  index.set(key, target);
+}
+
+function normalizeWaIdentity(value) {
+  return String(value || '').trim().toLowerCase();
 }
 
 function normalizeDisplayName(value) {
   const text = String(value || '').trim();
   if (!text || text === '未知成员') return '';
   if (/^\d{6,20}$/.test(text)) return '';
+  if (/^[^@\s]+@(lid|c\.us|s\.whatsapp\.net)$/i.test(text)) return '';
+  if (/^\+?[\d\s().-]{7,}$/.test(text) && text.replace(/\D/g, '').length >= 7) return '';
   return text;
 }
 

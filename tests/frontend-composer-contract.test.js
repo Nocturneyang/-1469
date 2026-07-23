@@ -41,7 +41,15 @@ assert.match(app, /startWorkbenchEventStream\(\)/, 'the workbench must start the
 assert.match(composer, /social-workbench\.drafts\.v1\./, 'text drafts must be isolated by operator');
 assert.match(composer, /\(\) => `\$\{groupDraftKey\(\)\}\|\$\{String\(props\.operatorId \|\| ''\)\}`/, 'composer refresh guard must use a stable conversation key');
 assert.doesNotMatch(composer, /\(\) => \[props\.group\?\.id/, 'same-conversation data refreshes must not clear selected attachments');
-assert.match(composer, /defineExpose\(\{ clearDraft \}\)/, 'the parent must clear a draft only after the outbound task is created');
+assert.match(composer, /submissionLocked\.value = true;[\s\S]*?emit\('send', submission\);/, 'the composer must lock synchronously before emitting a send request');
+assert.match(composer, /client_msg_id: clientMsgId/, 'the composer must attach a stable client message id to each submission');
+assert.match(composer, /function restoreSubmission\(clientMsgId\)/, 'failed task creation must restore the captured draft');
+assert.match(composer, /lastTypingState !== nextState/, 'typing activity must only emit channel state transitions');
+assert.match(app, /if \(!selectedGroup\.value \|\| sending\.value\) return;/, 'the parent must reject a second send while task creation is in flight');
+assert.match(app, /String\(payload\.client_msg_id \|\| ''\)\.trim\(\) \|\| createClientMsgId\(\)/, 'the parent must preserve the composer idempotency key');
+assert.match(app, /composerRef\.value\?\.commitSubmission\(clientMsgId\)/, 'successful task creation must release the exact pending submission');
+assert.match(app, /composerRef\.value\?\.restoreSubmission\(clientMsgId\)/, 'failed task creation must restore the exact pending submission');
+assert.match(composer, /defineExpose\(\{ clearDraft, commitSubmission, restoreSubmission, insertMention \}\)/, 'the parent must manage pending drafts and insert validated participant mentions');
 assert.match(thread, /\['sent', 'delivered', 'read'\]/, 'the message thread must recognize all three receipt states');
 assert.ok(thread.includes('标记 WA 已读'), 'WA native seen must remain an explicit user action');
 assert.ok(thread.includes('WA 会话操作'), 'managed WA chat operations must be discoverable from the thread header');
@@ -50,8 +58,10 @@ assert.match(api, /export async function createChannelAction/, 'the UI must crea
 assert.match(app, /quoteMessage\.value\.native_message_id \|\| quoteMessage\.value\.remote_msg_id/, 'native WA identity must be preferred for quoted replies');
 assert.doesNotMatch(app, /quoteMessage\.value\.raw_id \|\| quoteMessage\.value\.outbound_id/, 'quoted replies must never fall back to local IDs');
 assert.ok(composer.includes('提及群成员'), 'WA composer must expose a participant-backed mention picker');
-assert.match(composer, /mention_ids:\s*\[\.\.\.mentionedIds\.value\]/, 'composer must send validated native mention IDs separately from display text');
+assert.match(composer, /const mentionSnapshot = \[\.\.\.mentionedIds\.value\];[\s\S]*?mention_ids: mentionSnapshot/, 'composer must send validated native mention IDs separately from display text');
 assert.match(app, /:participants="workspaceDetail\.native\?\.participants \|\| \[\]"/, 'composer mentions must use the worker-synced conversation participant snapshot');
+assert.ok(thread.includes("'mention-sender'"), 'the message thread must expose click-to-mention for participant-backed senders');
+assert.match(app, /@mention-sender="handleMentionSender"/, 'clicking a history sender must delegate to the existing composer mention insertion');
 assert.ok(inspector.includes('WA 会话资料'), 'conversation inspector must show worker-synced WA group metadata');
 assert.ok(thread.includes('搜索当前会话'), 'the message thread must expose chat-local search');
 assert.ok(thread.includes('attachment-player'), 'voice and audio media must be playable inline');

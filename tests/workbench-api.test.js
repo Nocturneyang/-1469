@@ -869,31 +869,48 @@ async function main() {
     insertRawMessage(rawDbPath, {
       platform: 'whatsapp',
       account: 'nanya_wa',
-      messageId: 'mention-inbound-1',
-      groupId: 'group-mention',
-      groupName: '提及显示测试群',
-      senderId: '1703771844@c.us',
-      senderName: '客户A',
-      content: 'hello',
-      timestamp: 1782950470,
-      rawData: '{}',
-    });
-    insertRawMessage(rawDbPath, {
-      platform: 'whatsapp',
-      account: 'nanya_wa',
       messageId: 'mention-outbound-1',
-      groupId: 'group-mention',
+      groupId: 'group-1',
       groupName: '提及显示测试群',
       senderId: 'agent-demo',
       senderName: 'Nanya Support',
-      content: '请看 @1703771844',
+      content: '请看 @56354718883902',
       timestamp: 1782950480,
-      rawData: JSON.stringify({ fromMe: true }),
+      rawData: JSON.stringify({ fromMe: true, mentionedIds: ['customer-1@c.us'] }),
     });
-    const mentionMessages = await requestJson(`${baseUrl}/groups/group-mention/messages?platform=wa&account=nanya_wa`);
+    const mentionRawDb = new Database(rawDbPath);
+    mentionRawDb.prepare(`
+      UPDATE messages
+      SET sender_id = '56354718883902@lid', sender_name = '客户A'
+      WHERE message_id = 'm-1'
+    `).run();
+    mentionRawDb.close();
+    workbenchDb.prepare(`
+      UPDATE channel_groups
+      SET raw_json = @rawJson
+      WHERE platform = 'wa' AND account = 'nanya_wa' AND group_id = 'group-1'
+    `).run({ rawJson: JSON.stringify({
+      groupDescription: '用于验证群成员快照和原生提及。',
+      participants: [
+        {
+          id: 'customer-1@c.us',
+          name: '客户A',
+          phone_number: '56354718883902',
+          lid_id: '56354718883902@lid',
+          phone_id: 'customer-1@c.us',
+          is_admin: false,
+        },
+        { id: 'agent-demo@c.us', name: 'Nanya Support', is_admin: true },
+      ],
+    }) });
+    const mentionMessages = await requestJson(`${baseUrl}/groups/group-1/messages?platform=wa&account=nanya_wa`);
     const mentionMessage = mentionMessages.messages.find((message) => message.message_id === 'mention-outbound-1');
-    assert.strictEqual(mentionMessage.text, '请看 @1703771844');
+    assert.strictEqual(mentionMessage.text, '请看 @56354718883902');
     assert.strictEqual(mentionMessage.display_text, '请看 @客户A');
+    assert.deepStrictEqual(mentionMessage.mention_ids, ['customer-1@c.us']);
+    const mentionInboundMessage = mentionMessages.messages.find((message) => message.message_id === 'm-1');
+    assert.strictEqual(mentionInboundMessage.sender_mention_id, 'customer-1@c.us');
+    assert.strictEqual(mentionInboundMessage.sender_mention_name, '客户A');
 
     const inboundUnread = insertRawMessage(rawDbPath, {
       platform: 'whatsapp',
